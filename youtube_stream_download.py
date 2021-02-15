@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # With the help of this script you can download parts from the Youtube Video that is live streamed, from start of the stream till the end
 # https://gist.github.com/glubsy/6e9b3061e074f528ea7153647f9fe615
 
