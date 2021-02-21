@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-# With the help of this script you can download parts from the Youtube Video that is live streamed, from start of the stream till the end
+# With the help of this script you can download parts from the Youtube Video
+# that is live streamed, from the start of the stream
 # https://gist.github.com/glubsy/6e9b3061e074f528ea7153647f9fe615
 
 import urllib.request
+import urllib.error
 import os
 
 # Note: you need to be logged in to get the URL, we do not use cookies here.
@@ -21,15 +23,12 @@ vid_link = f'{vid_link.split(r"&sq=")[0]}&sq=' # vid_link = "VIDEO LINK THE END 
 sound_link = ""
 sound_link = f'{sound_link.split(r"&sq=")[0]}&sq=' # sound_link = "AUDIO LINK THE END -> &sq= " # Look for the substring mime=audio to make sure
 
-# Each part should be equivalent to 1 seconds of video
-# Please note if what you got on the your link from the sq parameter looks like this &sq=2504043 (high value) 
-# don't expect the script to work starting from 1 anymore, because the first part _probably_ already expired.
-# Try to download appropriate part numbers, like range(2501043, 2504043).
+# On Youtube, each part should be equivalent to 1 seconds of video
 
-# Note: itag determines the quality. 140 for audio seems best, 135 for video means 480p.
+# The itag determines the quality. 140 for audio seems best, 135 for video means 480p.
 
-# Get the hash ID right after "id=" and before ".1&itag=" (might change in the future?)
-YT_HASH = vid_link.split("&id=")[1].split('.1')[0]
+# The boadcastID follows the videoID. Format is currently: "&id=videoID.broadcastID&itags="
+YT_HASH = vid_link.split("&id=")[1].split('.')[0]
 print(f'Capturing video with Hash ID: {YT_HASH}')
 
 rootpath = f'stream_capture_{YT_HASH}'
@@ -51,7 +50,7 @@ except FileExistsError as e:
     # If we resume, get the latest chunk file we already have
     begin = max([int(f[:f.index('.')]) for f in os.listdir(vidpath)])
     if begin > 1:
-        # Step back one file just in case the latest chunk got only partially downloaded
+        # Step back one file just in case the latest chunk got only partially downloaded (we want to overwrite it)
         begin -= 1
 print(f'Starting from part: {begin}')
 
