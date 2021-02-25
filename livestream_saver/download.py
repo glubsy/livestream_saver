@@ -25,10 +25,11 @@ class Status(Flag):
     OK = AVAILABLE | LIVE | VIEWED_LIVE
 
 class YoutubeLiveStream():
-    def __init__(self, args, cookie):
-        self.args = args
-        self.url = args.url
-        self.video_id = get_video_id(args.url)
+    def __init__(self, url, output_dir, video_quality, cookie):
+        self.url = url
+        self.output_dir = output_dir
+        self.max_video_quality = video_quality
+        self.video_id = get_video_id(url)
         self.cookie = cookie
         self.json = None
         self.video_title = None
@@ -43,7 +44,7 @@ class YoutubeLiveStream():
         self.done = False
 
         capturedirname = f'stream_capture_{self.video_id}'
-        capturedirpath = f'{args.output_dir}{sep}{capturedirname}'
+        capturedirpath = f'{output_dir}{sep}{capturedirname}'
 
         self.setup_logger(capturedirpath)
 
@@ -68,7 +69,7 @@ class YoutubeLiveStream():
 
     def get_first_segment(self, paths):
         """
-        Creates each path in paths. If one already existed, return the last chunk
+        Creates each path in paths. If one already existed, return the last segment
         already downloaded, otherwise return 1.
         """
         dir_existed = False
@@ -83,24 +84,33 @@ class YoutubeLiveStream():
 
         if dir_existed:
             # If one of the directories exists, assume we are resuming a previously
-            # failed download attempt. Get the latest downloaded chunk number,
-            # unless one directory holds an earlier chunk than the other.
-            # video_last_chunk = max([int(f[:f.index('.')]) for f in os.listdir(paths[0])])
-            # audio_last_chunk = max([int(f[:f.index('.')]) for f in os.listdir(paths[1])])
-            # seg = min(video_last_chunk, audio_last_chunk)
+            # failed download attempt. Get the latest downloaded segment number,
+            # unless one directory holds an earlier segment than the other.
+            # video_last_segment = max([int(f[:f.index('.')]) for f in os.listdir(paths[0])])
+            # audio_last_segment = max([int(f[:f.index('.')]) for f in os.listdir(paths[1])])
+            # seg = min(video_last_segment, audio_last_segment)
             seg = min([
                     max([int(f[:f.index('.')]) for f in os.listdir(p)], default=1)
                     for p in paths
                 ])
 
-            # Step back one file just in case the latest chunk got only partially
-            # downloaded (we want to overwrite it to avoid a corrupted chunk)
+            # Step back one file just in case the latest segment got only partially
+            # downloaded (we want to overwrite it to avoid a corrupted segment)
             if seg > 1:
                 self.logger.warning(f"An output directory already existed. We assume a failed \
-    download attempt.\nLast chunk available was {seg}.")
+    download attempt.\nLast segment available was {seg}.")
                 seg -= 1
         return seg
 
+
+    def update_json(self):
+        json = get_json(self.url, self.cookie)
+        self.json = json
+        if not json:
+            self.logger.critical(f"WARNING: invalid JSON for {self.url}: {json}")
+            self.status &= ~Status.AVAILABLE
+            return
+        logger.debug(json)
 
 
     def is_live(self):
@@ -122,16 +132,7 @@ class YoutubeLiveStream():
             self.status |= Status.VIEWED_LIVE
         else:
             self.status &= ~Status.VIEWED_LIVE
-
-
-    def update_json(self):
-        json = get_json(self.url, self.cookie)
-        self.json = json
-        if not json:
-            self.logger.critical(f"WARNING: invalid JSON for {self.url}: {json}")
-            self.status &= ~Status.AVAILABLE
-            return
-        logger.debug(json)
+        self.logger.critical(f"is_live() status {self.status}")
 
 
     def update_info(self):
@@ -160,9 +161,12 @@ class YoutubeLiveStream():
                 .get('liveStreamOfflineSlateRenderer', {}) \
                 .get('scheduledStartTime')
             if scheduled_time is not None:
-                logging.warning(f"Scheduled start time: {scheduled_time}. We wait...")
+                self.logger.warning(f"Scheduled start time: {scheduled_time}. We wait...")
                 self.status |= Status.WAITING
                 self.scheduled_start_time = scheduled_time
+                raise WaitingException(self.video_id, playabilityStatus.get('reason', 'No reason found.'), scheduled_time)
+            elif (Status.LIVE | Status.VIEWED_LIVE) not in self.status:
+                raise WaitingException(self.video_id, playabilityStatus.get('reason', 'No reason found.'))
             raise OfflineException(self.video_id, playabilityStatus.get('reason', 'No reason found.'))
 
         elif status == 'LOGIN_REQUIRED':
@@ -188,10 +192,7 @@ playabilityStatus.get('reason', 'No reason found.'))
             self.status &= ~Status.OFFLINE
             self.status &= ~Status.WAITING
 
-
-        # self.status &= ~Status.WAITING
-
-        video_quality = get_best_quality(self.json, "video", self.args.max_video_quality)
+        video_quality = get_best_quality(self.json, "video", self.max_video_quality)
         audio_quality = get_best_quality(self.json, "audio")
         if video_quality:
             self.video_base_url = get_base_url(self.json, video_quality)
@@ -214,48 +215,51 @@ playabilityStatus.get('reason', 'No reason found.'))
                 self.update_json()
                 self.update_info()
 
-                if self.status & Status.WAITING:
-                    logger.warning(f"Status is {self.status}. Waiting for 60 seconds...")
-                    sleep(60)
-                    self.update_json()
-                    self.update_info()
-                    continue
+                self.logger.critical(f"DEBUG status is {self.status}")
 
                 if not self.status == Status.OK:
                     self.logger.critical(f"Could not download {self.url}: \
 stream unavailable or not a livestream.")
                     return
+            except WaitingException as e:
+                self.logger.critical(f"{e}")
+                logger.warning(f"Status is {self.status}. Waiting for 60 seconds...")
+                sleep(5)
+                continue
             except OfflineException as e:
                 self.logger.critical(f"{e}")
-                continue
+                raise e
             except Exception as e:
                 self.logger.critical(f"{e}")
                 raise e
 
-            try:
-                self.do_download()
-
-                if self.done:
-                    break
-            except EmptyChunkException as e:
-                self.update_json()
-                self.is_live()
-                if not self.status & Status.LIVE:
+            while not self.done:
+                try:
+                    self.do_download()
+                except EmptySegmentException as e:
+                    self.update_json()
+                    self.is_live()
+                    if Status.LIVE | Status.VIEWED_LIVE in self.status:
+                        self.logger.critical(f"It seems the stream has not really ended. Retrying in 20 secs...")
+                        sleep(5)
+                        continue
+                    self.logger.critical(f"The stream is not live anymore. Done.")
                     self.done = True
-                break
-            # except Exception as e: # Timeout, end of stream
-            #     # TODO lookup the urlretrieve exception again "empty something"
-            #     self.logger.critical(f"Unhandled Exception in download(): {e}")
-            #     self.done = True
-            #     break
+                    break
+
+                # except Exception as e: # Timeout, end of stream
+                #     # TODO lookup the urlretrieve exception again "empty something"
+                #     self.logger.critical(f"Unhandled Exception in download(): {e}")
+                #     self.done = True
+                #     break
 
     def do_download(self):
         padding = 10
         try:
-            while True: #FIXME while not self.done?
+            while True: 
                 video_segment_url = f'{self.video_base_url}&sq={self.seg}'
                 audio_segment_url = f'{self.audio_base_url}&sq={self.seg}'
-                self.logger.info(f"Downloading segment {self.seg}...")
+                self.logger.warning(f"Downloading segment {self.seg}...")
 
                 # To have zero-padded filenames (not compatible with
                 # merge.py from https://github.com/mrwnwttk/youtube_stream_capture
@@ -270,12 +274,12 @@ stream unavailable or not a livestream.")
                     self.logger.info(f"Seg status: {status}")
                     self.logger.debug(f"Seg headers: {headers}")
                     if not write_to_file(in_stream, video_segment_filename)\
-                    or status == 204\
-                    or not headers.get('X-Segment-Lmt'):
-                        self.logger.warning(f"Chunk {self.seg} is empty, stream has probably ended?")
-                        raise EmptyChunkException("")
+                        and status == 204\
+                        and not headers.get('X-Segment-Lmt'):
+                        self.logger.warning(f"Segment {self.seg} is empty, stream might have ended...")
+                        raise EmptySegmentException("")
 
-                # Assume stream has ended if last chunk is empty
+                # Assume stream has ended if last segment is empty
                 # if os.stat(video_segment_filename).st_size == 0:
                 #     os.unlink(video_segment_filename)
                 #     self.done = True
@@ -288,8 +292,8 @@ stream unavailable or not a livestream.")
                 self.seg += 1
         except urllib.error.URLError as e:
             self.logger.critical(f'Network error {e.reason}')
-            return
+            raise e
         except (IOError) as e:
             self.logger.critical(f'File error: {e}')
-            return
+            raise e
 

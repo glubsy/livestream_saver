@@ -4,7 +4,7 @@ import argparse
 from livestream_saver.download import *
 from livestream_saver.util import *
 
-logger = logging.getLogger('')
+logger = logging.getLogger(__name__)
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -39,7 +39,8 @@ if __name__ == "__main__":
     logger.addHandler(conhandler)
 
     cookie = get_cookie(args.cookie) if args.cookie else {}
-    dl = YoutubeLiveStream(args, cookie)
+
+    dl = YoutubeLiveStream(args.url, args.output_dir, args.max_video_quality, cookie)
     dl.download()
 
     if dl.done:

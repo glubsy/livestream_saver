@@ -6,7 +6,7 @@ import pathlib
 from platform import system
 from livestream_saver.itag import *
 
-logger = logging.getLogger('')
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 SYSTEM = system()
@@ -157,7 +157,7 @@ def get_json(url, cookie={}):
 def write_to_file(fsrc, fdst, length=0):
     """Copy data from file-like object fsrc to file-like object fdst.
     If no bytes are read from fsrc, do not create fdst and return False.
-    return True when file has been create and data has been written."""
+    Return True when file has been created and data has been written."""
     # Localize variable access to minimize overhead.
     if not length:
         length = COPY_BUFSIZE
