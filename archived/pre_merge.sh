@@ -1,5 +1,5 @@
 #!/bin/bash
-# To be used after using the youtube_stream_parts_download.py script
+# To be used after using the manual_download.py script
 # and right before mrwnwttk's merge.py script 
 # from https://github.com/mrwnwttk/youtube_stream_capture
 
@@ -43,5 +43,5 @@ perl-rename "${VIDEO_REGEX}" ${target_dirname}/*;
 # Optionally, remove any leading padding zeros we added
 perl-rename 's/(.*\/)0*(\d*_.*)/$1$2/' ${target_dirname}/*;
 
-# Call the merge script with bogus youtube URL
+# Call the merge script with bogus youtube URL since it expects one anyway
 python "${MERGE_SCRIPT}" "https://www.youtube.com/watch?v=${YT_HASH}";

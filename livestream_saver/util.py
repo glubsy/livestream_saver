@@ -60,16 +60,17 @@ def print_found_quality(item, datatype):
         logger.critical(f"Exception while trying to print found {datatype} quality: {e}")
 
 
-def get_best_quality(json, datatype, limit=None):
+def get_best_quality(_json, datatype, limit=None):
     # Select the best possible quality, with limit (str) as the highest possible
 
     quality_ids = []
     label = 'qualityLabel' if datatype == 'video' else 'audioQuality'
-    streamingData = json.get('streamingData', {})
+    streamingData = _json.get('streamingData', {})
     adaptiveFormats = streamingData.get('adaptiveFormats', {})
 
     if not streamingData or not adaptiveFormats:
-        logger.debug(f"ERROR: could not get {datatype} quality format. Missing streamingData or adaptiveFormats")
+        logger.debug(f"ERROR: could not get {datatype} quality format. \
+Missing streamingData or adaptiveFormats")
         return None
 
     for _dict in adaptiveFormats:
@@ -93,7 +94,7 @@ def get_best_quality(json, datatype, limit=None):
     for i in ranking:
         if i in quality_ids:
             chosen_quality = i
-            for d in json['streamingData']['adaptiveFormats']:
+            for d in _json['streamingData']['adaptiveFormats']:
                 if chosen_quality == d.get('itag'):
                     if datatype == "video":
                         chosen_quality_labels = f"{d.get('qualityLabel')} \
@@ -103,13 +104,24 @@ type: {d.get('mimeType')} bitrate: {d.get('bitrate')}"
 type: {d.get('mimeType')} bitrate: {d.get('bitrate')}"
             break
 
-    logger.warning(f"Chosen {datatype} quality: itag {chosen_quality}; height: {chosen_quality_labels}")
+    logger.warning(f"Chosen {datatype} quality: \
+itag {chosen_quality}; height: {chosen_quality_labels}")
 
     return chosen_quality
 
 
-def get_base_url(json, itag):
-    for _dict in json['streamingData']['adaptiveFormats']:
+def get_scheduled_time(playabilityStatus):
+    s = playabilityStatus.get('liveStreamability', {})\
+                            .get('liveStreamabilityRenderer', {}) \
+                            .get('offlineSlate', {}) \
+                            .get('liveStreamOfflineSlateRenderer', {}) \
+                            .get('scheduledStartTime')
+    if s:
+        return int(s)
+    return s
+
+def get_base_url(_json, itag):
+    for _dict in _json['streamingData']['adaptiveFormats']:
         if _dict.get('itag', None) == itag:
             return _dict.get('url', None)
 
@@ -128,11 +140,8 @@ def get_video_id(url):
     return video_id
 
 
-def get_details(json, item):
-    return json.get('videoDetails', {}).get(item)
-
-
 def get_json(url, cookie={}):
+    """Returns a dictionary from the json string."""
     headers = {
     'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
 (KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36'
@@ -141,11 +150,13 @@ def get_json(url, cookie={}):
     req = requests.get(url, headers=headers, cookies=cookie)
     logger.debug(f"JSON GET status code: {req.status_code}")
     if req.status_code == 429:
-        logger.critical("Too many requests. Please try again later or get a new IP (also a new cookie?).")
+        logger.critical("Too many requests. \
+Please try again later or get a new IP (also a new cookie?).")
         return {}
 
-    content_page = req.text.split("ytInitialPlayerResponse = ")[1]
-    content_page = content_page.split(";var meta = document.")[0]
+    content_page = req.text\
+                   .split("ytInitialPlayerResponse = ")[1]\
+                   .split(";var meta = document.")[0]
     try:
         j = json.loads(content_page)
     except Exception as e:

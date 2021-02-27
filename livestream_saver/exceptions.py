@@ -1,3 +1,5 @@
+from datetime import date, datetime
+
 class NoLoginException(Exception):
     def __init__(self, video_id, reason):
         self.video_id = video_id
@@ -30,9 +32,10 @@ class WaitingException(Exception):
 
     @property
     def error_string(self):
-        if not self.scheduled_start_time:
-            return f"{self.video_id} waiting for stream to start: {self.reason}."
-        return f"{self.video_id} waiting for stream to start: {self.reason}. At time: {self.scheduled_start_time}"
+        msg = f"{self.video_id} waiting for stream to start: {self.reason}."
+        if self.scheduled_start_time:
+            msg += f" Scheduled time: {datetime.utcfromtimestamp(self.scheduled_start_time)}"
+        return msg
 
 
 class OfflineException(Exception):
