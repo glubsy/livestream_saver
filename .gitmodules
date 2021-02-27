@@ -1,0 +1,3 @@
+[submodule "archived/youtube_stream_capture"]
+	path = archived/youtube_stream_capture
+	url = https://github.com/mrwnwttk/youtube_stream_capture.git

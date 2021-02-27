@@ -3,10 +3,11 @@
 # and right before mrwnwttk's merge.py script 
 # from https://github.com/mrwnwttk/youtube_stream_capture
 
-# Where I installed the merge script (CHANGE)
-MERGE_SCRIPT="${HOME}/INSTALLED/youtube_stream_capture/merge.py"
+# Point to the script located in the submodule, relative to this script's location
+MERGE_SCRIPT="$(dirname $(realpath $0))/youtube_stream_capture/merge.py"
 
 # Make sure the capture directory is there
+# FIXME if there is more than one result, it won't work.
 CAP_DIR=$(find . -maxdepth 1 -type d -iname 'stream_capture*');
 if [[ ${CAP_DIR} == '' ]]; then 
 	echo "Error getting youtube hash from \"stream_capture_HASH_ID\" directory. Make sure it is present.";
@@ -45,3 +46,8 @@ perl-rename 's/(.*\/)0*(\d*_.*)/$1$2/' ${target_dirname}/*;
 
 # Call the merge script with bogus youtube URL since it expects one anyway
 python "${MERGE_SCRIPT}" "https://www.youtube.com/watch?v=${YT_HASH}";
+
+if [[ $? -eq 0 ]]; then
+	echo "Removing temporary directory with symlinks \"${target_dirname}\"..."
+	rm -r ${target_dirname};
+fi
