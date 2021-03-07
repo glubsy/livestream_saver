@@ -186,6 +186,7 @@ We assume a failed download attempt.\nLast segment available was {seg}.")
 
         metadata_file = self.output_dir + sep + 'metadata.json'
         if os.path.exists(metadata_file):
+            # Avoid writing this file more than once for now. No further updates.
             return
         with open(metadata_file, 'w') as fp:
             json.dump(obj=self.video_info, fp=fp, indent=4)
@@ -307,7 +308,7 @@ stream unavailable or not a livestream.")
                     self.done = True
                     return
                 except Exception as e:
-                    self.logger.critical(f"Unhandled exception. Aborting. {e}. ")
+                    self.logger.exception(f"Unhandled exception. Aborting.")
                     return
 
 

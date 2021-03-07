@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import requests
 import json
 import pathlib
@@ -7,7 +8,7 @@ from platform import system
 from livestream_saver.itag import *
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.DEBUG)
 
 SYSTEM = system()
 ISPOSIX = SYSTEM == 'Linux' or SYSTEM == 'Darwin'
@@ -140,11 +141,41 @@ def get_video_id(url):
     return video_id
 
 
+def get_video_id_re(url_pattern):
+    """
+    Naive way to get the video ID from the canonical URL.
+    """
+    pattern = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
+    regex = re.compile(pattern)
+    results = regex.search(url_pattern)
+    if not results:
+        logger.warning(f"Error while looking for {url_pattern}")
+    logger.info(f"matched regex search: {url_pattern}")
+    return results.group(1)
+
+
+def get_channel_id(url_pattern):
+    """
+    Naive way to get the channel id from channel canonical URL.
+    """
+    if "channel" in url_pattern: # /channel/HASH
+        pattern = r".*(channel\/)([0-9A-Za-z_-]{24}).*"
+        regex = re.compile(pattern)
+        results = regex.search(url_pattern)
+        if not results:
+            logger.error(f"Error while looking for channel {url_pattern}")
+        logger.warning(f"matched regex search: {url_pattern}: {results.group(2)}")
+        return results.group(2)
+    else: # /c/NAME
+        return url_pattern.split('/c/')[-1]
+
+
 def get_json(url, cookie={}):
     """Returns a dictionary from the json string."""
     headers = {
     'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
-(KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36'
+(KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36',
+    'accept-language': 'en-US,en'
     }
 
     req = requests.get(url, headers=headers, cookies=cookie)
@@ -154,6 +185,7 @@ def get_json(url, cookie={}):
 Please try again later or get a new IP (also a new cookie?).")
         return {}
 
+    # We could also use youtube-dl --dump-json instead
     content_page = req.text\
                    .split("ytInitialPlayerResponse = ")[1]\
                    .split(";var meta = document.")[0]
