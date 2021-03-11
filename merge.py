@@ -21,7 +21,8 @@ if __name__ == "__main__":
     args = parse_args()
     data_path = path.abspath(args.path)
     info = merge.get_metadata_info(data_path)
-    written_file = merge.merge(info=info,
-                                data_dir=out_path,
-                                output_dir=args.output_dir,
-                                delete_source=args.delete_source)
+    written_file = merge.merge(\
+                            info=info,\
+                            data_dir=data_path,\
+                            output_dir=args.output_dir,\
+                            delete_source=args.delete_source)

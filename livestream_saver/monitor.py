@@ -1,15 +1,19 @@
+from os import sep
+from time import sleep
+from random import randint
 import logging
 import requests
 import json
-from os import sep
+
 import livestream_saver.download
 import livestream_saver.exceptions
 import livestream_saver.util
+import livestream_saver.merge
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
 
-class YoutubeRequestSession():
+class YoutubeRequestSession:
     def __init__(self, cookie):
         self.cookie = cookie
 
@@ -22,7 +26,7 @@ class YoutubeRequestSession():
         return requests.get(url, headers=headers, cookies=self.cookie)
 
 
-class YoutubeChannel():
+class YoutubeChannel:
     def __init__(self, args, channel_id, session):
         self.info = {}
         self.url = args.url
@@ -30,9 +34,6 @@ class YoutubeChannel():
         self.info['id'] = channel_id
         self.community_json = None
         self.videos_json = None
-        # TODO load from disk here if available (pickle? shelve? json?)
-        # self.community_cache = None
-        # self.videos_cache = None
 
     def get_name(self):
         """
@@ -82,7 +83,7 @@ class YoutubeChannel():
         return get_videos_from_tab(tabs, 'Videos')
 
     def get_public_livestreams(self, filtertype):
-        if filtertype == 'upcoming': 
+        if filtertype == 'upcoming':
             # https://www.youtube.com/c/kamikokana/videos\?view\=2\&live_view\=502
             # https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g/videos?view=2&live_view=502
             # This video tab filtered list, returns public upcoming livestreams (with scheduled times)
@@ -137,6 +138,8 @@ def get_videos_from_tab(tabs, tabtype):
 
 
 def get_video_from_post(attachment):
+    if not attachment:
+        return {}
     video_post = {}
     video_post['videoId'] = attachment.get('videoId')
     for _item in attachment.get('title', {}).get('runs', []):
@@ -149,7 +152,7 @@ def get_video_from_post(attachment):
     for _item in attachment.get('thumbnailOverlays', []):
         if _item.get('thumbnailOverlayTimeStatusRenderer'):
             video_post['isLive'] = _item.get('thumbnailOverlayTimeStatusRenderer').get('style') == 'LIVE'
-            # NOTE there is also "UPCOMING" style, which includes 
+            # NOTE there is also "UPCOMING" style, which includes
             # "upcomingEventData" section, with startTime timestamp
             break
     return video_post
@@ -208,15 +211,36 @@ def monitor(args, cookie):
     session = YoutubeRequestSession(cookie)
     ch = YoutubeChannel(args, channel_id, session)
     logger.info(f"Monitoring channel: {ch.info.get('id')}")
-    live_videos = ch.get_live_videos()
-    logger.debug(f"Live videos found for channel {ch.get_name()}: {live_videos}")
 
-    # TODO:
-    # - get a tab with some info (author) -> "featured"?
-    # - get community tab
-    # - compile database of recent entries? -> probably not necessary unless we want to download past videos too
+    while True:
+        live_videos = ch.get_live_videos()
+        logger.debug(f"Live videos found for channel {ch.get_name()}: {live_videos}")
 
-    # while True:
-    #     ch.get_tab('live') -> doesn't show member streams
-    #     ch.get_tab('videos') -> doesn't show member streams, but shows current public live streams
-    #     ch.get_tab('community') -> only one that shows member streams, even while currently live
+        if not live_videos:
+            wait_block()
+            continue
+
+        target_live = live_videos[0]
+        _id = target_live.get('videoId')
+        stream = livestream_saver.download.YoutubeLiveStream(
+            url=f"https://www.youtube.com{target_live.get('url')}",
+            output_dir=args.output_dir,
+            cookie=cookie,
+            video_id=_id,
+            max_video_quality=args.max_video_quality
+        )
+        stream.download()
+        if stream.done:
+            logger.info(f"Finished downloading {_id}.")
+            # TODO do this in a separate thread
+            # logger.info(f"Merging segments for {_id}...")
+            # livestream_saver.merge.merge(info=stream.video_info, data_dir=stream.output_dir, delete_source=args.delete_source)
+
+        wait_time = randint(360, 850)
+        logger.debug(f"Sleeping for {wait_time} seconds...")
+        sleep(wait_time)
+
+def wait_block():
+    wait_time = randint(360, 850)
+    logger.debug(f"Sleeping for {wait_time} seconds...")
+    sleep(wait_time)

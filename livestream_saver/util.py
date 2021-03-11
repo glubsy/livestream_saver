@@ -61,8 +61,8 @@ def print_found_quality(item, datatype):
         logger.critical(f"Exception while trying to print found {datatype} quality: {e}")
 
 
-def get_best_quality(_json, datatype, limit=None):
-    # Select the best possible quality, with limit (str) as the highest possible
+def get_best_quality(_json, datatype, maxq=None):
+    # Select the best possible quality, with maxq (str) as the highest possible
 
     quality_ids = []
     label = 'qualityLabel' if datatype == 'video' else 'audioQuality'
@@ -80,11 +80,11 @@ Missing streamingData or adaptiveFormats")
             print_found_quality(_dict, datatype)
 
     if datatype == "video":
-        #  Select only resolutions below user-defined limit.
+        #  Select only resolutions below user-defined maxq.
         # global video_height_ranking
         ranking = []
         for k, v in video_height_ranking.items():
-            if limit and int(k) > limit:
+            if maxq and int(k) > maxq:
                 continue
             for height in v:
                 ranking.append(height)

@@ -1,4 +1,5 @@
 from os import sep, listdir, system, remove, path
+from json import load
 from pathlib import Path
 from shutil import copyfileobj
 import logging
@@ -93,6 +94,7 @@ def merge(info, data_dir, output_dir=None, delete_source=False):
 
 
 def metadata_arguments(info):
+    cmd = ""
     if info.get('title'):
         cmd += f"-metadata 'title={info.get('title')}' "
     if info.get('author'):

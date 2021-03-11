@@ -46,7 +46,12 @@ if __name__ == "__main__":
 
     cookie = get_cookie(args.cookie) if args.cookie else {}
 
-    dl = livestream_saver.download.YoutubeLiveStream(args.url, args.output_dir, args.max_video_quality, cookie)
+    dl = livestream_saver.download.YoutubeLiveStream(
+        url=args.url,\
+        output_dir=args.output_dir,\
+        max_video_quality=args.max_video_quality,\
+        cookie=cookie
+    )
     dl.download()
 
     if dl.done:
