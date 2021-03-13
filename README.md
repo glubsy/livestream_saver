@@ -1,6 +1,7 @@
 Download Youtube livestreams from the beginning to the end.
 
 Each module can be used independently from the others if needed.
+Cookies (in Netscape format) are needed to access membership-only videos.
 
 # channel_monitor.py
 
@@ -22,6 +23,12 @@ The *stream_downloader.py* script above should automatically merge the downloade
 
 * Usage:
 `python merge.py /path/to/segments_{VIDEO_ID}`
+
+## Dependencies:
+
+* python
+* python `requests` module (`pip install requests`)
+* ffmpeg
 
 ## Archived:
 

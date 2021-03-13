@@ -236,9 +236,7 @@ def monitor(args, cookie):
             # logger.info(f"Merging segments for {_id}...")
             # livestream_saver.merge.merge(info=stream.video_info, data_dir=stream.output_dir, delete_source=args.delete_source)
 
-        wait_time = randint(360, 850)
-        logger.debug(f"Sleeping for {wait_time} seconds...")
-        sleep(wait_time)
+        wait_block()
 
 def wait_block():
     wait_time = randint(360, 850)

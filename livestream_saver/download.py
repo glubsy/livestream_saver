@@ -165,7 +165,7 @@ We assume a failed download attempt.\nLast segment available was {seg}.")
 
 
     def download_thumbnail(self):
-        thumbnail_path = self.output_dir + sep + 'thumbnail.jpg'
+        thumbnail_path = self.output_dir + sep + 'thumbnail'
         if self.thumbnail_url and not path.exists(thumbnail_path):
             with closing(urlopen(self.thumbnail_url)) as in_stream:
                 util.write_to_file(in_stream, thumbnail_path)
@@ -184,9 +184,11 @@ We assume a failed download attempt.\nLast segment available was {seg}.")
         if self.video_info.get('scheduled_timestamp'):
             self.video_info['scheduled_time'] = datetime.utcfromtimestamp(self.video_info['scheduled_timestamp'])
 
+        # TODO get the description once the stream has started
+
         metadata_file = self.output_dir + sep + 'metadata.json'
         if path.exists(metadata_file):
-            # Avoid writing this file more than once for now. No further updates.
+            # FIXME this avoids writing this file more than once for now. No further updates.
             return
         with open(metadata_file, 'w') as fp:
             dump(obj=self.video_info, fp=fp, indent=4)
