@@ -1,16 +1,15 @@
 from os import sep
 from time import sleep
-from random import randint
+from random import randint, uniform
 import logging
 import requests
 import json
-
 import livestream_saver.download
 import livestream_saver.exceptions
 import livestream_saver.util
 import livestream_saver.merge
+
 logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG)
 
 
 class YoutubeRequestSession:
@@ -158,8 +157,6 @@ def get_video_from_post(attachment):
     return video_post
 
 
-
-
 def get_tabs_from_json(_json):
     return _json.get('contents', {})\
                 .get('twoColumnBrowseResultsRenderer', {})\
@@ -193,52 +190,10 @@ def get_json(req):
     return j
 
 
-def monitor(args, cookie):
-    logger.setLevel(logging.DEBUG)
-    channel_id = livestream_saver.util.get_channel_id(args.url)
-    logfile = logging.FileHandler(
-        filename=args.output_dir + f"{sep}monitor_{channel_id}.log", delay=True)
-    logfile.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
-    logfile.setFormatter(formatter)
-    logger.addHandler(logfile)
-
-    conhandler = logging.StreamHandler()
-    conhandler.setLevel(logging.DEBUG)
-    conhandler.setFormatter(formatter)
-    logger.addHandler(conhandler)
-
-    session = YoutubeRequestSession(cookie)
-    ch = YoutubeChannel(args, channel_id, session)
-    logger.info(f"Monitoring channel: {ch.info.get('id')}")
-
-    while True:
-        live_videos = ch.get_live_videos()
-        logger.debug(f"Live videos found for channel {ch.get_name()}: {live_videos}")
-
-        if not live_videos:
-            wait_block()
-            continue
-
-        target_live = live_videos[0]
-        _id = target_live.get('videoId')
-        stream = livestream_saver.download.YoutubeLiveStream(
-            url=f"https://www.youtube.com{target_live.get('url')}",
-            output_dir=args.output_dir,
-            cookie=cookie,
-            video_id=_id,
-            max_video_quality=args.max_video_quality
-        )
-        stream.download()
-        if stream.done:
-            logger.info(f"Finished downloading {_id}.")
-            # TODO do this in a separate thread
-            # logger.info(f"Merging segments for {_id}...")
-            # livestream_saver.merge.merge(info=stream.video_info, data_dir=stream.output_dir, delete_source=args.delete_source)
-
-        wait_block()
-
-def wait_block():
-    wait_time = randint(360, 850)
-    logger.debug(f"Sleeping for {wait_time} seconds...")
+def wait_block(min_minutes=15.0, variance=3.5):
+    """Wait for float: minutes, with up to float: variance minutes."""
+    min_seconds = min_minutes * 60
+    max_seconds = min_seconds + (variance * 60)
+    wait_time = uniform(min_seconds, max_seconds)
+    logger.debug(f"Sleeping for {wait_time:.2f} seconds...")
     sleep(wait_time)

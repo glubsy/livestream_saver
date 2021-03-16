@@ -9,6 +9,7 @@ from imghdr import what
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
+
 def get_metadata_info(path):
     try:
         with open(path + sep + "metadata.json", 'r') as fp:
@@ -52,8 +53,9 @@ already exists from a previous run.")
 
     # Fixing broken container
     # '-c:a' if datatype == 'audio' else '-c:v' => '-c copy' might be enough.
-    subprocess.run(f"ffmpeg -hide_banner -loglevel panic -y -i \"{concat_filepath}\" \
--c copy \"{ffmpeg_output_filename}\"")
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "panic", "-y", "-i",\
+        f"{concat_filepath}", "-c", "copy", f"{ffmpeg_output_filename}"]
+    subprocess.run(cmd)
 
     remove(concat_filepath)
     return ffmpeg_output_filename
@@ -64,8 +66,29 @@ def merge(info, data_dir, output_dir=None, delete_source=False):
         output_dir = data_dir
 
     if not data_dir or not path.exists(data_dir):
-        logger.critical(f"Data directory \"{data_dir}\" not found.")
+        # logger.critical(f"Data directory \"{data_dir}\" not found.")
         return None
+
+    # Reuse the logging handlers from the download module if possible 
+    # to centralize logs pertaining to stream video handling
+    global logger
+    logger = logging.getLogger("download" + "." + info['id'])
+    if not logger.hasHandlers():
+        logger.setLevel(logging.DEBUG)
+        # File output
+        logfile = logging.FileHandler(\
+            filename=data_dir + sep +  "download.log", delay=True)
+        logfile.setLevel(logging.DEBUG)
+        formatter = logging.Formatter(\
+            '%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+        logfile.setFormatter(formatter)
+        logger.addHandler(logfile)
+
+        # Console output
+        conhandler = logging.StreamHandler()
+        conhandler.setLevel(logging.DEBUG)
+        conhandler.setFormatter(formatter)
+        logger.addHandler(conhandler)
 
     video_seg_dir = data_dir + sep + "vid"
     audio_seg_dir = data_dir + sep + "aud"

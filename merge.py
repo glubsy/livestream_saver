@@ -4,6 +4,9 @@ import argparse
 from livestream_saver import merge
 import logging
 
+logger = logging.getLogger("livestream_saver")
+logger.setLevel(logging.DEBUG)
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str,
@@ -24,10 +27,24 @@ if __name__ == "__main__":
     args = parse_args()
 
     # Sanitize log level input
-    numeric_level = getattr(logging, args.log.upper(), None)
-    if not isinstance(numeric_level, int):
+    log_level = getattr(logging, args.log.upper(), None)
+    if not isinstance(log_level, int):
         raise ValueError(f'Invalid log level: {args.log}')
-    logging.basicConfig(level=numeric_level)
+
+    # File output
+    logfile = logging.FileHandler(\
+        filename=args.path + sep +  "download.log", delay=True)
+    logfile.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(\
+        '%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+    logfile.setFormatter(formatter)
+    logger.addHandler(logfile)
+
+    # Console output
+    conhandler = logging.StreamHandler()
+    conhandler.setLevel(log_level)
+    conhandler.setFormatter(formatter)
+    logger.addHandler(conhandler)
 
     data_path = path.abspath(args.path)
     info = merge.get_metadata_info(data_path)
