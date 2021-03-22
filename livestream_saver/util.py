@@ -49,6 +49,8 @@ def get_channel_id(url_pattern):
             logger.error(f"Error while looking for channel {url_pattern}")
         logger.debug(f"matched regex search: {url_pattern}: {results.group(2)}")
         return results.group(2)
-    else: # /c/NAME
+    elif '/' in url_pattern: # /c/NAME
         return url_pattern.split('/c/')[-1]
+    else:
+        return url_pattern
 

@@ -45,6 +45,7 @@ class YoutubeLiveStream:
         # self.scheduled_timestamp = None
         self.logger = None
         self.done = False
+        self.error = None
 
         self.output_dir = self.create_output_dir(output_dir)
 
@@ -279,7 +280,7 @@ playability status is: {status} \
         self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
         self.logger.info(f'Will start downloading from segment number {self.seg}.')
 
-        while not self.done:
+        while not self.done and not self.error:
             try:
                 self.update_json()
                 self.update_status()
@@ -291,8 +292,9 @@ playability status is: {status} \
 stream unavailable or not a livestream.")
                     return
             except exceptions.WaitingException as e:
-                self.logger.warning(f"Status is {self.status}. Waiting for 60 seconds...")
-                sleep(5)
+                self.logger.warning(f"Status is {self.status}. \
+Waiting for 60 seconds...")
+                sleep(60)
                 continue
             except exceptions.OfflineException as e:
                 self.logger.critical(f"{e}")
@@ -312,17 +314,21 @@ stream unavailable or not a livestream.")
                     self.update_json()
                     self.is_live()
                     if Status.LIVE | Status.VIEWED_LIVE in self.status:
-                        self.logger.warning(f"It seems the stream has not really ended. Retrying in 20 secs...")
-                        sleep(5)
+                        self.logger.warning(f"It seems the stream has not \
+really ended. Retrying in 20 secs...")
+                        sleep(20)
                         continue
                     self.logger.warning(f"The stream is not live anymore. Done.")
                     self.done = True
-                    return
+                    break
                 except Exception as e:
                     self.logger.exception(f"Unhandled exception. Aborting.")
-                    return
-        if dl.done:
+                    self.error = f"{e}"
+                    break
+        if self.done:
             self.logger.info(f"Finished downloading {self.video_info.get('id')}.")
+        if self.error:
+            self.logger.critical(f"Some kind of error occured during download? {self.error}")
 
 
     def do_download(self):
@@ -352,10 +358,13 @@ stream unavailable or not a livestream.")
                     status = in_stream.status
                     self.logger.debug(f"Seg status: {status}")
                     self.logger.debug(f"Seg headers: {headers}")
-                    if not self.write_to_file(in_stream, video_segment_filename)\
-                        and status == 204\
-                        and not headers.get('X-Segment-Lmt'):
-                        raise exceptions.EmptySegmentException(f"Segment {self.seg} is empty, stream might have ended...")
+                    if not self.write_to_file(in_stream, video_segment_filename):
+                        if status == 204 and not headers.get('X-Segment-Lmt'):
+                            raise exceptions.EmptySegmentException(\
+                                f"Segment {self.seg} is empty, stream might have ended...")
+                        self.logger.critical(f"Waiting for 60 seconds before retrying...")
+                        sleep(60)
+                        continue
 
                 # urllib.request.urlretrieve(audio_segment_url, audio_segment_filename)
                 with closing(urlopen(audio_segment_url)) as in_stream:
@@ -368,7 +377,7 @@ stream unavailable or not a livestream.")
                     raise e
                 attempt += 1
                 self.logger.critical(f"Waiting for 60 seconds before retrying...")
-                sleep(10)
+                sleep(60)
                 continue
             except (IOError) as e:
                 self.logger.critical(f'File error: {e}')

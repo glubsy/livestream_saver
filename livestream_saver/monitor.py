@@ -28,7 +28,7 @@ class YoutubeRequestSession:
 class YoutubeChannel:
     def __init__(self, args, channel_id, session):
         self.info = {}
-        self.url = args.url
+        self.url = self.sanitize_url(args.url)
         self.session = session
         self.info['id'] = channel_id
         self.community_json = None
@@ -45,6 +45,13 @@ class YoutubeChannel:
             .get('metadata', {})\
             .get('channelMetadataRenderer', {})\
             .get('title')
+
+    def sanitize_url(self, url):
+        """Make sure url passed to constructor is valid"""
+        # FIXME needs smarter checks
+        if "http" not in url and "youtube.com" not in url:
+            return f"https://www.youtube.com/channel/{url}"
+        return url
 
     def get_live_videos(self):
         """
