@@ -2,7 +2,9 @@ from os import sep
 from time import sleep
 from random import randint, uniform
 import logging
-import requests
+# import requests
+
+from http.cookiejar import CookieJar, MozillaCookieJar
 import json
 import livestream_saver.download
 import livestream_saver.exceptions
@@ -12,24 +14,11 @@ import livestream_saver.merge
 logger = logging.getLogger(__name__)
 
 
-class YoutubeRequestSession:
-    def __init__(self, cookie):
-        self.cookie = cookie
-
-    def do_request(self, url):
-        headers = {
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
-    (KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36',
-        'accept-language': 'en-US,en'
-        }
-        return requests.get(url, headers=headers, cookies=self.cookie)
-
-
 class YoutubeChannel:
     def __init__(self, args, channel_id, session):
         self.info = {}
-        self.url = self.sanitize_url(args.url)
         self.session = session
+        self.url = self.sanitize_url(args.url)
         self.info['id'] = channel_id
         self.community_json = None
         self.videos_json = None
@@ -75,7 +64,11 @@ class YoutubeChannel:
         """
         Returns list of dict with urls to videos attached to community posts.
         """
-        self.community_json = get_json(self.session.do_request(self.url + '/community'))
+        self.community_json = livestream_saver.util.get_json_from_string(
+            self.session.make_request(self.url + '/community'))
+        # logger.debug(f"community videos JSON:\n{self.community_json}")
+        if not self.community_json:
+            return []
         tabs = get_tabs_from_json(self.community_json)
         return get_videos_from_tab(tabs, 'Community')
 
@@ -84,7 +77,9 @@ class YoutubeChannel:
         Returns list of videos from "videos" or "featured" tabs.
         """
         self.videos_json = self.get_public_livestreams('current')
-        # logger.debug(f"{self.videos_json}")
+        # logger.debug(f"public videos JSON:\n{self.videos_json}")
+        if not self.videos_json:
+            return []
         tabs = get_tabs_from_json(self.videos_json)
         return get_videos_from_tab(tabs, 'Videos')
 
@@ -93,14 +88,17 @@ class YoutubeChannel:
             # https://www.youtube.com/c/kamikokana/videos\?view\=2\&live_view\=502
             # https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g/videos?view=2&live_view=502
             # This video tab filtered list, returns public upcoming livestreams (with scheduled times)
-            return get_json(self.session.do_request(self.url + '/videos?view=2&live_view=502'))
+            res = self.session.make_request(self.url + '/videos?view=2&live_view=502')
+            return livestream_saver.util.get_json_from_string(res)
         if filtertype == 'current':
             # NOTE: active livestreams are also displays in /featured tab:
             # https://www.youtube.com/c/kamikokana/videos?view=2&live_view=501
-            return get_json(self.session.do_request(self.url + '/videos?view=2&live_view=501'))
+            res = self.session.make_request(self.url + '/videos?view=2&live_view=501')
+            return livestream_saver.util.get_json_from_string(res)
         if filtertype == 'featured':
             # NOTE "featured" tab is ONLY reliable for CURRENT live streams
-            return get_json(self.session.do_request(self.url + '/featured'))
+            res = self.session.make_request(self.url + '/featured')
+            return livestream_saver.util.get_json_from_string(res)
         # NOTE "/live" virtual tab is a redirect to the current live broadcast
 
 
@@ -165,6 +163,8 @@ def get_video_from_post(attachment):
 
 
 def get_tabs_from_json(_json):
+    if not _json:
+        return _json
     return _json.get('contents', {})\
                 .get('twoColumnBrowseResultsRenderer', {})\
                 .get('tabs', [])
@@ -177,24 +177,9 @@ def rss_from_id(channel_id):
     # WARNING: this seems to be a legacy API, might get deprecated someday!
     return 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channel_id
 
+
 def rss_from_name(channel_name):
     return 'https://www.youtube.com/feeds/videos.xml?user=' + channel_name
-
-
-def get_json(req):
-    """
-    Extract the initial JSON from the HTML in the request response.
-    """
-    # We could also use youtube-dl --dump-json instead
-    content_page = req.text\
-                    .split("var ytInitialData = ")[1]\
-                    .split(';</script><link rel="canonical')[0]
-    try:
-        j = json.loads(content_page)
-    except Exception as e:
-        logger.critical(f"Exception while loading json: {e}")
-        return {}
-    return j
 
 
 def wait_block(min_minutes=15.0, variance=3.5):

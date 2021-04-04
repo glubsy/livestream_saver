@@ -9,7 +9,6 @@ from contextlib import closing
 from enum import Flag, auto
 from urllib.request import urlopen
 import urllib.error
-import requests
 from livestream_saver import exceptions
 from livestream_saver import util
 from livestream_saver import itag
@@ -24,14 +23,14 @@ COPY_BUFSIZE = 1024 * 1024 if ISWINDOWS else 64 * 1024
 
 
 class YoutubeLiveStream:
-    def __init__(self, url, output_dir, cookie={}, video_id=None, max_video_quality=None, log_level=logging.INFO):
+    def __init__(self, url, output_dir, session, video_id=None, max_video_quality=None, log_level=logging.INFO):
         self.url = url
         self.max_video_quality = max_video_quality
 
         self.video_info = {}
         self.video_info['id'] = self.get_video_id(url) if not video_id else video_id
 
-        self.cookie = cookie
+        self.session = session
         self.json = None
         # self.video_title = None
         # self.video_author = None
@@ -146,13 +145,12 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
 
     def update_json(self):
-        _json = self.get_json(self.url, self.cookie)
-        self.json = _json
-        if not _json:
-            self.logger.critical(f"WARNING: invalid JSON for {self.url}: {_json}")
+        self.json = util.get_json_from_string(self.session.make_request(self.url))
+        if not self.json:
+            self.logger.critical(f"WARNING: invalid JSON for {self.url}: {self.json}")
             self.status &= ~Status.AVAILABLE
             return
-        self.logger.debug("\n" + dumps(_json, indent=4))
+        self.logger.debug("\n" + dumps(self.json, indent=4))
 
 
     def populate_info(self):
@@ -447,7 +445,6 @@ really ended. Retrying in 20 secs...")
 
         return chosen_quality
 
-
     def get_scheduled_time(self, playabilityStatus):
         s = playabilityStatus.get('liveStreamability', {})\
                                 .get('liveStreamabilityRenderer', {}) \
@@ -463,7 +460,6 @@ really ended. Retrying in 20 secs...")
             if _dict.get('itag', None) == itag:
                 return _dict.get('url', None)
 
-
     def get_video_id(self, url):
         # Argument format:
         # https://youtu.be/njrI8ZDQ7ho or https://youtube.com/?v=njrI8ZDQ7ho
@@ -477,7 +473,6 @@ really ended. Retrying in 20 secs...")
     (too long?) {self.video_id}")
         return video_id
 
-
     def get_video_id_re(self, url_pattern):
         """
         Naive way to get the video ID from the canonical URL.
@@ -489,34 +484,6 @@ really ended. Retrying in 20 secs...")
             self.logger.warning(f"Error while looking for {url_pattern}")
         self.logger.info(f"matched regex search: {url_pattern}")
         return results.group(1)
-
-
-    def get_json(self, url, cookie={}):
-        """Returns a dictionary from the json string."""
-        headers = {
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
-    (KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36',
-        'accept-language': 'en-US,en'
-        }
-
-        req = requests.get(url, headers=headers, cookies=cookie)
-        self.logger.debug(f"JSON GET status code: {req.status_code}")
-        if req.status_code == 429:
-            self.logger.critical("Too many requests. \
-    Please try again later or get a new IP (also a new cookie?).")
-            return {}
-
-        # We could also use youtube-dl --dump-json instead
-        content_page = req.text\
-                    .split("ytInitialPlayerResponse = ")[1]\
-                    .split(";var meta = document.")[0]
-        try:
-            j = loads(content_page)
-        except Exception as e:
-            self.logger.critical(f"Exception while loading json: {e}")
-            return {}
-        return j
-
 
     def write_to_file(self, fsrc, fdst, length=0):
         """Copy data from file-like object fsrc to file-like object fdst.

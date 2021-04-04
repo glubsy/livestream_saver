@@ -1,21 +1,21 @@
 from os import sep, makedirs
 import argparse
 import logging
-from livestream_saver.monitor import YoutubeRequestSession, YoutubeChannel, wait_block
+from livestream_saver.monitor import YoutubeChannel, wait_block
 from livestream_saver.download import YoutubeLiveStream
 from livestream_saver.merge import merge
-import livestream_saver.util
+from livestream_saver.util import YoutubeUrllibSession, get_channel_id
 
 logger = logging.getLogger("livestream_saver")
 logger.setLevel(logging.DEBUG)
 
-def monitor(args, cookie):
+def monitor(args):
     # Sanitize log level input
     log_level = getattr(logging, args.log.upper(), None)
     if not isinstance(log_level, int):
         raise ValueError(f'Invalid log level: {args.log}')
 
-    channel_id = livestream_saver.util.get_channel_id(args.url)
+    channel_id = get_channel_id(args.url)
     if not args.channel_name:
         output_dir = args.output_dir + sep + channel_id
     else:
@@ -37,7 +37,8 @@ def monitor(args, cookie):
     conhandler.setFormatter(formatter)
     logger.addHandler(conhandler)
 
-    session = YoutubeRequestSession(cookie)
+    session = YoutubeUrllibSession(args.cookie)
+    logger.debug(f"session: {session}")
     ch = YoutubeChannel(args, channel_id, session)
     logger.info(f"Monitoring channel: {ch.info.get('id')}")
 
@@ -54,7 +55,7 @@ def monitor(args, cookie):
         stream = YoutubeLiveStream(
             url=f"https://www.youtube.com{target_live.get('url')}",
             output_dir=output_dir,
-            cookie=cookie,
+            session=ch.session,
             video_id=_id,
             max_video_quality=args.max_video_quality,
             log_level=log_level
@@ -83,7 +84,7 @@ if __name__ == "__main__":
     parser.add_argument('url', type=str,
         help='Youtube Channel to monitor for live streams. \
 Either a full youtube URL or /channel/hash format.')
-    parser.add_argument('-c', '--cookie', action='store', default="./cookie.txt", type=str,
+    parser.add_argument('-c', '--cookie', action='store', default=None, type=str,
                     help='Path to cookie file.')
     parser.add_argument('-q', '--max_video_quality', action='store', default=None, type=int,
                     help='Use best available video resolution up to this height in pixels.')
@@ -100,8 +101,5 @@ Either a full youtube URL or /channel/hash format.')
     parser.add_argument('--log', action='store', default="INFO", type=str,
         help='Log level. [DEBUG, INFO, WARNING, ERROR, CRITICAL]')
     args = parser.parse_args()
-
-    cookie = livestream_saver.util.get_cookie(args.cookie) if args.cookie else {}
-
-    monitor(args, cookie)
+    monitor(args)
     logging.shutdown()

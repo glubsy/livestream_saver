@@ -4,7 +4,7 @@ import argparse
 
 import livestream_saver.download
 import livestream_saver.merge
-from livestream_saver.util import get_cookie
+from livestream_saver.util import YoutubeUrllibSession
 
 logger = logging.getLogger("livestream_saver")
 logger.setLevel(logging.DEBUG)
@@ -13,7 +13,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('url', type=str, help='Youtube URL to download.')
     parser.add_argument('-c', '--cookie', action='store',
-        default="./cookie.txt", type=str,
+        default=None, type=str,
         help='Path to cookie file.')
     parser.add_argument('-q', '--max_video_quality', action='store',
         default=None, type=int,
@@ -44,17 +44,17 @@ if __name__ == "__main__":
     logger.addHandler(logfile)
 
     conhandler = logging.StreamHandler()
-    conhandler.setLevel(log_level)
+    conhandler.setLevel(args.log)
     conhandler.setFormatter(formatter)
     logger.addHandler(conhandler)
 
-    cookie = get_cookie(args.cookie) if args.cookie else {}
+    session = YoutubeUrllibSession(args.cookie)
 
     dl = livestream_saver.download.YoutubeLiveStream(
         url=args.url,\
         output_dir=args.output_dir,\
+        session=session,\
         max_video_quality=args.max_video_quality,\
-        cookie=cookie,
         log_level=args.log
     )
     dl.download()
