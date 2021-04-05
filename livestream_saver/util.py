@@ -27,7 +27,8 @@ def _get_cookie_jar(cookie_path):
     except Exception as e:
         logger.error(f"Failed to load cookie file {cookie_path}: {e}. \
 Defaulting to empty cookie.")
-    logger.debug(f"Cookie jar: {cj}")
+    # logger.debug(f"Cookie jar: {cj}")
+
     # TODO Make sure the necessary youtube cookies are there, ie. LOGIN_INFO,
     # APISID, CONSENT, HSID, NID, PREF, SID, SIDCC, SSID, VISITOR_INFO1_LIVE,
     # __Secure-3PAPISID, __Secure-3PSID, __Secure-3PSIDCC, etc.

@@ -1,3 +1,4 @@
+#!/bin/env python3
 from os import sep, listdir, system, remove, path
 import subprocess
 from json import load

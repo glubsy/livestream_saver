@@ -2,7 +2,6 @@ from os import sep
 from time import sleep
 from random import randint, uniform
 import logging
-# import requests
 
 from http.cookiejar import CookieJar, MozillaCookieJar
 import json

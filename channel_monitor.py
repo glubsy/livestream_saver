@@ -1,3 +1,4 @@
+#!/bin/env python3
 from os import sep, makedirs
 import argparse
 import logging
@@ -83,22 +84,29 @@ if __name__ == "__main__":
     parser.add_argument('url', type=str,
         help='Youtube Channel to monitor for live streams. \
 Either a full youtube URL or /channel/hash format.')
-    parser.add_argument('-c', '--cookie', action='store', default=None, type=str,
-                    help='Path to cookie file.')
-    parser.add_argument('-q', '--max_video_quality', action='store', default=None, type=int,
-                    help='Use best available video resolution up to this height in pixels.')
-    parser.add_argument('-o', '--output_dir', action='store', default="./", type=str,
-                    help='Output directory where to save channel data.')
-    parser.add_argument('--channel_name', action='store', default=None, type=str,
-                    help='User-defined name of the channel to monitor.')
-    parser.add_argument('-d', '--delete_source', action='store', default=False, type=bool,
-                    help='Delete source files once final merge has been done.')
-    parser.add_argument('--interactive', action='store', default=False, type=bool,
-                    help='Allow user input to skip the current download.')
-    parser.add_argument('--scan_delay', action='store', default=10.0, type=float,
-                    help='Interval in minutes to scan for activity.')
-    parser.add_argument('--log', action='store', default="INFO", type=str,
-        help='Log level. [DEBUG, INFO, WARNING, ERROR, CRITICAL]')
+    parser.add_argument('-c', '--cookie', action='store',
+                        default=None, type=str,
+                        help='Path to Netscape formatted cookie file.')
+    parser.add_argument('-q', '--max_video_quality', action='store',
+                        default=None, type=int,
+                        help='Use best available video resolution up to this height in pixels.')
+    parser.add_argument('-o', '--output_dir', action='store',
+                        default="./", type=str,
+                        help='Output directory where to save channel data.')
+    parser.add_argument('--channel_name', action='store',
+                        default=None, type=str,
+                        help='User-defined name of the channel to monitor.')
+    parser.add_argument('-d', '--delete_source', action='store_true',
+                        help='Delete source segment files once the final \
+merging of them has been done.')
+    # parser.add_argument('--interactive', action='store_true',
+    #                     help='Allow user input to skip the current download.')
+    parser.add_argument('--scan_delay', action='store',
+                        default=10.0, type=float,
+                        help='Interval in minutes to scan for activity (default 10.0).')
+    parser.add_argument('--log', action='store',
+                        default="INFO", type=str,
+                        help='Log level. [DEBUG, INFO, WARNING, ERROR, CRITICAL]')
     args = parser.parse_args()
     monitor(args)
     logging.shutdown()

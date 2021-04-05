@@ -1,3 +1,4 @@
+#!/bin/env python3
 from os import sep
 import logging
 import argparse
@@ -14,19 +15,18 @@ def parse_args():
     parser.add_argument('url', type=str, help='Youtube URL to download.')
     parser.add_argument('-c', '--cookie', action='store',
         default=None, type=str,
-        help='Path to cookie file.')
+        help='Path to Netscape formatted cookie file.')
     parser.add_argument('-q', '--max_video_quality', action='store',
         default=None, type=int,
         help='Use best available video resolution up to this height in pixels.')
     parser.add_argument('-o', '--output_dir', action='store',
         default="./", type=str,
         help='Output directory where to write downloaded chunks.')
-    parser.add_argument('-d', '--delete_source', action='store',
-        default=False, type=bool,
+    parser.add_argument('-d', '--delete_source', action='store_true',
         help='Delete source files once final merge has been done.')
     levels = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
     parser.add_argument('--log', action='store', default="INFO", choices=levels,
-        help='Log level. [DEBUG, INFO, WARNING, ERROR, CRITICAL]')
+        help='Log level.')
     args = parser.parse_args()
     return args
 
