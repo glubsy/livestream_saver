@@ -38,7 +38,6 @@ def monitor(args):
     logger.addHandler(conhandler)
 
     session = YoutubeUrllibSession(args.cookie)
-    logger.debug(f"session: {session}")
     ch = YoutubeChannel(args, channel_id, session)
     logger.info(f"Monitoring channel: {ch.info.get('id')}")
 
