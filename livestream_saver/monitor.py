@@ -21,6 +21,8 @@ class YoutubeChannel:
         self.info['id'] = channel_id
         self.community_json = None
         self.videos_json = None
+        self.community_videos = None
+        self.public_videos = None
 
     def get_name(self):
         """
@@ -47,9 +49,24 @@ class YoutubeChannel:
         Returns a list of videos that are live, from various channel tabs.
         """
         community_videos = self.get_community_videos()
-        logger.debug(f"community videos {community_videos}")
+        if self.community_videos is None:
+            # Log only the first time
+            logger.debug(f"Community videos: {community_videos}")
+        else:
+            new_comm_videos = [v for v in community_videos if v not in self.community_videos]
+            if new_comm_videos:
+                logger.warning(f"Newly added community video: {new_comm_videos}")
+        self.community_videos = community_videos
+
         public_videos = self.get_public_videos()
-        logger.debug(f"public videos {public_videos}")
+        if self.public_videos is None:
+            logger.debug(f"Public videos: {public_videos}")
+        else:
+            new_pub_videos = [v for v in public_videos if v not in self.public_videos]
+            if new_pub_videos:
+                logger.warning(f"Newly added public video: {new_pub_videos}")
+        self.public_videos = public_videos
+
         live_videos = []
         for vid in community_videos:
             if vid.get('isLive'):
@@ -185,6 +202,7 @@ def wait_block(min_minutes=15.0, variance=3.5):
     """Wait for float: minutes, with up to float: variance minutes."""
     min_seconds = min_minutes * 60
     max_seconds = min_seconds + (variance * 60)
-    wait_time = uniform(min_seconds, max_seconds)
-    logger.debug(f"Sleeping for {wait_time:.2f} seconds...")
-    sleep(wait_time)
+    wait_time_sec = uniform(min_seconds, max_seconds)
+    wait_time_min = wait_time_sec / 60
+    logger.info(f"Sleeping for {wait_time_min:.2f} minutes ({wait_time_sec:.2f} seconds)...")
+    sleep(wait_time_sec)

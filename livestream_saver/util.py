@@ -146,7 +146,7 @@ class YoutubeUrllibSession:
     def make_request(self, url):
         req = Request(url, headers=self.headers)
         self.cookie_jar.add_cookie_header(req)
-        logger.info(f"Request {req.full_url}")
+        logger.debug(f"Request {req.full_url}")
         logger.debug(f"Request headers: {req.header_items()}")
         return self.parse_response(req)
 
@@ -157,7 +157,7 @@ class YoutubeUrllibSession:
         # We could also use youtube-dl --dump-json instead
         with urlopen(req) as res:
             logger.info(f"GET {res.url}")
-            logger.debug("Response Status code: {res.status}.\n\
+            logger.debug(f"Response Status code: {res.status}.\n\
 Response headers:\n{res.headers}")
             if res.status == 429:
                 logger.critical("Error 429. Too many requests? \
