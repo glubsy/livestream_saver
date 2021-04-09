@@ -500,7 +500,7 @@ really ended. Retrying in 20 secs...")
             # FIXME handle these errors better, for now we just ignore and move on:
             # ValueError: invalid literal for int() with base 16: b''
             # http.client.IncompleteRead: IncompleteRead
-            logger.exception(e)
+            self.logger.exception(e)
             buf = None
 
         if not buf:
