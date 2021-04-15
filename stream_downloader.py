@@ -4,7 +4,7 @@ import logging
 import argparse
 
 import livestream_saver.download
-import livestream_saver.merge
+from livestream_saver.merge import merge
 from livestream_saver.util import YoutubeUrllibSession
 
 logger = logging.getLogger("livestream_saver")
