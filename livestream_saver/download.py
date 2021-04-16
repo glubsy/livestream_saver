@@ -184,7 +184,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
                     break
 
         if self.video_info.get('scheduled_timestamp'):
-            self.video_info['scheduled_time'] = datetime.utcfromtimestamp(self.video_info['scheduled_timestamp'])
+            self.video_info['scheduled_time'] = datetime.utcfromtimestamp(self.video_info['scheduled_timestamp']).__str__()
 
         # TODO get the description once the stream has started
 
@@ -218,6 +218,8 @@ We assume a failed download attempt. Last segment available was {seg}.")
                 reason = playabilityStatus.get('reason', 'No reason found.')
                 self.logger.info(f"Scheduled start time: {sched_time} \
 ({datetime.utcfromtimestamp(sched_time)} UTC). We wait...")
+                # FIXME use local time zone for more accurate display of time
+                # for example: https://dateutil.readthedocs.io/
                 self.logger.warning(f"{reason}")
                 raise exceptions.WaitingException(self.video_info['id'],\
                     reason, sched_time)
