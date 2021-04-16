@@ -38,6 +38,7 @@ def monitor(args):
     conhandler.setFormatter(formatter)
     logger.addHandler(conhandler)
 
+    # FIXME sanitize url in case it points to a video stream url not a channel
     session = YoutubeUrllibSession(args.cookie)
     ch = YoutubeChannel(args, channel_id, session)
     logger.info(f"Monitoring channel: {ch.info.get('id')}")

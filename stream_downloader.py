@@ -27,6 +27,10 @@ def parse_args():
     levels = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
     parser.add_argument('--log', action='store', default="INFO", choices=levels,
         help='Log level.')
+    parser.add_argument('--scan_delay', action='store',
+        default=120.0, type=float,
+        help='Interval in seconds to scan for status update (default 120.0).')
+
     args = parser.parse_args()
     return args
 
@@ -57,7 +61,7 @@ if __name__ == "__main__":
         max_video_quality=args.max_video_quality,\
         log_level=args.log
     )
-    dl.download()
+    dl.download(args.scan_delay)
 
     # TODO make sure number of segment match the last numbered segment
     # Merge segments into one file

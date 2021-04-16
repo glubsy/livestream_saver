@@ -57,13 +57,11 @@ class YoutubeLiveStream:
         self.populate_info()
         self.download_thumbnail()
 
-
     def create_output_dir(self, output_dir):
         capturedirname = f"stream_capture_{self.video_info['id']}"
         capturedirpath = f'{output_dir}{sep}{capturedirname}'
         makedirs(capturedirpath, 0o766, exist_ok=True)
         return capturedirpath
-
 
     def setup_logger(self, path, log_level):
         self.logger = logging.getLogger("download" + "." + self.video_info['id'])
@@ -82,7 +80,6 @@ class YoutubeLiveStream:
         conhandler.setLevel(log_level)
         conhandler.setFormatter(formatter)
         self.logger.addHandler(conhandler)
-
 
     def get_first_segment(self, paths):
         """
@@ -121,7 +118,6 @@ We assume a failed download attempt. Last segment available was {seg}.")
                 seg -= 1
         return seg
 
-
     def is_live(self):
         isLive = self.json.get('videoDetails', {}).get('isLive')
         if isLive is not None and isLive is True:
@@ -152,7 +148,6 @@ We assume a failed download attempt. Last segment available was {seg}.")
             return
         self.logger.debug("\n" + dumps(self.json, indent=4))
 
-
     def populate_info(self):
         if not self.json:
             return
@@ -172,13 +167,11 @@ We assume a failed download attempt. Last segment available was {seg}.")
         self.logger.debug(f"Video title: {self.video_info['title']}")
         self.logger.debug(f"Video author: {self.video_info['author']}")
 
-
     def download_thumbnail(self):
         thumbnail_path = self.output_dir + sep + 'thumbnail'
         if self.thumbnail_url and not path.exists(thumbnail_path):
             with closing(urlopen(self.thumbnail_url)) as in_stream:
                 self.write_to_file(in_stream, thumbnail_path)
-
 
     def update_metadata(self):
         if not self.video_info.get('download_date'):
@@ -202,7 +195,6 @@ We assume a failed download attempt. Last segment available was {seg}.")
         with open(metadata_file, 'w') as fp:
             dump(obj=self.video_info, fp=fp, indent=4)
 
-
     def update_status(self):
         if not self.json:
             return
@@ -223,9 +215,12 @@ We assume a failed download attempt. Last segment available was {seg}.")
             if sched_time is not None:
                 self.status |= Status.WAITING
                 self.video_info['scheduled_timestamp'] = sched_time
-                self.logger.info(f"Scheduled start time: {sched_time}. We wait...")
-                raise exceptions.WaitingException(self.video_info['id'], playabilityStatus\
-                    .get('reason', 'No reason found.'), sched_time)
+                reason = playabilityStatus.get('reason', 'No reason found.')
+                self.logger.info(f"Scheduled start time: {sched_time} \
+({datetime.utcfromtimestamp(sched_time)} UTC). We wait...")
+                self.logger.warning(f"{reason}")
+                raise exceptions.WaitingException(self.video_info['id'],\
+                    reason, sched_time)
             elif (Status.LIVE | Status.VIEWED_LIVE) not in self.status:
                 raise exceptions.WaitingException(self.video_info['id'], \
                     playabilityStatus.get('reason', 'No reason found.'))
@@ -258,7 +253,6 @@ playability status is: {status} \
 
         self.logger.info(f"Stream status {self.status}")
 
-
     def update_download_urls(self):
         video_quality = self.get_best_quality(self.json, "video", self.max_video_quality)
         audio_quality = self.get_best_quality(self.json, "audio")
@@ -273,8 +267,7 @@ playability status is: {status} \
         self.logger.debug(f"Video base url {self.video_base_url}")
         self.logger.debug(f"Audio base url {self.audio_base_url}")
 
-
-    def download(self):
+    def download(self, wait_delay=120.0):
         self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
         self.logger.info(f'Will start downloading from segment number {self.seg}.')
 
@@ -291,8 +284,8 @@ stream unavailable or not a livestream.")
                     return
             except exceptions.WaitingException as e:
                 self.logger.warning(f"Status is {self.status}. \
-Waiting for 60 seconds...")
-                sleep(60)
+Waiting for {wait_delay} seconds...")
+                sleep(wait_delay)
                 continue
             except exceptions.OfflineException as e:
                 self.logger.critical(f"{e}")
@@ -327,7 +320,6 @@ really ended. Retrying in 20 secs...")
             self.logger.info(f"Finished downloading {self.video_info.get('id')}.")
         if self.error:
             self.logger.critical(f"Some kind of error occured during download? {self.error}")
-
 
     def do_download(self):
         if not self.video_base_url or not self.audio_base_url:
@@ -381,7 +373,6 @@ really ended. Retrying in 20 secs...")
                 self.logger.critical(f'File error: {e}')
                 raise e
 
-
     def print_found_quality(self, item, datatype):
         if datatype == "video":
             keys = ["itag", "qualityLabel", "mimeType", "bitrate", "quality", "fps"]
@@ -394,7 +385,6 @@ really ended. Retrying in 20 secs...")
             self.logger.info(result)
         except Exception as e:
             self.logger.critical(f"Exception while trying to print found {datatype} quality: {e}")
-
 
     def get_best_quality(self, _json, datatype, maxq=None):
         # Select the best possible quality, with maxq (str) as the highest possible
