@@ -17,6 +17,7 @@ def monitor(args):
         raise ValueError(f'Invalid log level: {args.log}')
 
     channel_id = get_channel_id(args.url)
+
     if not args.channel_name:
         output_dir = args.output_dir + sep + channel_id
     else:

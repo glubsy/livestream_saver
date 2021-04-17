@@ -4,6 +4,10 @@ Monitor a given channel for upcoming any upcoming livestream and download them a
 Each module can be used independently from the others if needed.
 Cookies (in Netscape format) are needed to access membership-only videos.
 
+## Notes:
+
+This is still beta software. It should work, but in case it doesn't, feel free to report issues. Or better yet, fix them yourself and submit a merge request.
+
 # channel_monitor.py
 
 Monitor a given Youtube channel for any upcoming livestream by requesting the channel's pages every few minutes. Automatically download a livestream as soon as it becomes active.

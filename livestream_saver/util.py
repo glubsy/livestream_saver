@@ -77,6 +77,8 @@ def get_channel_id(url_pattern):
             logger.error(f"Error while looking for channel {url_pattern}")
         logger.debug(f"matched regex search: {url_pattern}: {results.group(2)}")
         return results.group(2)
+    elif '/watch' in url_pattern:
+        raise Exception("Not a valid channel URL. Isn't this a video URL?")
     elif '/' in url_pattern: # /c/NAME
         return url_pattern.split('/c/')[-1]
     else:

@@ -51,3 +51,6 @@ class OfflineException(Exception):
 
 class EmptySegmentException(Exception):
     pass
+
+class ForbiddenSegmentException(Exception):
+    pass

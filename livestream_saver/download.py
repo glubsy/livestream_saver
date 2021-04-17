@@ -9,6 +9,7 @@ from contextlib import closing
 from enum import Flag, auto
 from urllib.request import urlopen
 import urllib.error
+from http.client import IncompleteRead
 from livestream_saver import exceptions
 from livestream_saver import util
 from livestream_saver import itag
@@ -302,7 +303,9 @@ Waiting for {wait_delay} seconds...")
             while True:
                 try:
                     self.do_download()
-                except exceptions.EmptySegmentException as e:
+                except (exceptions.EmptySegmentException,
+                        exceptions.ForbiddenSegmentException,
+                        IncompleteRead) as e:
                     self.logger.info(e)
                     self.update_json()
                     self.is_live()
@@ -326,11 +329,13 @@ really ended. Retrying in 20 secs...")
     def do_download(self):
         if not self.video_base_url or not self.audio_base_url:
             raise Exception("Missing video or audio base url!")
+        wait_sec = 60
         attempt = 0
         while True:
             try:
                 video_segment_url = f'{self.video_base_url}&sq={self.seg}'
                 audio_segment_url = f'{self.audio_base_url}&sq={self.seg}'
+                # TODO display rotating wheel in interactive mode
                 self.logger.info(f"Downloading segment {self.seg}...")
 
                 # To have zero-padded filenames (not compatible with
@@ -345,34 +350,45 @@ really ended. Retrying in 20 secs...")
                 #     unlink(video_segment_filename)
                 #     break
 
+                # TODO pass proper user-agent headers to server (construct Request)
                 with closing(urlopen(video_segment_url)) as in_stream:
                     headers = in_stream.headers
                     status = in_stream.status
                     self.logger.debug(f"Seg status: {status}")
-                    self.logger.debug(f"Seg headers: {headers}")
+                    self.logger.debug(f"Seg headers:\n{headers}")
                     if not self.write_to_file(in_stream, video_segment_filename):
                         if status == 204 and not headers.get('X-Segment-Lmt'):
                             raise exceptions.EmptySegmentException(\
                                 f"Segment {self.seg} is empty, stream might have ended...")
-                        self.logger.critical(f"Waiting for 60 seconds before retrying...")
-                        sleep(60)
+                        self.logger.critical(f"Waiting for {wait_sec} seconds before retrying...")
+                        sleep(wait_sec)
                         continue
 
                 # urllib.request.urlretrieve(audio_segment_url, audio_segment_filename)
                 with closing(urlopen(audio_segment_url)) as in_stream:
                     self.write_to_file(in_stream, audio_segment_filename)
 
+                attempt = 0
                 self.seg += 1
             except urllib.error.URLError as e:
-                self.logger.critical(f'Network error: {e.reason}')
+                self.logger.critical(f'{type(e)}: {e}')
+                if e.reason == 'Forbidden':
+                    # Usually this means the stream has ended and parts
+                    # are now unavailable.
+                    raise exceptions.ForbiddenSegmentException(reason)
                 if attempt > 30:
                     raise e
                 attempt += 1
-                self.logger.critical(f"Waiting for 60 seconds before retrying...")
-                sleep(60)
+                self.logger.critical(f"\
+Waiting for {wait_sec} seconds before retrying... (attempt {attempt}/30)")
+                sleep(wait_sec)
                 continue
-            except (IOError) as e:
-                self.logger.critical(f'File error: {e}')
+            except IncompleteRead as e:
+                # This is most likely signaling the end of the stream
+                self.logger.exception(e)
+                raise e
+            except IOError as e:
+                self.logger.critical(f'I/O error: {e}')
                 raise e
 
     def print_found_quality(self, item, datatype):
