@@ -138,7 +138,7 @@ def merge(info, data_dir, output_dir=None, delete_source=False):
         ffmpeg_stderr = cproc.stderr
         logger.debug("FFmpeg STDERR:\n" + ffmpeg_stderr)
 
-        if try_thumb
+        if try_thumb \
            and 'Unable to parse option value "attached_pic"' in ffmpeg_stderr:
             logger.error("Failed to embed the thumbnail into the final video \
 file! Trying again without it...")
