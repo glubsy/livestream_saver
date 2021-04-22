@@ -1,5 +1,5 @@
 #!/bin/env python3
-from os import sep, listdir, system, remove, path
+from os import sep, listdir, system, remove, path, stat
 import subprocess
 from json import load
 from pathlib import Path
@@ -70,7 +70,7 @@ def merge(info, data_dir, output_dir=None, delete_source=False):
         # logger.critical(f"Data directory \"{data_dir}\" not found.")
         return None
 
-    # Reuse the logging handlers from the download module if possible 
+    # Reuse the logging handlers from the download module if possible
     # to centralize logs pertaining to stream video handling
     global logger
     logger = logging.getLogger("download" + "." + info['id'])
@@ -98,7 +98,7 @@ def merge(info, data_dir, output_dir=None, delete_source=False):
     audio_files = collect(audio_seg_dir)
 
     if not video_files:
-        logger.critical(f"No video files found in {video_seg_dir}.")
+        logger.critical(f"No video files found in {video_seg_dir}")
         return None
 
     # TODO add more checks to ensure all segments are available + duration?
@@ -118,24 +118,48 @@ def merge(info, data_dir, output_dir=None, delete_source=False):
 
     final_output_file = output_dir + sep + final_output_name
 
-    ffmpeg_command = ["ffmpeg", "-hide_banner", "-y",\
-"-i", f"{ffmpeg_output_path_video}", "-i", f"{ffmpeg_output_path_audio}"]
-    metadata_cmd = metadata_arguments(info, data_dir)
-    #ffmpeg -hide_banner -i video.mp4 -i audio.m4a -i thumbnail.jpg -map 0 -map 1 -map 2 -c:v:2 jpg -disposition:v:1 attached_pic -c copy out.mp4
-    ffmpeg_command.extend(metadata_cmd)
-    ffmpeg_command.extend(["-c", "copy", final_output_file])
+    try_thumb = True
+    while True:
+        ffmpeg_command = ["ffmpeg", "-hide_banner", "-y",\
+                        "-i", f"{ffmpeg_output_path_video}",\
+                        "-i", f"{ffmpeg_output_path_audio}"
+                        ]
+        metadata_cmd = metadata_arguments(info, data_dir,
+                                          want_thumb=try_thumb
+                                        )
+        # ffmpeg -hide_banner -i video.mp4 -i audio.m4a -i thumbnail.jpg -map 0
+        # -map 1 -map 2 -c:v:2 jpg -disposition:v:1 attached_pic -c copy out.mp4
+        ffmpeg_command.extend(metadata_cmd)
+        ffmpeg_command.extend(["-c", "copy", final_output_file])
 
-    cproc = subprocess.run(ffmpeg_command, capture_output=True, text=True)
-    logger.debug(f"Calling subprocess: {cproc.args}")
-    logger.debug("FFmpeg STDERR:" + cproc.stderr)
+        cproc = subprocess.run(ffmpeg_command, capture_output=True, text=True)
+
+        logger.debug(f"Calling subprocess: {cproc.args}")
+        ffmpeg_stderr = cproc.stderr
+        logger.debug("FFmpeg STDERR:\n" + ffmpeg_stderr)
+
+        if try_thumb
+           and 'Unable to parse option value "attached_pic"' in ffmpeg_stderr:
+            logger.error("Failed to embed the thumbnail into the final video \
+file! Trying again without it...")
+            try_thumb = False
+            continue
+
+        if not path.exists(final_output_file):
+            logger.critical("Missing final merged output file! \
+Something went wrong.")
+            return None
+        break
+
+    if path.exists(final_output_file) and stat(final_output_file).st_size == 0:
+        logger.critical("Final merged output file is 0 length! \
+Something went wrong. Try again with DEBUG log level and check for errors.")
+        remove(final_output_file)
+        return None
 
     logger.debug(f"Removing temporary audio/video concatenated files...")
     remove(ffmpeg_output_path_audio)
     remove(ffmpeg_output_path_video)
-
-    if not path.exists(final_output_file):
-        logger.critical("Missing final merged output file! Something went wrong.")
-        return None
 
     logger.info(f"Successfully wrote file \"{final_output_file}\".")
 
@@ -147,19 +171,25 @@ def merge(info, data_dir, output_dir=None, delete_source=False):
     return final_output_file
 
 
-def metadata_arguments(info, data_path):
+def metadata_arguments(info, data_path, want_thumb=True):
     cmd = []
     # Embed thumbnail if a valid one is found
-    thumb = get_thumbnail(data_path)
-    if thumb:
-        _type = what(thumb)
-        if _type == "jpeg" or _type == "png":
-            logger.debug(f"Using thumbnail: {thumb}. Type: {_type}.")
-            cmd.extend(["-i", f"{thumb}", "-map", "0", "-map", "1", "-map", "2",\
-                        "-c:v:2", _type, "-disposition:v:1", "attached_pic"])
-        else:
-            # TODO convert to png in case of WEBP or other
-            logger.error(f"Unsupported thumbnail file format: {_type}. Not embedding.")
+    if want_thumb:
+        thumb = get_thumbnail(data_path)
+        if thumb:
+            _type = what(thumb)
+            if _type == "jpeg" or _type == "png":
+                logger.debug(f"Using thumbnail: {thumb}. Type: {_type}.")
+                cmd.extend(["-i", f"{thumb}",\
+                            "-map", "0", "-map", "1", "-map", "2",\
+                            #"-c:v:2" _type
+                            "-c:a:2", "copy",\
+                            "-disposition:v:1",\
+                            "attached_pic"])
+            else:
+                # TODO convert to png in case of WEBP or other
+                logger.error(f"Unsupported thumbnail file format: {_type}. \
+Not embedding.")
 
     # These have to be placed AFTER, otherwise they affect one stream in particular
     if info.get('title'):
