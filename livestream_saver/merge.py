@@ -143,6 +143,10 @@ def merge(info, data_dir, output_dir=None, delete_source=False):
             logger.error("Failed to embed the thumbnail into the final video \
 file! Trying again without it...")
             try_thumb = False
+            if path.exists(final_output_file)\
+            and stat(final_output_file).st_size == 0:
+                logger.info("Removing zero length ffmpeg output...")
+                remove(final_output_file)
             continue
 
         if not path.exists(final_output_file):
@@ -152,7 +156,7 @@ Something went wrong.")
         break
 
     if path.exists(final_output_file) and stat(final_output_file).st_size == 0:
-        logger.critical("Final merged output file is 0 length! \
+        logger.critical("Final merged output file is zero length! \
 Something went wrong. Try again with DEBUG log level and check for errors.")
         remove(final_output_file)
         return None
