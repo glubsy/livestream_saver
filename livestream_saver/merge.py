@@ -113,8 +113,9 @@ def merge(info, data_dir, output_dir=None, delete_source=False):
         logger.error(f"Missing video or audio concatenated file!")
         return None
 
-    final_output_name = f"{info.get('author')} [{info.get('download_date')}] \
-{info.get('title')}_[{info.get('video_resolution')}]_{info.get('id')}.mp4"
+    final_output_name = sanitize_filename(f"{info.get('author')}_\
+[{info.get('download_date')}]_{info.get('title')}_\
+[{info.get('video_resolution')}]_{info.get('id')}.mp4")
 
     final_output_file = output_dir + sep + final_output_name
 
@@ -222,3 +223,6 @@ def collect(data_path):
     files.sort()
     return files
 
+def sanitize_filename(name):
+    """Removes characters in a file name that are illegal in Windows."""
+    return "".join(c for c in name if 31 < ord(c) and c not in '<>:"/\|?*')
