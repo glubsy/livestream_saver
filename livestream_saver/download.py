@@ -357,7 +357,7 @@ really ended. Retrying in 20 secs...")
                     self.logger.debug(f"Seg status: {status}")
                     self.logger.debug(f"Seg headers:\n{headers}")
                     if not self.write_to_file(in_stream, video_segment_filename):
-                        if status == 204 and not headers.get('X-Segment-Lmt'):
+                        if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
                             raise exceptions.EmptySegmentException(\
                                 f"Segment {self.seg} is empty, stream might have ended...")
                         self.logger.critical(f"Waiting for {wait_sec} seconds before retrying...")
