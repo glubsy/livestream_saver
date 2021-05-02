@@ -92,6 +92,9 @@ optional arguments:
 
 * python3
 * ffmpeg
+* [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional, to convert webp thumbnail)
+
+Install with `python3 -m pip install --upgrade Pillow` or your package manager.
 
 # Archived
 

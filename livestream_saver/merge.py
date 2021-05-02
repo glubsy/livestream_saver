@@ -1,5 +1,5 @@
 #!/bin/env python3
-from os import sep, listdir, system, remove, path, stat
+from os import sep, listdir, system, remove, path, stat, rename
 import subprocess
 from json import load
 from pathlib import Path
@@ -180,21 +180,7 @@ def metadata_arguments(info, data_path, want_thumb=True):
     cmd = []
     # Embed thumbnail if a valid one is found
     if want_thumb:
-        thumb = get_thumbnail(data_path)
-        if thumb:
-            _type = what(thumb)
-            if _type == "jpeg" or _type == "png":
-                logger.debug(f"Using thumbnail: {thumb}. Type: {_type}.")
-                cmd.extend(["-i", f"{thumb}",\
-                            "-map", "0", "-map", "1", "-map", "2",\
-                            #"-c:v:2" _type
-                            "-c:a:2", "copy",\
-                            "-disposition:v:1",\
-                            "attached_pic"])
-            else:
-                # TODO convert to png in case of WEBP or other
-                logger.error(f"Unsupported thumbnail file format: {_type}. \
-Not embedding.")
+        cmd = get_thumbnail_command_prefix(data_path)
 
     # These have to be placed AFTER, otherwise they affect one stream in particular
     if info.get('title'):
@@ -208,8 +194,54 @@ Not embedding.")
     return cmd
 
 
-def get_thumbnail(data_path):
-    """Returns Path to file named "thumbnail" if found in data_path."""
+def get_thumbnail_command_prefix(data_path):
+    thumb_path = get_thumbnail_pathname(data_path)
+    if not thumb_path:
+        return []
+
+    _type = what(thumb_path)
+    logger.info(f"Detected thumbnail: {thumb_path}. Type: {_type}.")
+    if _type != "jpeg" and _type != "png":
+        if _type == "webp":
+            try:
+                convert_thumbnail(thumb_path, _type)
+            except Exception as e:
+                logger.error(f"Failed converting thumbnail from {_type} format. {e}")
+                return []
+        else:
+            logger.warning(f"Unsupported thumbnail format: {_type}. \
+Skipping embedding into video.")
+            return []
+
+    return ["-i", f"{thumb_path}",\
+            "-map", "0", "-map", "1", "-map", "2",\
+            #"-c:v:2" _type
+            "-c:a:2", "copy",\
+            "-disposition:v:1",\
+            "attached_pic"]
+
+
+def convert_thumbnail(thumb_path, fromformat):
+    try:
+        from PIL import Image
+    except ImportError as e:
+        logger.error(f"Failed loading PIL (pillow) module. {e}")
+        raise e
+
+    old_path = str(thumb_path)
+    new_name = ".".join((old_path, fromformat))
+    rename(old_path, new_name)
+
+    # TODO Pillow can detect and try all available formats
+    with Image.open(new_name) as im:
+        logger.debug(f"Converting {new_name} to PNG...")
+        im.convert("RGB")
+        im.save(old_path, "PNG")
+        logger.debug(f"Saved PNG thumbnail as {old_path}")
+
+
+def get_thumbnail_pathname(data_path):
+    """Returns Path to a file named "thumbnail" if found in data_path."""
     fl = list(Path(data_path).glob('thumbnail'))
     if fl:
         return fl[0]

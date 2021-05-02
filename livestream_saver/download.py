@@ -160,6 +160,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
             tlist = self.json.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails', [])
             if tlist:
                 # Grab the last one, probably always highest resolution
+                # FIXME grab the best by comparing width/height key-values.
                 self.thumbnail_url = tlist[-1].get('url')
 
         self.video_info['scheduled_time'] = self.get_scheduled_time(self.json.get('playabilityStatus', {}))
@@ -169,6 +170,8 @@ We assume a failed download attempt. Last segment available was {seg}.")
         self.logger.debug(f"Video author: {self.video_info['author']}")
 
     def download_thumbnail(self):
+        # TODO write more thumbnail files in case the first one somehow
+        #  got updated.
         thumbnail_path = self.output_dir + sep + 'thumbnail'
         if self.thumbnail_url and not path.exists(thumbnail_path):
             with closing(urlopen(self.thumbnail_url)) as in_stream:
