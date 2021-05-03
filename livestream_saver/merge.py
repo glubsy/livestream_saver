@@ -62,7 +62,10 @@ already exists from a previous run.")
     return ffmpeg_output_filename
 
 
-def merge(info, data_dir, output_dir=None, delete_source=False):
+def merge(info, data_dir,
+          output_dir=None,
+          keep_concat=False,
+          delete_source=False):
     if not output_dir:
         output_dir = data_dir
 
@@ -162,11 +165,12 @@ Something went wrong. Try again with DEBUG log level and check for errors.")
         remove(final_output_file)
         return None
 
-    logger.debug(f"Removing temporary audio/video concatenated files...")
-    remove(ffmpeg_output_path_audio)
-    remove(ffmpeg_output_path_video)
-
     logger.info(f"Successfully wrote file \"{final_output_file}\".")
+
+    if not keep_concat:
+        logger.debug(f"Removing temporary audio/video concatenated files...")
+        remove(ffmpeg_output_path_audio)
+        remove(ffmpeg_output_path_video)
 
     if delete_source:
         logger.info(f"Deleting source segments...")
@@ -215,7 +219,8 @@ Skipping embedding into video.")
 
     return ["-i", f"{thumb_path}",\
             "-map", "0", "-map", "1", "-map", "2",\
-            #"-c:v:2" _type
+            # "-c:v:2", _type,
+            # copy probably means no re-encoding again into jpg/png
             "-c:a:2", "copy",\
             "-disposition:v:1",\
             "attached_pic"]

@@ -69,7 +69,10 @@ title: {target_live.get('title')}. Downloading...")
             logger.info(f"Finished downloading {_id}. Merging segments...")
             # TODO in a separate thread?
             # logger.info(f"Merging segments for {_id}...")
-            merge(info=stream.video_info, data_dir=stream.output_dir, delete_source=args.delete_source)
+            merge(info=stream.video_info,
+                  data_dir=stream.output_dir,
+                  keep_concat=args.keep_concat,
+                  delete_source=args.delete_source)
             # TODO get the updated stream title from the channel page if the stream was recorded
         if stream.error:
             # TODO Send notification to admin here
@@ -91,7 +94,8 @@ Either a full youtube URL or /channel/hash format.')
                         help='Path to Netscape formatted cookie file.')
     parser.add_argument('-q', '--max_video_quality', action='store',
                         default=None, type=int,
-                        help='Use best available video resolution up to this height in pixels.')
+                        help='Use best available video resolution up to this \
+height in pixels.')
     parser.add_argument('-o', '--output_dir', action='store',
                         default="./", type=str,
                         help='Output directory where to save channel data.')
@@ -101,6 +105,9 @@ Either a full youtube URL or /channel/hash format.')
     parser.add_argument('-d', '--delete_source', action='store_true',
                         help='Delete source segment files once the final \
 merging of them has been done.')
+    parser.add_argument('-k', '--keep_concat', action='store_true',
+                        help='Keep concatenated intermediary files even if \
+merging of streams has been successful. This is only useful for debugging.')
     # parser.add_argument('--interactive', action='store_true',
     #                     help='Allow user input to skip the current download.')
     parser.add_argument('--scan_delay', action='store',

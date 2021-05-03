@@ -24,6 +24,9 @@ def parse_args():
         help='Output directory where to write downloaded chunks.')
     parser.add_argument('-d', '--delete_source', action='store_true',
         help='Delete source files once final merge has been done.')
+    parser.add_argument('-k', '--keep_concat', action='store_true',
+        help='Keep concatenated intermediary files even if merging of \
+streams has been successful. This is only useful for debugging.')
     levels = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
     parser.add_argument('--log', action='store', default="INFO", choices=levels,
         help='Log level.')
@@ -66,4 +69,7 @@ if __name__ == "__main__":
     # TODO make sure number of segment match the last numbered segment
     # Merge segments into one file
     if dl.done:
-        merge(info=dl.video_info, data_dir=dl.output_dir, delete_source=args.delete_source)
+        merge(info=dl.video_info,\
+              data_dir=dl.output_dir,\
+              keep_concat=args.keep_concat,\
+              delete_source=args.delete_source)

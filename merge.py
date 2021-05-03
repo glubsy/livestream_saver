@@ -14,7 +14,11 @@ def parse_args():
         help='Path to directory holding vid/aud sub-directories \
 in which segments have been downloaded as well as the metadata.txt file.')
     parser.add_argument('-d', '--delete_source', action='store_true',
-        help='Delete source files once final merging of stream has been successfully done.')
+        help='Delete source files (vid/aud) once final merging of \
+streams has been successfully done.')
+    parser.add_argument('-k', '--keep_concat', action='store_true',
+        help='Keep concatenated intermediary files even if merging of \
+streams has been successful. This is only useful for debugging.')
     parser.add_argument('-o', '--output_dir', action='store',
         default=None, type=str,
         help='Output directory where to write final merged file.')
@@ -52,4 +56,5 @@ if __name__ == "__main__":
                             info=info,\
                             data_dir=data_path,\
                             output_dir=args.output_dir,\
+                            keep_concat=args.keep_concat,\
                             delete_source=args.delete_source)
