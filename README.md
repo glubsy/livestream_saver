@@ -1,7 +1,7 @@
-Download Youtube livestreams from the beginning to the end.
-Monitor a given channel for upcoming any upcoming livestream and download them automatically when they are active.
+* Download Youtube livestreams from the very beginning to the end.
+* Monitor a given channel for upcoming livestreams and download them automatically when they become active.
 
-Each module can be used independently from the others if needed.
+Each module can be used independently from one another if needed.
 Cookies (in Netscape format) are needed to access membership-only videos.
 
 ## Notes:
@@ -100,6 +100,11 @@ Install with `python3 -m pip install --upgrade Pillow` or your package manager.
 
 The `arvhived` directory contains archived scripts which may still be useful in case of emergency (ie. in case of a fatal error). These are what the programs above were based on originally. They should still work, but are very limited.
 
-# License:
+# License
 
 GPLv3
+
+# TODO
+
+* Monitor Twitch channels and streams
+* Make sure age-restricted videos are not blocked by the new Youtube Cookies consent page.
