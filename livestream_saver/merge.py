@@ -56,7 +56,12 @@ already exists from a previous run.")
     # '-c:a' if datatype == 'audio' else '-c:v' => '-c copy' might be enough.
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "panic", "-y", "-i",\
         f"{concat_filepath}", "-c", "copy", f"{ffmpeg_output_filename}"]
-    subprocess.run(cmd)
+
+    cproc = subprocess.run(cmd)
+
+    logger.debug(f"Calling subprocess: {cproc.args}")
+    ffmpeg_stderr = cproc.stderr
+    logger.debug("FFmpeg STDERR:\n" + ffmpeg_stderr)
 
     remove(concat_filepath)
     return ffmpeg_output_filename
