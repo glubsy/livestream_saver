@@ -57,16 +57,21 @@ if __name__ == "__main__":
 
     session = YoutubeUrllibSession(args.cookie)
 
-    dl = livestream_saver.download.YoutubeLiveStream(
-        url=args.url,\
-        output_dir=args.output_dir,\
-        session=session,\
-        max_video_quality=args.max_video_quality,\
-        log_level=args.log
-    )
+    try:
+        dl = livestream_saver.download.YoutubeLiveStream(
+            url=args.url,\
+            output_dir=args.output_dir,\
+            session=session,\
+            max_video_quality=args.max_video_quality,\
+            log_level=args.log
+        )
+    except ValueError as e:
+        logger.critical(e)
+        exit(1)
+
     dl.download(args.scan_delay)
 
-    # TODO make sure number of segment match the last numbered segment
+    # TODO make sure the number of segment matches the last segment number.
     # Merge segments into one file
     if dl.done:
         merge(info=dl.video_info,\

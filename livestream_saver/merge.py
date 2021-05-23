@@ -61,7 +61,7 @@ already exists from a previous run.")
 
     logger.debug(f"Calling subprocess: {cproc.args}")
     ffmpeg_stderr = cproc.stderr
-    logger.debug("FFmpeg STDERR:\n" + ffmpeg_stderr)
+    logger.debug("FFmpeg STDERR:\n" + str(ffmpeg_stderr))
 
     remove(concat_filepath)
     return ffmpeg_output_filename
@@ -267,4 +267,4 @@ def collect(data_path):
 
 def sanitize_filename(name):
     """Removes characters in a file name that are illegal in Windows."""
-    return "".join(c for c in name if 31 < ord(c) and c not in '<>:"/\|?*')
+    return "".join(c for c in name if 31 < ord(c) and c not in r'<>:"/\|?*')

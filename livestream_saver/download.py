@@ -24,7 +24,8 @@ COPY_BUFSIZE = 1024 * 1024 if ISWINDOWS else 64 * 1024
 
 
 class YoutubeLiveStream:
-    def __init__(self, url, output_dir, session, video_id=None, max_video_quality=None, log_level=logging.INFO):
+    def __init__(self, url, output_dir, session, video_id=None,\
+                 max_video_quality=None, log_level=logging.INFO):
         self.url = url
         self.max_video_quality = max_video_quality
 
@@ -216,20 +217,26 @@ We assume a failed download attempt. Last segment available was {seg}.")
         if status == 'LIVE_STREAM_OFFLINE':
             self.status |= Status.OFFLINE
             sched_time = self.get_scheduled_time(playabilityStatus)
+
             if sched_time is not None:
                 self.status |= Status.WAITING
+
                 self.video_info['scheduled_timestamp'] = sched_time
                 reason = playabilityStatus.get('reason', 'No reason found.')
+
                 self.logger.info(f"Scheduled start time: {sched_time} \
 ({datetime.utcfromtimestamp(sched_time)} UTC). We wait...")
                 # FIXME use local time zone for more accurate display of time
                 # for example: https://dateutil.readthedocs.io/
                 self.logger.warning(f"{reason}")
+
                 raise exceptions.WaitingException(self.video_info['id'],\
                     reason, sched_time)
+
             elif (Status.LIVE | Status.VIEWED_LIVE) not in self.status:
                 raise exceptions.WaitingException(self.video_info['id'], \
                     playabilityStatus.get('reason', 'No reason found.'))
+
             raise exceptions.OfflineException(self.video_info['id'], \
                 playabilityStatus.get('reason', 'No reason found.'))
 
@@ -378,7 +385,7 @@ really ended. Retrying in 20 secs...")
                 if e.reason == 'Forbidden':
                     # Usually this means the stream has ended and parts
                     # are now unavailable.
-                    raise exceptions.ForbiddenSegmentException(reason)
+                    raise exceptions.ForbiddenSegmentException(e.reason)
                 if attempt > 30:
                     raise e
                 attempt += 1
@@ -474,20 +481,22 @@ Waiting for {wait_sec} seconds before retrying... (attempt {attempt}/30)")
     def get_video_id(self, url):
         # Argument format:
         # https://youtu.be/njrI8ZDQ7ho or https://youtube.com/?v=njrI8ZDQ7ho
+        video_id = ""
         if "?v=" in url:
             video_id = url.split("v=")[1]
         elif "youtu.be" in url:
             video_id = url.split('/')[-1]
 
-        if 11 > len(video_id) > 12:
-            self.logger.critical(f"Error getting videoID. Length = {len(self.video_id)} \
-    (too long?) {self.video_id}")
+        if len(video_id) != 11:
+            raise ValueError(f"Invalid video ID length for \
+\"{video_id}\": {len(video_id)}. Expected 11.")
         return video_id
 
     def get_video_id_re(self, url_pattern):
         """
         Naive way to get the video ID from the canonical URL.
         """
+        import re
         pattern = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
         regex = re.compile(pattern)
         results = regex.search(url_pattern)

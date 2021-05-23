@@ -1,10 +1,7 @@
-from os import sep
 from time import sleep
-from random import randint, uniform
+from random import uniform
 import logging
 
-from http.cookiejar import CookieJar, MozillaCookieJar
-import json
 import livestream_saver.download
 import livestream_saver.exceptions
 import livestream_saver.util

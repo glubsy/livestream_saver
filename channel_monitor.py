@@ -54,17 +54,27 @@ def monitor(args):
 
         target_live = live_videos[0]
         _id = target_live.get('videoId')
-        stream = YoutubeLiveStream(
-            url=f"https://www.youtube.com{target_live.get('url')}",
-            output_dir=output_dir,
-            session=ch.session,
-            video_id=_id,
-            max_video_quality=args.max_video_quality,
-            log_level=log_level
-        )
+        stream = None
+        
+        try:
+            stream = YoutubeLiveStream(
+                url=f"https://www.youtube.com{target_live.get('url')}",
+                output_dir=output_dir,
+                session=ch.session,
+                video_id=_id,
+                max_video_quality=args.max_video_quality,
+                log_level=log_level
+            )
+        except ValueError as e:
+            logger.critical(e)
+            wait_block(min_minutes=args.scan_delay, variance=3.5)
+            continue
+
         logger.info(f"Found live: {_id} \
 title: {target_live.get('title')}. Downloading...")
+
         stream.download()
+
         if stream.done:
             logger.info(f"Finished downloading {_id}. Merging segments...")
             # TODO in a separate thread?
@@ -73,15 +83,12 @@ title: {target_live.get('title')}. Downloading...")
                   data_dir=stream.output_dir,
                   keep_concat=args.keep_concat,
                   delete_source=args.delete_source)
-            # TODO get the updated stream title from the channel page if the stream was recorded
+            # TODO get the updated stream title from the channel page if 
+            # the stream was recorded
         if stream.error:
             # TODO Send notification to admin here
             logger.info(f"Sending notification... {stream.error}")
         wait_block(min_minutes=args.scan_delay, variance=3.5)
-
-
-def setup_ouput_path(path):
-    """Create directory for each channel, which in turn holds the merged videos."""
 
 
 if __name__ == "__main__":
