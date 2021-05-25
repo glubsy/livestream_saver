@@ -58,3 +58,6 @@ if __name__ == "__main__":
                             output_dir=args.output_dir,\
                             keep_concat=args.keep_concat,\
                             delete_source=args.delete_source)
+
+    if not written_file:
+        logger.critical("Something failed. Please report the issue with logs.")

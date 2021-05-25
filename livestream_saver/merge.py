@@ -1,5 +1,5 @@
 #!/bin/env python3
-from os import sep, listdir, system, remove, path, stat, rename
+from os import sep, remove, path, stat, rename
 import subprocess
 from json import load
 from pathlib import Path
@@ -57,11 +57,15 @@ already exists from a previous run.")
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "panic", "-y", "-i",\
         f"{concat_filepath}", "-c", "copy", f"{ffmpeg_output_filename}"]
 
-    cproc = subprocess.run(cmd)
-
-    logger.debug(f"Calling subprocess: {cproc.args}")
-    ffmpeg_stderr = cproc.stderr
-    logger.debug("FFmpeg STDERR:\n" + str(ffmpeg_stderr))
+    try:
+        cproc = subprocess.run(cmd,
+                               check=True,
+                               capture_output=True,
+                               text=True)
+        logger.debug(f"{cproc.args} stderr output:\n{cproc.stderr}")
+    except subprocess.CalledProcessError as e:
+        logger.exception(f"{e.cmd} returned error {e.returncode}. STDERR:\n{e.stderr}")
+        raise
 
     remove(concat_filepath)
     return ffmpeg_output_filename
@@ -105,8 +109,7 @@ def merge(info, data_dir,
     video_files = collect(video_seg_dir)
     audio_files = collect(audio_seg_dir)
 
-    if not video_files:
-        logger.critical(f"No video files found in {video_seg_dir}")
+    if not video_files and not audio_files:
         return None
 
     # TODO add more checks to ensure all segments are available + duration?
@@ -117,6 +120,7 @@ def merge(info, data_dir,
 
     ffmpeg_output_path_video = concat("video", info.get('id'), video_files, data_dir)
     ffmpeg_output_path_audio = concat("audio", info.get('id'), audio_files, data_dir)
+
     if not ffmpeg_output_path_audio or not ffmpeg_output_path_video:
         logger.error(f"Missing video or audio concatenated file!")
         return None
@@ -141,22 +145,25 @@ def merge(info, data_dir,
         ffmpeg_command.extend(metadata_cmd)
         ffmpeg_command.extend(["-c", "copy", final_output_file])
 
-        cproc = subprocess.run(ffmpeg_command, capture_output=True, text=True)
+        try:
+            cproc = subprocess.run(ffmpeg_command,
+                               check=True,
+                               capture_output=True,
+                               text=True)
+            logger.debug(f"{cproc.args} stderr output:\n{cproc.stderr}")
+        except subprocess.CalledProcessError as e:
+            logger.debug(f"{e.cmd} return code {e.returncode}. STDERR:\n{e.stderr}")
 
-        logger.debug(f"Calling subprocess: {cproc.args}")
-        ffmpeg_stderr = cproc.stderr
-        logger.debug("FFmpeg STDERR:\n" + ffmpeg_stderr)
-
-        if try_thumb \
-           and 'Unable to parse option value "attached_pic"' in ffmpeg_stderr:
-            logger.error("Failed to embed the thumbnail into the final video \
+            if try_thumb \
+            and 'Unable to parse option value "attached_pic"' in e.stderr:
+                logger.error("Failed to embed the thumbnail into the final video \
 file! Trying again without it...")
-            try_thumb = False
-            if path.exists(final_output_file)\
-            and stat(final_output_file).st_size == 0:
-                logger.info("Removing zero length ffmpeg output...")
-                remove(final_output_file)
-            continue
+                try_thumb = False
+                if path.exists(final_output_file)\
+                and stat(final_output_file).st_size == 0:
+                    logger.info("Removing zero length ffmpeg output...")
+                    remove(final_output_file)
+                continue
 
         if not path.exists(final_output_file):
             logger.critical("Missing final merged output file! \
@@ -260,6 +267,7 @@ def get_thumbnail_pathname(data_path):
 
 def collect(data_path):
     if not path.exists(data_path):
+        logger.warning(f"{data_path} does not exist!")
         return []
     files = [p for p in Path(data_path).glob('*.ts')]
     files.sort()
