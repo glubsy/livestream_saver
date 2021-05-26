@@ -37,8 +37,8 @@ rootpath = f'stream_capture_{YT_HASH}'
 vidpath = f'{rootpath}{sep}vid'
 audpath = f'{rootpath}{sep}aud'
 
-# the sequence numbers to begin download from.
-seg = 1
+# The sequence number to start downloading from (starts at 0).
+seg = 0
 
 try:
     makedirs(vidpath, 0o766)
@@ -46,7 +46,7 @@ try:
 except FileExistsError as e:
     # If we resume, get the latest chunk file we already have
     seg = max([int(f[:f.index('.')]) for f in listdir(vidpath)], default=1)
-    if seg > 1:
+    if seg > 0:
         # Step back one file just in case the latest chunk got only partially
         # downloaded (we want to overwrite it, for good measure)
         seg -= 1

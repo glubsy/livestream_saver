@@ -41,7 +41,7 @@ class YoutubeLiveStream:
         # self.audio_itag = None
         self.video_base_url = None
         self.audio_base_url = None
-        self.seg = 1
+        self.seg = 0
         self.status = Status.OFFLINE
         # self.scheduled_timestamp = None
         self.logger = None
@@ -97,8 +97,8 @@ class YoutubeLiveStream:
             except FileExistsError:
                 dir_existed = True
 
-        # the sequence numbers to begin from
-        seg = 1
+        # The sequence number to start downloading from (acually starts at 0).
+        seg = 0
 
         if dir_existed:
             # Get the latest downloaded segment number,
@@ -114,7 +114,7 @@ class YoutubeLiveStream:
 
             # Step back one file just in case the latest segment got only partially
             # downloaded (we want to overwrite it to avoid a corrupted segment)
-            if seg > 1:
+            if seg > 0:
                 self.logger.warning(f"An output directory already existed. \
 We assume a failed download attempt. Last segment available was {seg}.")
                 seg -= 1
@@ -370,7 +370,7 @@ really ended. Retrying in 20 secs...")
                         if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
                             raise exceptions.EmptySegmentException(\
                                 f"Segment {self.seg} is empty, stream might have ended...")
-                        self.logger.critical(f"Waiting for {wait_sec} seconds before retrying...")
+                        self.logger.warning(f"Waiting for {wait_sec} seconds before retrying...")
                         sleep(wait_sec)
                         continue
 
@@ -389,7 +389,7 @@ really ended. Retrying in 20 secs...")
                 if attempt > 30:
                     raise e
                 attempt += 1
-                self.logger.critical(f"\
+                self.logger.warning(f"\
 Waiting for {wait_sec} seconds before retrying... (attempt {attempt}/30)")
                 sleep(wait_sec)
                 continue
@@ -398,7 +398,7 @@ Waiting for {wait_sec} seconds before retrying... (attempt {attempt}/30)")
                 self.logger.exception(e)
                 raise e
             except IOError as e:
-                self.logger.critical(f'I/O error: {e}')
+                self.logger.exception(e)
                 raise e
 
     def print_found_quality(self, item, datatype):
