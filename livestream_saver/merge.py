@@ -1,5 +1,6 @@
 #!/bin/env python3
 from os import sep, remove, path, stat, rename
+from re import sub
 import subprocess
 from json import load
 from pathlib import Path
@@ -20,8 +21,9 @@ def get_metadata_info(path):
         return {}
 
 
-def concat(datatype, video_id, seg_list, output_dir):
-    """Concatenate segments.
+def concat(datatype, video_id, seg_list, output_dir, method=0):
+    """
+    Concatenate segments.
     :param str datatype:
         The type of data. "video" or "audio"
     :param str video_id:
@@ -34,29 +36,55 @@ def concat(datatype, video_id, seg_list, output_dir):
     :returns:
         Path to concatenated video or audio file.
     """
+    METHOD = ["concat", "concat_demuxer", "concat_protocol"]
+
+    logger.info(f"Trying concatenation method: \"{METHOD[method]}\".")
+
     concat_filename = f"concat_{video_id}_{datatype}.ts"
     concat_filepath = output_dir + sep + concat_filename
+
     ext = "m4a" if datatype == "audio" else "mp4"
+
     ffmpeg_output_filename = f"{output_dir}{sep}\
-{video_id}_{datatype}_v2_ffmpeg.{ext}"
+{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
 
     if path.exists(ffmpeg_output_filename):
-        logger.warning(f"Skipping concatenation because {ffmpeg_output_filename} \
+        logger.info(f"Skipping concatenation because {ffmpeg_output_filename} \
 already exists from a previous run.")
         return ffmpeg_output_filename
 
-    if not path.exists(concat_filepath):
-        # Concatenating segments
-        with open(concat_filepath,"wb") as f:
+    list_file_path = None
+
+    if METHOD[method] == "concat_demuxer":
+        # http://ffmpeg.org/ffmpeg-formats.html#concat-1
+        # Does not work, duration is always messed up.
+        list_file_path = f"{output_dir}{sep}list_{video_id}_{datatype}.txt"
+        with open(list_file_path, "w") as f:
             for i in seg_list:
-                with open(i, "rb") as ff:
-                    copyfileobj(ff, f)
+                f.write(f"file '{i}'\n")
 
-    # Fixing broken container
-    # '-c:a' if datatype == 'audio' else '-c:v' => '-c copy' might be enough.
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "panic", "-y", "-i",\
-        f"{concat_filepath}", "-c", "copy", f"{ffmpeg_output_filename}"]
+        cmd = ["ffmpeg", "-hide_banner", "-y",  "-f", "concat", "-safe", "0",
+            "-i", list_file_path, "-c", "copy", ffmpeg_output_filename]
 
+    elif METHOD[method] == "concat_protocol":
+        # http://www.ffmpeg.org/faq.html#How-can-I-concatenate-video-files_003f
+        list_files = "|".join(seg_list)
+        cmd = ["ffmpeg", "-hide_banner", "-y", f"concat:\"{list_files}\"",
+                "-c", "copy", ffmpeg_output_filename]
+
+    else:
+        if not path.exists(concat_filepath):
+            # Concatenate segments through python
+            with open(concat_filepath,"wb") as f:
+                for i in seg_list:
+                    with open(i, "rb") as ff:
+                        copyfileobj(ff, f)
+        # Fix broken container. This seems to fix the messed up duration.
+        # Note: '-c:a' if datatype == 'audio' else '-c:v' but '-c copy' might work for both here.
+        cmd = ["ffmpeg", "-hide_banner", "-y", "-i",\
+               concat_filepath, "-c", "copy", ffmpeg_output_filename]
+
+    cproc = None
     try:
         cproc = subprocess.run(cmd,
                                check=True,
@@ -66,8 +94,41 @@ already exists from a previous run.")
     except subprocess.CalledProcessError as e:
         logger.exception(f"{e.cmd} returned error {e.returncode}. STDERR:\n{e.stderr}")
         raise
+    finally:
+        if list_file_path is not None and path.exists(list_file_path):
+            remove(list_file_path)
 
-    remove(concat_filepath)
+    if cproc is not None\
+    and ("Found duplicated MOOV Atom. Skipped it" in cproc.stderr
+        or "Failed to add index entry" in cproc.stderr):
+            # Something might be wrong, check video duration:
+            probecmd = ['ffprobe', '-v', 'quiet', '-hide_banner',
+                        '-show_streams', ffmpeg_output_filename]
+            duration = 0.0
+            probeproc = subprocess.run(probecmd,
+                                       capture_output=True,
+                                       text=True)
+            logger.debug(f"{probeproc.args} stderr output:\n{probeproc.stdout}")
+
+            for line in probeproc.stdout.split("\n"):
+                if "duration=" in line:
+                    duration = float(line.split("=")[1])
+                    break
+            logger.debug(f"{ffmpeg_output_filename} duration: {duration}")
+
+            if len(seg_list) * 0.80 < duration > len(seg_list) * 20:
+                logger.info(f"Abnormal duration of {ffmpeg_output_filename}: \
+{duration}. Removing...")
+                remove(ffmpeg_output_filename)
+                if method < len(METHOD) - 1:
+                    logger.info(f"Trying next method... {METHOD[method+1]}")
+                    return concat(datatype, video_id, seg_list, output_dir,
+                                  method=method + 1)
+
+    if path.exists(concat_filepath):
+        remove(concat_filepath)
+    if not path.exists(ffmpeg_output_filename):
+        return None
     return ffmpeg_output_filename
 
 
@@ -112,17 +173,18 @@ def merge(info, data_dir,
     if not video_files and not audio_files:
         return None
 
-    # TODO add more checks to ensure all segments are available + duration?
-    # if len(audio_files) != int(audio_files[-1].split("_audio")[0])
-    #     or len(video_files) != int(video_files[-1].split("_video")[0]):
-    #     logger.error(f"Number of segments doesn't match last segment number!")
-    #     return
+    if len(video_files) != len(audio_files):
+        logger.warning("Number of audio and video segments do not match.")
+
+    print_missing_segments(video_files, "_video")
+    print_missing_segments(audio_files, "_audio")
 
     ffmpeg_output_path_video = concat("video", info.get('id'), video_files, data_dir)
     ffmpeg_output_path_audio = concat("audio", info.get('id'), audio_files, data_dir)
 
     if not ffmpeg_output_path_audio or not ffmpeg_output_path_video:
-        logger.error(f"Missing video or audio concatenated file!")
+        logger.error(f"Missing video or audio concatenated file!\
+Retrying with concat demuxer...")
         return None
 
     final_output_name = sanitize_filename(f"{info.get('author')}_\
@@ -192,6 +254,34 @@ Something went wrong. Try again with DEBUG log level and check for errors.")
     return final_output_file
 
 
+def print_missing_segments(filelist, filetype):
+    """Check that all segments are available."""
+    missing = False
+    first_segnum = 0
+    last_segnum = 0
+
+    if filelist:
+        first_segnum = int(filelist[0].name.split(filetype + ".ts")[0])
+        last_segnum = int(filelist[-1].name.split(filetype + ".ts")[0])
+
+    if first_segnum != 0:
+        logger.warning(f"First {filetype[1:]} segment number starts at \
+{first_segnum} instead of 0.")
+
+    if len(filelist) != last_segnum:
+        logger.warning(f"Number of {filetype[1:]} segments doesn't match last \
+segment number: \
+Last {filetype[1:]} segment number: {last_segnum} / {len(filelist)} total files.")
+        i = 0
+        for f in filelist:
+            if f.name != f"{i:0{10}}{filetype}.ts":
+                missing = True
+                logger.warning(f"Segment {i:0{10}}{filetype}.ts seems to be missing.")
+                i += 1
+            i += 1
+    return missing
+
+
 def metadata_arguments(info, data_path, want_thumb=True):
     cmd = []
     # Embed thumbnail if a valid one is found
@@ -229,6 +319,7 @@ def get_thumbnail_command_prefix(data_path):
 Skipping embedding into video.")
             return []
 
+    # https://ffmpeg.org/ffmpeg.html#toc-Stream-selection
     return ["-i", f"{thumb_path}",\
             "-map", "0", "-map", "1", "-map", "2",\
             # "-c:v:2", _type,

@@ -1,6 +1,5 @@
 #!/bin/env python3
-from os import sep, path, remove
-from json import load
+from os import sep, path
 import argparse
 from livestream_saver import merge
 import logging
