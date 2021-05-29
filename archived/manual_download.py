@@ -58,8 +58,8 @@ try:
         video_url = f'{video_link}{seg}'
         sound_url = f'{sound_link}{seg}'
 
-        video_output_file = vidpath + sep + f'{seg:0{padding}}.mp4'
-        audio_output_file = audpath + sep + f'{seg:0{padding}}.m4a'
+        video_output_file = vidpath + sep + f'{seg:0{padding}}.ts'
+        audio_output_file = audpath + sep + f'{seg:0{padding}}.ts'
 
         urllib.request.urlretrieve(video_url, video_output_file)
         urllib.request.urlretrieve(sound_url, audio_output_file)
