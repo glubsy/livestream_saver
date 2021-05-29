@@ -1,6 +1,5 @@
 #!/bin/env python3
 from os import sep, remove, path, stat, rename
-from re import sub
 import subprocess
 from json import load
 from pathlib import Path
@@ -36,14 +35,22 @@ def concat(datatype, video_id, seg_list, output_dir, method=0):
     :returns:
         Path to concatenated video or audio file.
     """
-    METHOD = ["concat", "concat_demuxer", "concat_protocol"]
+    METHOD = ["concat", "concat_demuxer"]
 
     logger.info(f"Trying concatenation method: \"{METHOD[method]}\".")
 
     concat_filename = f"concat_{video_id}_{datatype}.ts"
     concat_filepath = output_dir + sep + concat_filename
 
-    ext = "m4a" if datatype == "audio" else "mp4"
+    # Determine container type according to codec
+    if datatype == "vp9":
+        ext = "webm"
+    elif datatype == "aac":
+        ext = "m4a"
+    elif datatype == "h264":
+        ext = "mp4"
+    else:
+        ext = "m4a" if datatype == "audio" else "mp4"
 
     ffmpeg_output_filename = f"{output_dir}{sep}\
 {video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
@@ -58,19 +65,37 @@ already exists from a previous run.")
     if METHOD[method] == "concat_demuxer":
         # http://ffmpeg.org/ffmpeg-formats.html#concat-1
         # Does not work, duration is always messed up.
+        # Also a bunch of "Auto-inserting h264_mp4toannexb bitstream filter"
+        # warnings (-auto_convert 0 might disable them, but no different result)
         list_file_path = f"{output_dir}{sep}list_{video_id}_{datatype}.txt"
         with open(list_file_path, "w") as f:
             for i in seg_list:
                 f.write(f"file '{i}'\n")
 
-        cmd = ["ffmpeg", "-hide_banner", "-y",  "-f", "concat", "-safe", "0",
-            "-i", list_file_path, "-c", "copy", ffmpeg_output_filename]
+        cmd = ["ffmpeg", "-hide_banner", "-y",
+               "-f", "concat",
+               "-safe", "0",
+               "-i", list_file_path,
+               "-map_metadata", "-1", # remove metadata
+            #  "-auto_convert", "0" # might disable warnings?
+               "-c", "copy",
+            #    "-bsf:v", "h264_mp4toannexb", # or [hevc|h264]_mp4toannexb
+               ffmpeg_output_filename]
 
     elif METHOD[method] == "concat_protocol":
         # http://www.ffmpeg.org/faq.html#How-can-I-concatenate-video-files_003f
-        list_files = "|".join(seg_list)
-        cmd = ["ffmpeg", "-hide_banner", "-y", f"concat:\"{list_files}\"",
-                "-c", "copy", ffmpeg_output_filename]
+        # This seems to be identical to our default method, except ffmpeg does
+        # everything for us and doesn't require a temporary concat file.
+        # Some people say it doesn't work with MP4 files. Also, there is a point
+        # where the argument length is too long, so this can overflow. Stupid!
+        list_files = "|".join([str(f.name) for f in seg_list])
+
+        cmd = ["ffmpeg", "-hide_banner", "-y",
+              f"concat:\"{list_files}\"", # this may overflow. Stupid design!
+               "-map_metadata", "-1",  # remove metadata
+               "-c", "copy",
+               ffmpeg_output_filename]
+        print(f"len cmd: {len(cmd)} cmd:\n{cmd}")
 
     else:
         if not path.exists(concat_filepath):
@@ -81,8 +106,11 @@ already exists from a previous run.")
                         copyfileobj(ff, f)
         # Fix broken container. This seems to fix the messed up duration.
         # Note: '-c:a' if datatype == 'audio' else '-c:v' but '-c copy' might work for both here.
-        cmd = ["ffmpeg", "-hide_banner", "-y", "-i",\
-               concat_filepath, "-c", "copy", ffmpeg_output_filename]
+        cmd = ["ffmpeg", "-hide_banner", "-y",
+               "-i", concat_filepath,
+               "-map_metadata", "-1", # remove metadata
+               "-c", "copy", 
+               ffmpeg_output_filename]
 
     cproc = None
     try:
@@ -92,44 +120,57 @@ already exists from a previous run.")
                                text=True)
         logger.debug(f"{cproc.args} stderr output:\n{cproc.stderr}")
     except subprocess.CalledProcessError as e:
-        logger.exception(f"{e.cmd} returned error {e.returncode}. STDERR:\n{e.stderr}")
+        logger.exception(f"{e.cmd} returned error {e.returncode}. \
+STDERR:\n{e.stderr}")
         raise
     finally:
         if list_file_path is not None and path.exists(list_file_path):
             remove(list_file_path)
 
-    if cproc is not None\
-    and ("Found duplicated MOOV Atom. Skipped it" in cproc.stderr
-        or "Failed to add index entry" in cproc.stderr):
-            # Something might be wrong, check video duration:
-            probecmd = ['ffprobe', '-v', 'quiet', '-hide_banner',
-                        '-show_streams', ffmpeg_output_filename]
-            duration = 0.0
-            probeproc = subprocess.run(probecmd,
-                                       capture_output=True,
-                                       text=True)
-            logger.debug(f"{probeproc.args} stderr output:\n{probeproc.stdout}")
+    # Something might be wrong? Those might just be harmless warning?
+    # if cproc is not None\
+    # and ("Found duplicated MOOV Atom. Skipped it" in cproc.stderr
+    #     or "Failed to add index entry" in cproc.stderr):
 
-            for line in probeproc.stdout.split("\n"):
-                if "duration=" in line:
-                    duration = float(line.split("=")[1])
-                    break
-            logger.debug(f"{ffmpeg_output_filename} duration: {duration}")
+    props = probe(ffmpeg_output_filename)
+    if len(seg_list) * 0.80 < props.get("duration", 0) > len(seg_list) * 20:
+        logger.info(f"""Abnormal duration of {ffmpeg_output_filename}: \
+{props.get("duration")}. Removing...""")
 
-            if len(seg_list) * 0.80 < duration > len(seg_list) * 20:
-                logger.info(f"Abnormal duration of {ffmpeg_output_filename}: \
-{duration}. Removing...")
-                remove(ffmpeg_output_filename)
-                if method < len(METHOD) - 1:
-                    logger.info(f"Trying next method... {METHOD[method+1]}")
-                    return concat(datatype, video_id, seg_list, output_dir,
-                                  method=method + 1)
+        remove(ffmpeg_output_filename)
+        if method < len(METHOD) - 1:
+            logger.info(f"Trying next method... {METHOD[method+1]}")
+            return concat(datatype, video_id, seg_list, output_dir,
+                            method=method + 1)
 
     if path.exists(concat_filepath):
         remove(concat_filepath)
     if not path.exists(ffmpeg_output_filename):
         return None
     return ffmpeg_output_filename
+
+
+def probe(fpath):
+    probecmd = ['ffprobe', '-v', 'quiet', '-hide_banner',
+                '-show_streams', fpath]
+    probeproc = subprocess.run(probecmd, capture_output=True, text=True)
+    logger.debug(f"{probeproc.args} stderr output:\n{probeproc.stdout}")
+
+    values = {}
+    for line in probeproc.stdout.split("\n"):
+        if "duration=" in line:
+            val = line.split("=")[1]
+            values["duration"] = float(val) if val != "N/A" else 0.0
+            continue
+        if "codec_name=" in line:
+            val = line.split("=")[1]
+            values["codec_name"] = val if val != "N/A" else None
+            continue
+
+    logger.debug(f"""{path.basename(fpath)} \
+codec: {values.get("codec_name")}, duration: {values.get("duration")}""")
+
+    return values
 
 
 def merge(info, data_dir,
@@ -179,17 +220,33 @@ def merge(info, data_dir,
     print_missing_segments(video_files, "_video")
     print_missing_segments(audio_files, "_audio")
 
-    ffmpeg_output_path_video = concat("video", info.get('id'), video_files, data_dir)
-    ffmpeg_output_path_audio = concat("audio", info.get('id'), audio_files, data_dir)
+    # Determine codec from first file
+    vid_props = probe(str(video_files[0]))
+    aud_props = probe(str(audio_files[0]))
+
+    ffmpeg_output_path_video = concat(vid_props.get("codec_name", "video"),
+                                      info.get('id'),
+                                      video_files,
+                                      data_dir)
+    ffmpeg_output_path_audio = concat(aud_props.get("codec_name", "audio"),
+                                      info.get('id'),
+                                      audio_files,
+                                      data_dir)
 
     if not ffmpeg_output_path_audio or not ffmpeg_output_path_video:
         logger.error(f"Missing video or audio concatenated file!\
 Retrying with concat demuxer...")
         return None
 
+    ext = "mp4"
+    # Seems like an MP4 container can handle vp9 just fine. Perhaps we don't
+    # really need MKV (which doesn't support embedded thumbnails yet anyway).
+    # if vid_props.get("codec_name") == "vp9":
+    #     ext = "mkv"
+
     final_output_name = sanitize_filename(f"{info.get('author')}_\
 [{info.get('download_date')}]_{info.get('title')}_\
-[{info.get('video_resolution')}]_{info.get('id')}.mp4")
+[{info.get('video_resolution')}]_{info.get('id')}.{ext}")
 
     final_output_file = output_dir + sep + final_output_name
 
