@@ -286,6 +286,7 @@ playability status is: {status} \
         self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
         self.logger.info(f'Will start downloading from segment number {self.seg}.')
 
+        attempt = 0
         while not self.done and not self.error:
             try:
                 self.update_json()
@@ -324,6 +325,13 @@ Waiting for {wait_delay} seconds...")
                     if Status.LIVE | Status.VIEWED_LIVE in self.status:
                         self.logger.warning(f"It seems the stream has not \
 really ended. Retrying in 20 secs...")
+                        attempt += 1
+                        if attempt >= 15:
+                            self.logger.critical(f"Too many attempts on segment \
+{self.seg}. Skipping it.")
+                            self.seg +=1
+                            attempt = 0
+                            continue
                         sleep(20)
                         continue
                     self.logger.warning(f"The stream is not live anymore. Done.")
@@ -388,7 +396,7 @@ really ended. Retrying in 20 secs...")
                     # Usually this means the stream has ended and parts
                     # are now unavailable.
                     raise exceptions.ForbiddenSegmentException(e.reason)
-                if attempt > 30:
+                if attempt >= 30:
                     raise e
                 attempt += 1
                 self.logger.warning(f"\
@@ -435,7 +443,7 @@ Waiting for {wait_sec} seconds before retrying... (attempt {attempt}/30)")
                 self.print_found_quality(_dict, datatype)
 
         if datatype == "video":
-            #  Select only resolutions below user-defined maxq.
+            # Select only resolutions below user-defined maxq.
             # global itag.video_height_ranking
             ranking = []
             for k, v in itag.video_height_ranking.items():
