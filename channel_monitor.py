@@ -55,7 +55,7 @@ def monitor(args):
         target_live = live_videos[0]
         _id = target_live.get('videoId')
         stream = None
-        
+
         try:
             stream = YoutubeLiveStream(
                 url=f"https://www.youtube.com{target_live.get('url')}",
@@ -83,7 +83,7 @@ title: {target_live.get('title')}. Downloading...")
                   data_dir=stream.output_dir,
                   keep_concat=args.keep_concat,
                   delete_source=args.delete_source)
-            # TODO get the updated stream title from the channel page if 
+            # TODO get the updated stream title from the channel page if
             # the stream was recorded
         if stream.error:
             # TODO Send notification to admin here
