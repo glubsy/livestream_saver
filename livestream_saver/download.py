@@ -145,7 +145,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
     def update_json(self):
         # TODO get the DASH manifest (MPD) instead?
 
-        self.json = util.get_json_from_string(self.session.make_request(self.url))
+        self.json = self.session.make_request(self.url)
         if not self.json:
             self.logger.critical(f"WARNING: invalid JSON for {self.url}: {self.json}")
             self.status &= ~Status.AVAILABLE

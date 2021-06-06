@@ -60,7 +60,7 @@ Defaulting to empty cookie.")
                     cj.clear(".youtube.com", "/", "CONSENT")
                     continue
             # Session tokens seem not very useful
-            if "ST-" in cookie.name:
+            if cookie.name.startswith("ST-"):
                 cj.clear(".youtube.com", "/", cookie.name)
                 continue
 
