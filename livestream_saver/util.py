@@ -4,6 +4,7 @@ import time
 # from platform import python_version_tuple
 import re
 from random import randint
+from platform import system
 from json import loads
 from pathlib import Path
 from urllib.request import Request, urlopen #, build_opener, HTTPCookieProcessor, HTTPHandler
@@ -12,7 +13,6 @@ from http.cookies import SimpleCookie
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
-
 
 def get_cookie(path):
     # CookieJar now instead of a dict
@@ -120,16 +120,24 @@ def get_channel_id(url_pattern):
         return url_pattern
 
 
+def get_system_ua():
+    SYSTEM = system()
+    if SYSTEM == 'Windows':
+        return 'Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0'
+    if SYSTEM == 'Darwin':
+        return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:89.0) Gecko/20100101 Firefox/89.0'
+    return 'Mozilla/5.0 (X11; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0'
+
+
 class YoutubeUrllibSession:
     """
     Keep cookies in memory for reuse or update.
     """
     def __init__(self, cookie_path=None):
         self.cookie_jar = get_cookie(cookie_path)
-        # TODO add proxies, randomized headers?
+        # TODO add proxies
         self.headers = {
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
-(KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36',
+        'user-agent': get_system_ua(), # TODO could use fake-useragent package here for an up-to-date string
         'accept-language': 'en-US,en' # ensure messages in english from the API
         }
         self._initialize_consent()
