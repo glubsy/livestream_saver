@@ -77,8 +77,7 @@ class YoutubeChannel:
         """
         Returns list of dict with urls to videos attached to community posts.
         """
-        self.community_json = livestream_saver.util.get_json_from_string(
-            self.session.make_request(self.url + '/community'))
+        self.community_json = self.session.make_request(self.url + '/community')
         # logger.debug(f"community videos JSON:\n{self.community_json}")
         if not self.community_json:
             return []
@@ -101,17 +100,14 @@ class YoutubeChannel:
             # https://www.youtube.com/c/kamikokana/videos\?view\=2\&live_view\=502
             # https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g/videos?view=2&live_view=502
             # This video tab filtered list, returns public upcoming livestreams (with scheduled times)
-            res = self.session.make_request(self.url + '/videos?view=2&live_view=502')
-            return livestream_saver.util.get_json_from_string(res)
+            return self.session.make_request(self.url + '/videos?view=2&live_view=502')
         if filtertype == 'current':
             # NOTE: active livestreams are also displays in /featured tab:
             # https://www.youtube.com/c/kamikokana/videos?view=2&live_view=501
-            res = self.session.make_request(self.url + '/videos?view=2&live_view=501')
-            return livestream_saver.util.get_json_from_string(res)
+            return self.session.make_request(self.url + '/videos?view=2&live_view=501')
         if filtertype == 'featured':
             # NOTE "featured" tab is ONLY reliable for CURRENT live streams
-            res = self.session.make_request(self.url + '/featured')
-            return livestream_saver.util.get_json_from_string(res)
+            return self.session.make_request(self.url + '/featured')
         # NOTE "/live" virtual tab is a redirect to the current live broadcast
 
 

@@ -134,6 +134,7 @@ class YoutubeUrllibSession:
     Keep cookies in memory for reuse or update.
     """
     def __init__(self, cookie_path=None):
+        self.user_cookies = True if cookie_path else False
         self.cookie_jar = get_cookie(cookie_path)
         # TODO add proxies
         self.headers = {
@@ -210,15 +211,25 @@ class YoutubeUrllibSession:
             self.cookie_jar.save(ignore_expires=True)
 
 
-    def make_request(self, url):
+    def make_request(self, url, parse_json=True):
         req = Request(url, headers=self.headers)
         self.cookie_jar.add_cookie_header(req)
 
         logger.debug(f"Request {req.full_url}")
         logger.debug(f"Request headers: {req.header_items()}")
 
-        return self.parse_response(req)
+        resp_json_str = self.parse_response(req)
 
+        if parse_json:
+            _json = get_json_from_string(resp_json_str)
+            if _json.get("responseContext", {})\
+                    .get("mainAppWebResponseContext", {})\
+                    .get("loggedOut")\
+            and self.user_cookies:
+                logger.critical("We are not logged in anymore. Update your cookies!")
+            return _json
+
+        return resp_json_str
 
     def update_cookies(self, req, res):
         """
