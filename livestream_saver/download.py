@@ -4,14 +4,13 @@ from platform import system
 import logging
 from datetime import date, datetime
 from time import time, sleep
-from json import dumps, dump, loads
+from json import dumps, dump
 from contextlib import closing
 from enum import Flag, auto
 from urllib.request import urlopen
 import urllib.error
 from http.client import IncompleteRead
 from livestream_saver import exceptions
-from livestream_saver import util
 from livestream_saver import itag
 
 SYSTEM = system()
@@ -318,7 +317,8 @@ Waiting for {wait_delay} seconds...")
                     self.do_download()
                 except (exceptions.EmptySegmentException,
                         exceptions.ForbiddenSegmentException,
-                        IncompleteRead) as e:
+                        IncompleteRead,
+                        ValueError) as e:
                     self.logger.info(e)
                     self.update_json()
                     self.is_live()
@@ -376,6 +376,7 @@ really ended. Retrying in 20 secs...")
                     status = in_stream.status
                     self.logger.debug(f"Seg status: {status}")
                     self.logger.debug(f"Seg headers:\n{headers}")
+
                     if not self.write_to_file(in_stream, video_segment_filename):
                         if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
                             raise exceptions.EmptySegmentException(\
@@ -390,6 +391,7 @@ really ended. Retrying in 20 secs...")
 
                 attempt = 0
                 self.seg += 1
+
             except urllib.error.URLError as e:
                 self.logger.critical(f'{type(e)}: {e}')
                 if e.reason == 'Forbidden':
@@ -403,7 +405,7 @@ really ended. Retrying in 20 secs...")
 Waiting for {wait_sec} seconds before retrying... (attempt {attempt}/30)")
                 sleep(wait_sec)
                 continue
-            except IncompleteRead as e:
+            except (IncompleteRead, ValueError) as e:
                 # This is most likely signaling the end of the stream
                 self.logger.exception(e)
                 raise e

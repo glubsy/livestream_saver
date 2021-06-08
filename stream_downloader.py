@@ -71,8 +71,6 @@ if __name__ == "__main__":
 
     dl.download(args.scan_delay)
 
-    # TODO make sure the number of segment matches the last segment number.
-    # Merge segments into one file
     if dl.done:
         merge(info=dl.video_info,\
               data_dir=dl.output_dir,\
