@@ -149,6 +149,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
             self.logger.critical(f"WARNING: invalid JSON for {self.url}: {self.json}")
             self.status &= ~Status.AVAILABLE
             return
+        remove_useless_keys(self.json)
         self.logger.debug("\n" + dumps(self.json, indent=4))
 
     def populate_info(self):
@@ -584,3 +585,21 @@ class Status(Flag):
     VIEWED_LIVE = auto()
     WAITING = auto()
     OK = AVAILABLE | LIVE | VIEWED_LIVE
+
+
+def remove_useless_keys(_dict):
+    for keyname in ['heartbeatParams', 'playerAds', 'adPlacements', 'playbackTracking', 
+    'annotations', 'playerConfig', 'storyboards', 
+    'trackingParams', 'attestation', 'messages', 'frameworkUpdates']:
+        try:
+            _dict.pop(keyname)
+        except KeyError:
+            continue
+
+    # remove this annoying long list
+    try:
+        _dict.get('microformat', {})\
+             .get('playerMicroformatRenderer', {})\
+             .pop('availableCountries')
+    except KeyError:
+        pass
