@@ -32,7 +32,7 @@ class YoutubeLiveStream:
         self.video_info['id'] = self.get_video_id(url) if not video_id else video_id
 
         self.session = session
-        self.json = None
+        self.json = {}
         # self.video_title = None
         # self.video_author = None
         self.thumbnail_url = None
@@ -43,13 +43,12 @@ class YoutubeLiveStream:
         self.seg = 0
         self.status = Status.OFFLINE
         # self.scheduled_timestamp = None
-        self.logger = None
         self.done = False
         self.error = None
 
         self.output_dir = self.create_output_dir(output_dir)
 
-        self.setup_logger(self.output_dir, log_level)
+        self.logger = self.setup_logger(self.output_dir, log_level)
 
         self.video_outpath = f'{self.output_dir}{sep}vid'
         self.audio_outpath = f'{self.output_dir}{sep}aud'
@@ -65,8 +64,8 @@ class YoutubeLiveStream:
         return capturedirpath
 
     def setup_logger(self, path, log_level):
-        self.logger = logging.getLogger("download" + "." + self.video_info['id'])
-        self.logger.setLevel(logging.DEBUG)
+        logger = logging.getLogger("download" + "." + self.video_info['id'])
+        logger.setLevel(logging.DEBUG)
         # File output
         logfile = logging.FileHandler(\
             filename=path + sep + "download.log", delay=True)
@@ -74,13 +73,14 @@ class YoutubeLiveStream:
         formatter = logging.Formatter(\
             '%(asctime)s - %(levelname)s - %(name)s - %(message)s')
         logfile.setFormatter(formatter)
-        self.logger.addHandler(logfile)
+        logger.addHandler(logfile)
 
         # Console output
         conhandler = logging.StreamHandler()
         conhandler.setLevel(log_level)
         conhandler.setFormatter(formatter)
-        self.logger.addHandler(conhandler)
+        logger.addHandler(conhandler)
+        return logger
 
     def get_first_segment(self, paths):
         """
@@ -190,13 +190,16 @@ We assume a failed download attempt. Last segment available was {seg}.")
                     break
 
         if self.video_info.get('scheduled_timestamp'):
-            self.video_info['scheduled_time'] = datetime.utcfromtimestamp(self.video_info['scheduled_timestamp']).__str__()
+            self.video_info['scheduled_time'] = \
+                datetime.utcfromtimestamp(self.video_info['scheduled_timestamp'])\
+                                          .__str__()
 
         # TODO get the description once the stream has started
 
         metadata_file = self.output_dir + sep + 'metadata.json'
         if path.exists(metadata_file):
-            # FIXME this avoids writing this file more than once for now. No further updates.
+            # FIXME this avoids writing this file more than once for now.
+            # No further updates.
             return
         with open(metadata_file, 'w') as fp:
             dump(obj=self.video_info, fp=fp, indent=4)
@@ -268,18 +271,29 @@ playability status is: {status} \
         self.logger.info(f"Stream status {self.status}")
 
     def update_download_urls(self):
+        """Update our cached base urls. This may throw exceptions."""
         video_quality = self.get_best_quality(self.json, "video", self.max_video_quality)
-        audio_quality = self.get_best_quality(self.json, "audio")
+        audio_quality = self.get_best_quality(self.json, "audio")  # always max quality
 
-        if video_quality:
-            self.video_base_url = self.get_base_url(self.json, video_quality)
-            self.video_info['video_itag'] = video_quality
-        if audio_quality:
-            self.audio_base_url = self.get_base_url(self.json, audio_quality)
-            self.video_info['audio_itag'] = audio_quality
+        if ((self.video_info.get('video_itag') is not None
+        and self.video_info.get('video_itag') != video_quality)
+        or
+        (self.video_info.get('audio_itag') is not None
+        and self.video_info.get('audio_itag') != audio_quality)):
+            # Probably should fail if we suddenly get a different format than the
+            # one we had before to avoid problems during merging.
+            self.logger.critical(f"Got a different format after refresh of download URL!\n\
+Previous video itag: {self.video_info.get('video_itag')}. New: {video_quality}.\n\
+Previous audio itag: {self.video_info.get('audio_itag')}. New: {audio_quality}")
+            raise Exception("Format mismatch after update of base URL.")
 
-        self.logger.debug(f"Video base url {self.video_base_url}")
-        self.logger.debug(f"Audio base url {self.audio_base_url}")
+        self.video_info['video_itag'] = video_quality
+        self.video_info['audio_itag'] = audio_quality
+
+        self.video_base_url = self.get_base_url(self.json, video_quality)
+        self.audio_base_url = self.get_base_url(self.json, audio_quality)
+        self.logger.debug(f"Video base url: {self.video_base_url}")
+        self.logger.debug(f"Audio base url: {self.audio_base_url}")
 
     def download(self, wait_delay=120.0):
         self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
@@ -290,13 +304,13 @@ playability status is: {status} \
             try:
                 self.update_json()
                 self.update_status()
-
-                self.logger.debug(f"Status is {self.status}")
+                self.logger.debug(f"Status is {self.status}.")
 
                 if not self.status == Status.OK:
                     self.logger.critical(f"Could not download {self.url}: \
 stream unavailable or not a livestream.")
                     return
+
             except exceptions.WaitingException as e:
                 self.logger.warning(f"Status is {self.status}. \
 Waiting for {wait_delay} seconds...")
@@ -323,16 +337,23 @@ Waiting for {wait_delay} seconds...")
                     self.update_json()
                     self.is_live()
                     if Status.LIVE | Status.VIEWED_LIVE in self.status:
-                        self.logger.warning(f"It seems the stream has not \
-really ended. Retrying in 20 secs...")
-                        attempt += 1
+
                         if attempt >= 15:
                             self.logger.critical(f"Too many attempts on segment \
 {self.seg}. Skipping it.")
-                            self.seg +=1
+                            self.seg += 1
                             attempt = 0
                             continue
-                        sleep(20)
+
+                        self.logger.warning(f"It seems the stream has not \
+really ended. Retrying in 10 secs... (attempt {attempt}/15)")
+                        attempt += 1
+                        sleep(10)
+                        try:
+                            self.update_download_urls()
+                        except Exception as e:
+                            self.error = f"{e}"
+                            break
                         continue
                     self.logger.warning(f"The stream is not live anymore. Done.")
                     self.done = True
@@ -349,6 +370,7 @@ really ended. Retrying in 20 secs...")
     def do_download(self):
         if not self.video_base_url or not self.audio_base_url:
             raise Exception("Missing video or audio base url!")
+
         wait_sec = 60
         attempt = 0
         while True:
@@ -374,6 +396,7 @@ really ended. Retrying in 20 secs...")
                 with closing(urlopen(video_segment_url)) as in_stream:
                     headers = in_stream.headers
                     status = in_stream.status
+                    self.logger.debug(f"Seg {self.seg} URL: {video_segment_url}")
                     self.logger.debug(f"Seg status: {status}")
                     self.logger.debug(f"Seg headers:\n{headers}")
 
@@ -428,16 +451,14 @@ Waiting for {wait_sec} seconds before retrying... (attempt {attempt}/30)")
 
     def get_best_quality(self, _json, datatype, maxq=None):
         # Select the best possible quality, with maxq (str) as the highest possible
-
         quality_ids = []
         label = 'qualityLabel' if datatype == 'video' else 'audioQuality'
         streamingData = _json.get('streamingData', {})
         adaptiveFormats = streamingData.get('adaptiveFormats', {})
 
         if not streamingData or not adaptiveFormats:
-            self.logger.error(f"Could not get {datatype} quality format. \
+            raise Exception(f"Could not get {datatype} quality format. \
     Missing streamingData or adaptiveFormats")
-            return None
 
         for _dict in adaptiveFormats:
             if _dict.get(label, None) is not None:
@@ -457,6 +478,8 @@ Waiting for {wait_sec} seconds before retrying... (attempt {attempt}/30)")
             # global itag.quality_audio_ranking
             ranking = itag.quality_audio_ranking
 
+        chosen_quality = None
+        chosen_quality_labels = ""
         for i in ranking:
             if i in quality_ids:
                 chosen_quality = i
@@ -473,6 +496,8 @@ Waiting for {wait_sec} seconds before retrying... (attempt {attempt}/30)")
         self.logger.warning(f"Chosen {datatype} quality: \
     itag {chosen_quality}; height: {chosen_quality_labels}")
 
+        if chosen_quality is None:
+            raise Exception(f"Failed to get chosen quality from adaptiveFormats.")
         return chosen_quality
 
     def get_scheduled_time(self, playabilityStatus):
@@ -486,9 +511,15 @@ Waiting for {wait_sec} seconds before retrying... (attempt {attempt}/30)")
         return s
 
     def get_base_url(self, _json, itag):
+        """Get the URL corresponding to the specified itag from the json."""
+        url = None
         for _dict in _json['streamingData']['adaptiveFormats']:
             if _dict.get('itag', None) == itag:
-                return _dict.get('url', None)
+                url = _dict.get('url', None)
+                break
+        if url is None:
+            raise Exception(f"Failed getting url key for itag {itag}.")
+        return url
 
     def get_video_id(self, url):
         # Argument format:
@@ -513,8 +544,9 @@ Waiting for {wait_sec} seconds before retrying... (attempt {attempt}/30)")
         regex = re.compile(pattern)
         results = regex.search(url_pattern)
         if not results:
-            self.logger.warning(f"Error while looking for {url_pattern}")
-        self.logger.info(f"matched regex search: {url_pattern}")
+            self.logger.warning(f"Error while looking for {url_pattern}.")
+            raise Exception
+        self.logger.info(f"matched regex search: {url_pattern}.")
         return results.group(1)
 
     def write_to_file(self, fsrc, fdst, length=0):

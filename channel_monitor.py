@@ -73,7 +73,10 @@ def monitor(args):
         logger.info(f"Found live: {_id} \
 title: {target_live.get('title')}. Downloading...")
 
-        stream.download()
+        try:
+            stream.download()
+        except Exception:
+            pass
 
         if stream.done:
             logger.info(f"Finished downloading {_id}. Merging segments...")
