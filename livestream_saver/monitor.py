@@ -9,7 +9,7 @@ class YoutubeChannel:
     def __init__(self, args, channel_id, session):
         self.info = {}
         self.session = session
-        self.url = self.sanitize_url(args.url)
+        self.url = self.sanitize_url(args.URL)
         self.info['id'] = channel_id
         self.community_json = None
         self.videos_json = None
