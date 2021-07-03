@@ -2,11 +2,6 @@ from time import sleep
 from random import uniform
 import logging
 
-import livestream_saver.download
-import livestream_saver.exceptions
-import livestream_saver.util
-import livestream_saver.merge
-
 logger = logging.getLogger(__name__)
 
 
@@ -45,9 +40,9 @@ class YoutubeChannel:
         High level method.
         Returns a list of videos that are live, from various channel tabs.
         """
-        community_videos = self.get_community_videos()
+        community_videos = self.update_community_videos()
         if self.community_videos is None:
-            # Log only the first time
+            # Log only the very first time
             logger.debug(f"Community videos: {community_videos}")
         else:
             new_comm_videos = [v for v in community_videos if v not in self.community_videos]
@@ -73,11 +68,14 @@ class YoutubeChannel:
                 live_videos.append(vid)
         return live_videos
 
-    def get_community_videos(self):
+    def update_community_videos(self):
         """
         Returns list of dict with urls to videos attached to community posts.
         """
-        self.community_json = self.session.make_request(self.url + '/community')
+        try:
+            self.community_json = self.session.make_request(self.url + '/community')
+        except:
+            self.community_json = {}
         # logger.debug(f"community videos JSON:\n{self.community_json}")
         if not self.community_json:
             return []
@@ -88,7 +86,10 @@ class YoutubeChannel:
         """
         Returns list of videos from "videos" or "featured" tabs.
         """
-        self.videos_json = self.get_public_livestreams('current')
+        try:
+            self.videos_json = self.get_public_livestreams('current')
+        except:
+            self.videos_json = None
         # logger.debug(f"public videos JSON:\n{self.videos_json}")
         if not self.videos_json:
             return []

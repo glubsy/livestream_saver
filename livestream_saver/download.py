@@ -3,6 +3,7 @@ from os import sep, path, makedirs, listdir
 from platform import system
 import logging
 from datetime import date, datetime
+from re import S
 from time import time, sleep
 from json import dumps, dump
 from contextlib import closing
@@ -144,7 +145,11 @@ We assume a failed download attempt. Last segment available was {seg}.")
     def update_json(self):
         # TODO get the DASH manifest (MPD) instead?
 
-        self.json = self.session.make_request(self.url)
+        try:
+            self.json = self.session.make_request(self.url)
+        except:
+            self.json = {}
+
         if not self.json:
             self.logger.critical(f"WARNING: invalid JSON for {self.url}: {self.json}")
             self.status &= ~Status.AVAILABLE
@@ -588,8 +593,8 @@ class Status(Flag):
 
 
 def remove_useless_keys(_dict):
-    for keyname in ['heartbeatParams', 'playerAds', 'adPlacements', 'playbackTracking', 
-    'annotations', 'playerConfig', 'storyboards', 
+    for keyname in ['heartbeatParams', 'playerAds', 'adPlacements', 'playbackTracking',
+    'annotations', 'playerConfig', 'storyboards',
     'trackingParams', 'attestation', 'messages', 'frameworkUpdates']:
         try:
             _dict.pop(keyname)

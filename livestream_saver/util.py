@@ -3,6 +3,7 @@ import time
 # from sys import version_info
 # from platform import python_version_tuple
 import re
+import functools
 from random import randint
 from platform import system
 from json import loads
@@ -99,25 +100,32 @@ def parse_cookie_file(cookiefile):
     return cookies
 
 
-def get_channel_id(url_pattern):
+# Youtube channel IDs are 24 characters
+YT_CH_HASH_RE = re.compile(r".*channel\/([0-9A-Za-z_-]{24}).*")
+YT_CHID_HASH_RE = re.compile(r"^[0-9A-Za-z_-]{24}$")
+
+
+def get_channel_id(str_url):
     """
     Naive way to get the channel id from channel canonical URL.
+    :param pattern str: URL to channel or channel ID directly.
     """
-    # FIXME allow for passing only ID hash intead of full url
-    if "channel" in url_pattern: # /channel/HASH
-        pattern = r".*(channel\/)([0-9A-Za-z_-]{24}).*"
-        regex = re.compile(pattern)
-        results = regex.search(url_pattern)
-        if not results:
-            logger.error(f"Error while looking for channel {url_pattern}")
-        logger.debug(f"matched regex search: {url_pattern}: {results.group(2)}")
-        return results.group(2)
-    elif '/watch' in url_pattern:
-        raise Exception("Not a valid channel URL. Isn't this a video URL?")
-    elif '/' in url_pattern: # /c/NAME
-        return url_pattern.split('/c/')[-1]
-    else:
-        return url_pattern
+    if "channel/" in str_url: # /channel/HASH
+        if match := YT_CH_HASH_RE.search(str_url):
+            logger.debug(f"Matched regex: {str_url}: {match.group(1)}")
+            return match.group(1)
+        raise Exception(f"Error while looking for channel HASH in \"{str_url}\"")
+
+    if match := YT_CHID_HASH_RE.search(str_url):
+        return str_url
+
+    if '/watch' in str_url:
+        raise Exception("Not a valid channel URL. Is this a video URL?")
+
+    if 'youtube.com/c/' in str_url: # /c/NAME
+        return str_url.split('/c/')[-1]
+
+    return str_url
 
 
 def get_system_ua():
@@ -134,7 +142,7 @@ class YoutubeUrllibSession:
     Keep cookies in memory for reuse or update.
     """
     def __init__(self, cookie_path=None):
-        self.user_cookies = True if cookie_path else False
+        self.user_supplied_cookies = True if cookie_path else False
         self.cookie_jar = get_cookie(cookie_path)
         # TODO add proxies
         self.headers = {
@@ -210,26 +218,32 @@ class YoutubeUrllibSession:
         if self.cookie_jar.filename:
             self.cookie_jar.save(ignore_expires=True)
 
-
-    def make_request(self, url, parse_json=True):
+    def make_request(self, url):
         req = Request(url, headers=self.headers)
         self.cookie_jar.add_cookie_header(req)
 
         logger.debug(f"Request {req.full_url}")
         logger.debug(f"Request headers: {req.header_items()}")
 
-        resp_json_str = self.parse_response(req)
+        _json = str_as_json(self.parse_response(req))
+        self.is_logged_out(_json)
+        return _json
 
-        if parse_json:
-            _json = get_json_from_string(resp_json_str)
-            if _json.get("responseContext", {})\
-                    .get("mainAppWebResponseContext", {})\
-                    .get("loggedOut")\
-            and self.user_cookies:
-                logger.critical("We are not logged in anymore. Update your cookies!")
-            return _json
-
-        return resp_json_str
+    def is_logged_out(self, json_obj):
+        """Take a json object and return if we detect logged out status
+        only if we have supplied our own cookies, which we ASSUME are meant
+        to be logged in."""
+        # TODO only warn when the status changed (from logged in to logged out)
+        if not json_obj:
+            return False
+        if json_obj.get("responseContext", {})\
+                .get("mainAppWebResponseContext", {})\
+                .get("loggedOut")\
+        and self.user_supplied_cookies:
+            logger.critical("We are not logged in anymore. Update your cookies!")
+            # TODO send warning email to user
+            return True
+        return False
 
     def update_cookies(self, req, res):
         """
@@ -250,10 +264,10 @@ class YoutubeUrllibSession:
         self.cookie_jar.extract_cookies(res, req)
         logger.debug(f"CookieJar after extract_cookies(): {self.cookie_jar}")
 
-
     def parse_response(self, req):
         """
-        Extract the initial JSON from the HTML in the request response.
+        Extract the initial embedded JSON from the HTML in the request response.
+        Return a string of that embedded json or None on failure.
         """
         # TODO get the DASH manifest (MPD) and parse that xml file instead
 
@@ -294,13 +308,14 @@ ytInitialPlayerResponse in the GET request!")
                 raise e
 
 
-def get_json_from_string(string):
+def str_as_json(string):
+    """Return :param string str as a python json object."""
     try:
         j = loads(string)
     except Exception as e:
         logger.critical(f"Error loading JSON from string: {e}")
         logger.debug(f"get_json_from_string: {string}")
-        return None
+        raise
     return j
 
 
