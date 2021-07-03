@@ -43,7 +43,7 @@ class YoutubeChannel:
         community_videos = self.update_community_videos()
         if self.community_videos is None:
             # Log only the very first time
-            logger.debug(f"Community videos: {community_videos}")
+            logger.info(f"Community videos: {community_videos}")
         else:
             new_comm_videos = [v for v in community_videos if v not in self.community_videos]
             if new_comm_videos:
@@ -52,7 +52,7 @@ class YoutubeChannel:
 
         public_videos = self.get_public_videos()
         if self.public_videos is None:
-            logger.debug(f"Public videos: {public_videos}")
+            logger.info(f"Public videos: {public_videos}")
         else:
             new_pub_videos = [v for v in public_videos if v not in self.public_videos]
             if new_pub_videos:
