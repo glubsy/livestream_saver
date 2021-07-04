@@ -114,6 +114,7 @@ This is beta software. It should work, but in case it doesn't, feel free to repo
 
 # TODO
 
-* Monitor Twitch channels.
+* Add proxy support.
 * Make sure age-restricted videos are not blocked by the new Youtube Cookies consent page.
+* Monitor Twitch channels.
 * Send e-mail alerts in case of fatal error. 

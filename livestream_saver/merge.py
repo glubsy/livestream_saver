@@ -312,12 +312,18 @@ Something went wrong. Try again with DEBUG log level and check for errors.")
 
 
 def print_missing_segments(filelist, filetype):
-    """Check that all segments are available."""
+    """
+        Check that all segments are available.
+        :param filelist list a list of pathlib.Path
+        :param filetype str "_video" or "_audio"
+    """
     missing = False
     first_segnum = 0
     last_segnum = 0
 
     if filelist:
+        # Get the numbers from the file name
+        # filename format is 0000000001_[audio|video].ts
         first_segnum = int(filelist[0].name.split(filetype + ".ts")[0])
         last_segnum = int(filelist[-1].name.split(filetype + ".ts")[0])
 
@@ -325,7 +331,8 @@ def print_missing_segments(filelist, filetype):
         logger.warning(f"First {filetype[1:]} segment number starts at \
 {first_segnum} instead of 0.")
 
-    if len(filelist) != last_segnum:
+    # Numbering in filenames starts from 0
+    if len(filelist) != last_segnum + 1:
         logger.warning(f"Number of {filetype[1:]} segments doesn't match last \
 segment number: \
 Last {filetype[1:]} segment number: {last_segnum} / {len(filelist)} total files.")
