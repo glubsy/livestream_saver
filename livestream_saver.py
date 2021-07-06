@@ -4,7 +4,7 @@ import argparse
 import logging
 from livestream_saver.monitor import YoutubeChannel, wait_block
 from livestream_saver.download import YoutubeLiveStream
-from livestream_saver.merge import merge
+from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import YoutubeUrllibSession, get_channel_id
 
 logger = logging.getLogger('livestream_saver')
@@ -222,13 +222,13 @@ def _merge(args):
     setup_logger(args.PATH + sep + "downloader.log", args.log)
 
     data_path = path.abspath(args.PATH)
-    info = merge.get_metadata_info(data_path)
-    written_file = merge.merge(\
-                            info=info,\
-                            data_dir=data_path,\
-                            output_dir=args.output_dir,\
-                            keep_concat=args.keep_concat,\
-                            delete_source=args.delete_source)
+    info = get_metadata_info(data_path)
+    written_file = merge(\
+                         info=info,\
+                         data_dir=data_path,\
+                         output_dir=args.output_dir,\
+                         keep_concat=args.keep_concat,\
+                         delete_source=args.delete_source)
 
     if not written_file:
         logger.critical("Something failed. Please report the issue with logs.")
