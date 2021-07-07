@@ -1,9 +1,10 @@
+import io
 import logging
 import time
 # from sys import version_info
 # from platform import python_version_tuple
 import re
-import functools
+from os import sep, makedirs
 from random import randint
 from platform import system
 from json import loads
@@ -23,19 +24,41 @@ def get_cookie(path):
 def _get_cookie_jar(cookie_path):
     """Necessary for urllib.request."""
 
-    # Before Python 3.10, these cookies are ignored which breaks our credentials.
+    # Before Python 3.10, these cookies are ignored which breaks our credentials
     cj = http.cookiejar.MozillaCookieJar() \
-         if "HTTPONLY_PREFIX" in dir(http.cookiejar) \
-         else CompatMozillaCookieJar()
+        if "HTTPONLY_PREFIX" in dir(http.cookiejar) \
+        else CompatMozillaCookieJar()
 
     if not cookie_path:
-        logger.debug(f"No cookie path submitted. Created an empty new one.")
+        logger.info(f"No cookie path submitted. Using a blank cookie jar.")
         return cj
 
     cp = Path(cookie_path).absolute()
-    if not cp.exists():
-        logger.debug(f"Cookie file not found. Created an empty new one.")
-        cj.filename = str(cp)
+
+    if not cp.is_file():  # either file doesn't exist, or it's a directory
+        cp_str = str(cp)
+        logger.debug(f"Cookie path \"{cp_str}\" is not a file...")
+
+        if not cp.exists():
+            # Get base directory, remove bogus filename
+            found = cp_str.rfind(sep)
+            if found != -1:
+                cp_str = cp_str[:found]
+            logger.debug(f"Creating directory for cookie: \"{cp_str}\"")
+            makedirs(cp_str, exist_ok=True)
+            cp_str = str(cp)
+        elif cp.is_dir():
+            cp_str = cp_str + sep + "livestream_saver_cookies.txt"
+        else:  
+            # device node or something illegal
+            logger.warning(f"Submitted cookie path \"{cp}\" is incorrect. \
+Using blank cookie jar.")
+            return cj
+
+        logger.warning(
+            f"Cookie file not found. Creating an empty new one in \"{cp_str}\"."
+        )
+        cj.filename = cp_str  # this has to be an absolute valid path string
         return cj
 
     new_cp_str = str(Path(cookie_path).absolute().with_suffix('')) + "_updated.txt"
@@ -212,7 +235,8 @@ class YoutubeUrllibSession:
                         {} # rest
                     )
 
-        logger.debug(f"Setting consent cookie: {cookie}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Setting consent cookie: {cookie}")
         self.cookie_jar.set_cookie(cookie)
 
         if self.cookie_jar.filename:
@@ -222,8 +246,9 @@ class YoutubeUrllibSession:
         req = Request(url, headers=self.headers)
         self.cookie_jar.add_cookie_header(req)
 
-        logger.debug(f"Request {req.full_url}")
-        logger.debug(f"Request headers: {req.header_items()}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Request {req.full_url}")
+            logger.debug(f"Request headers: {req.header_items()}")
 
         _json = str_as_json(self.parse_response(req))
         self.is_logged_out(_json)
@@ -253,7 +278,8 @@ class YoutubeUrllibSession:
         # logger.debug(f"Req header cookie: \"{cookies}\".")
 
         ret_cookies = self.cookie_jar.make_cookies(res, req)
-        logger.debug(f"make_cookies(): {ret_cookies}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"make_cookies(): {ret_cookies}")
 
         for cook in ret_cookies:
             if cook.name == "SIDCC" and cook.value == "EXPIRED":
@@ -262,7 +288,8 @@ class YoutubeUrllibSession:
                 return
 
         self.cookie_jar.extract_cookies(res, req)
-        logger.debug(f"CookieJar after extract_cookies(): {self.cookie_jar}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"CookieJar after extract_cookies(): {self.cookie_jar}")
 
     def parse_response(self, req):
         """
@@ -274,7 +301,8 @@ class YoutubeUrllibSession:
         # We could also use youtube-dl --dump-json instead
         with urlopen(req) as res:
             logger.info(f"GET {res.url}")
-            logger.debug(f"Response Status code: {res.status}.\n\
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Response Status code: {res.status}.\n\
 Response headers:\n{res.headers}")
 
             self.update_cookies(req, res)
@@ -299,7 +327,8 @@ Please try again later or get a new IP (also a new cookie?).")
                     _json = content_page.split("var ytInitialData = ")[1]\
                                         .split(';</script><link rel="canonical')[0]
                 else:
-                    logger.debug(f"JSON after split:\n{_json}")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"JSON after split:\n{_json}")
                     raise Exception("Could not find ytInitialData nor \
 ytInitialPlayerResponse in the GET request!")
                 return _json
@@ -314,7 +343,8 @@ def str_as_json(string):
         j = loads(string)
     except Exception as e:
         logger.critical(f"Error loading JSON from string: {e}")
-        logger.debug(f"get_json_from_string: {string}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"get_json_from_string: {string}")
         raise
     return j
 
