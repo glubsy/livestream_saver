@@ -30,6 +30,7 @@ class YoutubeLiveStream:
         self.max_video_quality = max_video_quality
 
         self.video_info = {}
+        # FIXME check and sanitize before constructing the object
         self.video_info['id'] = self.get_video_id(url) if not video_id else video_id
 
         self.session = session
@@ -65,6 +66,9 @@ class YoutubeLiveStream:
         return capturedirpath
 
     def setup_logger(self, path, log_level):
+        if isinstance(log_level, str):
+            log_level = str.upper(log_level)
+
         logger = logging.getLogger("download" + "." + self.video_info['id'])
         logger.setLevel(logging.DEBUG)
         # File output
@@ -155,7 +159,9 @@ We assume a failed download attempt. Last segment available was {seg}.")
             self.status &= ~Status.AVAILABLE
             return
         remove_useless_keys(self.json)
-        self.logger.debug("\n" + dumps(self.json, indent=4))
+
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug("\n" + dumps(self.json, indent=4))
 
     def populate_info(self):
         if not self.json:
@@ -173,9 +179,10 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
         self.video_info['scheduled_time'] = self.get_scheduled_time(self.json.get('playabilityStatus', {}))
 
-        self.logger.debug(f"Video ID: {self.video_info['id']}")
-        self.logger.debug(f"Video title: {self.video_info['title']}")
-        self.logger.debug(f"Video author: {self.video_info['author']}")
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(f"Video ID: {self.video_info['id']}")
+            self.logger.debug(f"Video title: {self.video_info['title']}")
+            self.logger.debug(f"Video author: {self.video_info['author']}")
 
     def download_thumbnail(self):
         # TODO write more thumbnail files in case the first one somehow
@@ -301,7 +308,9 @@ Previous audio itag: {self.video_info.get('audio_itag')}. New: {audio_quality}")
         self.logger.debug(f"Video base url: {self.video_base_url}")
         self.logger.debug(f"Audio base url: {self.audio_base_url}")
 
-    def download(self, wait_delay=120.0):
+    def download(self, wait_delay=2.0):
+        """wait_delay in minutes."""
+
         self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
         self.logger.info(f'Will start downloading from segment number {self.seg}.')
 
@@ -319,8 +328,8 @@ stream unavailable or not a livestream.")
 
             except exceptions.WaitingException as e:
                 self.logger.warning(f"Status is {self.status}. \
-Waiting for {wait_delay} seconds...")
-                sleep(wait_delay)
+Waiting for {wait_delay} minutes...")
+                sleep(wait_delay * 60)
                 continue
             except exceptions.OfflineException as e:
                 self.logger.critical(f"{e}")
@@ -402,9 +411,10 @@ really ended. Retrying in 10 secs... (attempt {attempt}/15)")
                 with closing(urlopen(video_segment_url)) as in_stream:
                     headers = in_stream.headers
                     status = in_stream.status
-                    self.logger.debug(f"Seg {self.seg} URL: {video_segment_url}")
-                    self.logger.debug(f"Seg status: {status}")
-                    self.logger.debug(f"Seg headers:\n{headers}")
+                    if self.logger.isEnabledFor(logging.DEBUG):
+                        self.logger.debug(f"Seg {self.seg} URL: {video_segment_url}")
+                        self.logger.debug(f"Seg status: {status}")
+                        self.logger.debug(f"Seg headers:\n{headers}")
 
                     if not self.write_to_file(in_stream, video_segment_filename):
                         if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":

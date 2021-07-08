@@ -6,10 +6,10 @@ logger = logging.getLogger(__name__)
 
 
 class YoutubeChannel:
-    def __init__(self, args, channel_id, session):
+    def __init__(self, URL, channel_id, session):
         self.info = {}
         self.session = session
-        self.url = self.sanitize_url(args.URL)
+        self.url = URL
         self.info['id'] = channel_id
         self.community_json = None
         self.videos_json = None
@@ -27,13 +27,6 @@ class YoutubeChannel:
             .get('metadata', {})\
             .get('channelMetadataRenderer', {})\
             .get('title')
-
-    def sanitize_url(self, url):
-        """Make sure url passed to constructor is valid"""
-        # FIXME needs smarter checks
-        if "http" not in url and "youtube.com" not in url:
-            return f"https://www.youtube.com/channel/{url}"
-        return url
 
     def get_live_videos(self):
         """
@@ -193,7 +186,12 @@ def rss_from_name(channel_name):
 
 
 def wait_block(min_minutes=15.0, variance=3.5):
-    """Wait for float: minutes, with up to float: variance minutes."""
+    """
+    Sleep (blocking) for a specified amount of minutes, 
+    with variance to avoid being detected as a robot.
+    :param min_minutes float Minimum number of minutes to wait.
+    :param variance float Maximum number of minutes added.
+    """
     min_seconds = min_minutes * 60
     max_seconds = min_seconds + (variance * 60)
     wait_time_sec = uniform(min_seconds, max_seconds)

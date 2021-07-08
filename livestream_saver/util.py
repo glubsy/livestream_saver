@@ -124,31 +124,28 @@ def parse_cookie_file(cookiefile):
 
 
 # Youtube channel IDs are 24 characters
-YT_CH_HASH_RE = re.compile(r".*channel\/([0-9A-Za-z_-]{24}).*")
-YT_CHID_HASH_RE = re.compile(r"^[0-9A-Za-z_-]{24}$")
+YT_CH_HASH_RE = re.compile(r".*(channel\/)?([0-9A-Za-z_-]{24}).*|.*youtube\.com\/c\/(.*)")
+# YT_CH_ID_HASH_RE = re.compile(r"^[0-9A-Za-z_-]{24}$")
+# YT_CH_NAME_RE = re.compile(r".*youtube\.com\/c\/(.*)")
 
 
-def get_channel_id(str_url):
+def get_channel_id(str_url, service_name):
     """
     Naive way to get the channel id from channel canonical URL.
     :param pattern str: URL to channel or channel ID directly.
     """
-    if "channel/" in str_url: # /channel/HASH
+    if service_name == "youtube":
         if match := YT_CH_HASH_RE.search(str_url):
             logger.debug(f"Matched regex: {str_url}: {match.group(1)}")
-            return match.group(1)
-        raise Exception(f"Error while looking for channel HASH in \"{str_url}\"")
+            return match.group(2) if match.group(2) else match.group(3)
 
-    if match := YT_CHID_HASH_RE.search(str_url):
-        return str_url
+        if "youtube" not in str_url:
+            raise Exception("Not a youtube URL.")
 
-    if '/watch' in str_url:
-        raise Exception("Not a valid channel URL. Is this a video URL?")
+        if '/watch' in str_url:
+            raise Exception("Not a valid channel URL. Is this a video URL?")
 
-    if 'youtube.com/c/' in str_url: # /c/NAME
-        return str_url.split('/c/')[-1]
-
-    return str_url
+    raise Exception(f"No valid channel ID found in \"{str_url}\".")
 
 
 def get_system_ua():

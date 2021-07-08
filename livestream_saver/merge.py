@@ -314,8 +314,8 @@ Something went wrong. Try again with DEBUG log level and check for errors.")
 def print_missing_segments(filelist, filetype):
     """
         Check that all segments are available.
-        :param filelist list a list of pathlib.Path
-        :param filetype str "_video" or "_audio"
+        :param list filelist: a list of pathlib.Path
+        :param str filetype: "_video" or "_audio"
     """
     missing = False
     first_segnum = 0
