@@ -124,9 +124,10 @@ pip3 install -r requirements.txt
 ```
 One could also clone the corresponding repositories manually to get the latest updates.
 
-# Archived
+## Configuration
 
-The `archived` directory contains archived scripts which may still be useful in case of emergency (ie. getting a fatal error in a pinch). These are what the program above was based on originally. They are very limited, and should still mostly work, apart from the Youtube throttling problem which requires advanced pre-processing of the download URLs such as computing token signature (thanks Youtube for breaking our things on purpose!).
+The template config file is provided as an example. Options can generally be overriden via command line arguments.
+The email options can be overriden via environment variables if you find it more secure.
 
 # License
 
@@ -134,12 +135,12 @@ GPLv3
 
 # Notes:
 
-This is beta software. It should work, but in case it doesn't, feel free to report issues. Or better yet, fix them yourself and submit a merge request.
+This is beta software. It should work, but in case it doesn't, feel free to report issues. Or better yet, fix them yourself and submit a merge request. Keep in mind that these mega corporations love to break things.
 
 # TODO
 
+* Better stream quality selection (webm, by fps, etc.).
 * Add proxy support.
 * Fetch segments in parallel to catch up faster.
 * Make sure age-restricted videos are not blocked (we rely on Pytube for this).
 * Monitor Twitch channels.
-* Send e-mail alerts in case of fatal error. 

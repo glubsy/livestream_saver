@@ -1,6 +1,6 @@
 # Archived scripts.
 
-These obsolete scripts may still be useful as long as they work.
+These obsolete scripts may still be useful as long as they work. They may still be useful in case of emergency (ie. getting a fatal error in a pinch). The main program above was based on these originally. They are very limited, and should still mostly work, apart from the Youtube throttling problem which requires advanced pre-processing of the download URLs such as computing token signature (thanks Youtube for breaking our things on purpose!).
 
 This was originally a [gist](https://gist.github.com/glubsy/6e9b3061e074f528ea7153647f9fe615), forked from this [script by @cheadrian](https://gist.github.com/cheadrian/b661fb68a6a87ea64069e641cef68c3e). The script is called `manual_download.py`.
 

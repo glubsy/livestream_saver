@@ -1,17 +1,7 @@
-import io
 import logging
-import time
-# from sys import version_info
-# from platform import python_version_tuple
 import re
-from os import sep, makedirs
-from random import randint
 from platform import system
-from json import loads
-from pathlib import Path
-from urllib.request import Request, urlopen #, build_opener, HTTPCookieProcessor, HTTPHandler
-import http.cookiejar
-from http.cookies import SimpleCookie
+
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)

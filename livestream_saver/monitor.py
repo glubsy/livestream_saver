@@ -1,55 +1,128 @@
 from time import sleep
 from random import uniform
 import logging
+from typing import Dict
+from livestream_saver import extract
 
 logger = logging.getLogger(__name__)
 
 
 class YoutubeChannel:
     def __init__(self, URL, channel_id, session):
-        self.info = {}
         self.session = session
         self.url = URL
-        self.info['id'] = channel_id
-        self.community_json = None
+        self.id = channel_id
         self.videos_json = None
         self.community_videos = None
         self.public_videos = None
 
-    def get_name(self):
+        self._community_videos_html = None
+        self._public_videos_html = None
+        self._community_json = None
+        self._public_json = None
+
+    def get_channel_name(self):
+        """Get the name of the channel from the community JSON (once retrieved).
         """
-        Get the name of the channel from the community JSON (once retrieved).
-        """
+        # FIXME this method pre-fetches the json if called before 
         # TODO handle channel names which are not IDs
         # => get "videos" tab html page and grab externalId value from it?
-        if self.community_json:
-            return self.community_json\
-            .get('metadata', {})\
-            .get('channelMetadataRenderer', {})\
-            .get('title')
+        _json = self.public_json
+        if not _json:
+            _json = self.community_json
+
+        if _json:
+            return _json.get('metadata', {})\
+                        .get('channelMetadataRenderer', {})\
+                        .get('title')
+        return "Unknown"
+
+    @property
+    def community_videos_html(self):
+        if self._community_videos_html:
+            return self._community_videos_html
+
+        self._community_videos_html = self.session.make_request(
+            self.url + '/community'
+        )
+        return self._community_videos_html
+
+    @property
+    def public_videos_html(self):
+        if self._public_videos_html:
+            return self._public_videos_html
+
+        self._public_videos_html = self.get_public_livestreams('current')
+        return self._public_videos_html
+
+    @property
+    def community_json(self):
+        if self._community_json:
+            return self._community_json
+
+        self._community_json = extract.str_as_json(
+            extract.initial_player_response(
+                self.community_videos_html
+            )
+        )
+        return self._community_json
+
+    @property
+    def public_json(self):
+        if self._public_json:
+            return self._public_json
+
+        self._public_json = extract.str_as_json(
+            extract.initial_player_response(
+                self.public_videos_html
+            )
+        )
+        return self._public_json
 
     def get_live_videos(self):
-        """
-        High level method.
+        """High level method.
         Returns a list of videos that are live, from various channel tabs.
         """
         community_videos = self.update_community_videos()
+
         if self.community_videos is None:
             # Log only the very first time
-            logger.info(f"Community videos: {community_videos}")
+            logger.info(
+                "Currently listed community videos:\n{}".format(
+                    format_list_output(community_videos)
+                )
+            )
         else:
-            new_comm_videos = [v for v in community_videos if v not in self.community_videos]
+            new_comm_videos = [
+                v for v in community_videos if v not in self.community_videos
+            ]
             if new_comm_videos:
-                logger.warning(f"Newly added community video: {new_comm_videos}")
+                logger.info(
+                    "Newly added community video:\n{}".format(
+                        format_list_output(new_comm_videos)
+                    )
+                )
         self.community_videos = community_videos
 
-        public_videos = self.get_public_videos()
+        public_videos = self.update_public_videos()
+
         if self.public_videos is None:
-            logger.info(f"Public videos: {public_videos}")
+            # Log only the very first time
+            logger.info(
+                "Currently listed public videos:\n{}".format(
+                    format_list_output(public_videos)
+                )
+            )
         else:
-            new_pub_videos = [v for v in public_videos if v not in self.public_videos]
+            new_pub_videos = [
+                v for v in public_videos if v not in self.public_videos
+            ]
             if new_pub_videos:
-                logger.warning(f"Newly added public video: {new_pub_videos}")
+                logger.info(
+                    "Newly added public video: {}".format(
+                        format_list_output(new_pub_videos)
+                    )
+                )
         self.public_videos = public_videos
 
         live_videos = []
@@ -62,31 +135,19 @@ class YoutubeChannel:
         return live_videos
 
     def update_community_videos(self):
+        """Returns list of dict with urls to videos attached to community posts.
         """
-        Returns list of dict with urls to videos attached to community posts.
-        """
-        try:
-            self.community_json = self.session.make_request(self.url + '/community')
-        except:
-            self.community_json = {}
-        # logger.debug(f"community videos JSON:\n{self.community_json}")
-        if not self.community_json:
-            return []
-        tabs = get_tabs_from_json(self.community_json)
+        self._community_json = self._community_videos_html = None # force update
+        community_json = self.community_json
+        self.session.is_logged_out(community_json)
+        tabs = get_tabs_from_json(community_json)
         return get_videos_from_tab(tabs, 'Community')
 
-    def get_public_videos(self):
-        """
-        Returns list of videos from "videos" or "featured" tabs.
-        """
-        try:
-            self.videos_json = self.get_public_livestreams('current')
-        except:
-            self.videos_json = None
-        # logger.debug(f"public videos JSON:\n{self.videos_json}")
-        if not self.videos_json:
-            return []
-        tabs = get_tabs_from_json(self.videos_json)
+    def update_public_videos(self):
+        """Returns list of videos from "videos" or "featured" tabs."""
+        self._public_json = self._public_videos_html = None # force update
+        public_json = self.public_json
+        tabs = get_tabs_from_json(public_json)
         return get_videos_from_tab(tabs, 'Videos')
 
     def get_public_livestreams(self, filtertype):
@@ -94,14 +155,20 @@ class YoutubeChannel:
             # https://www.youtube.com/c/kamikokana/videos\?view\=2\&live_view\=502
             # https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g/videos?view=2&live_view=502
             # This video tab filtered list, returns public upcoming livestreams (with scheduled times)
-            return self.session.make_request(self.url + '/videos?view=2&live_view=502')
+            return self.session.make_request(
+                self.url + '/videos?view=2&live_view=502'
+            )
         if filtertype == 'current':
             # NOTE: active livestreams are also displays in /featured tab:
             # https://www.youtube.com/c/kamikokana/videos?view=2&live_view=501
-            return self.session.make_request(self.url + '/videos?view=2&live_view=501')
+            return self.session.make_request(
+                self.url + '/videos?view=2&live_view=501'
+            )
         if filtertype == 'featured':
             # NOTE "featured" tab is ONLY reliable for CURRENT live streams
-            return self.session.make_request(self.url + '/featured')
+            return self.session.make_request(
+                self.url + '/featured'
+            )
         # NOTE "/live" virtual tab is a redirect to the current live broadcast
 
 
@@ -168,8 +235,8 @@ def get_video_from_post(attachment):
 def get_tabs_from_json(_json):
     if not _json:
         return _json
-    return _json.get('contents', {})\
-                .get('twoColumnBrowseResultsRenderer', {})\
+    return _json.get('contents', {}) \
+                .get('twoColumnBrowseResultsRenderer', {}) \
                 .get('tabs', [])
 
 
@@ -187,7 +254,7 @@ def rss_from_name(channel_name):
 
 def wait_block(min_minutes=15.0, variance=3.5):
     """
-    Sleep (blocking) for a specified amount of minutes, 
+    Sleep (blocking) for a specified amount of minutes,
     with variance to avoid being detected as a robot.
     :param min_minutes float Minimum number of minutes to wait.
     :param variance float Maximum number of minutes added.
@@ -198,3 +265,10 @@ def wait_block(min_minutes=15.0, variance=3.5):
     wait_time_min = wait_time_sec / 60
     logger.info(f"Sleeping for {wait_time_min:.2f} minutes ({wait_time_sec:.2f} seconds)...")
     sleep(wait_time_sec)
+
+
+def format_list_output(vid_list):
+    strs = []
+    for vid in vid_list:
+        strs.append(f"{vid.get('videoId')} - {vid.get('title')}")
+    return "\n".join(strs)

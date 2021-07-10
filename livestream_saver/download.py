@@ -8,6 +8,7 @@ from json import dumps, dump, loads
 from contextlib import closing
 from enum import Flag, auto
 from typing import Optional, Dict, List, Any
+from pathlib import Path
 import re
 from urllib.request import urlopen
 import urllib.error
@@ -18,10 +19,6 @@ import pytube
 
 from livestream_saver import exceptions
 from livestream_saver import extract
-from livestream_saver import util
-from livestream_saver import stream
-from livestream_saver.stream import Stream
-# from livestream_saver import itag
 
 SYSTEM = system()
 ISPOSIX = SYSTEM == 'Linux' or SYSTEM == 'Darwin'
@@ -33,7 +30,7 @@ COPY_BUFSIZE = 1024 * 1024 if ISWINDOWS else 64 * 1024
 
 
 class YoutubeLiveStream():
-    def __init__(self, url, output_dir, session, video_id=None,\
+    def __init__(self, url, output_dir, session, video_id=None,
                  max_video_quality=None, log_level=logging.INFO):
 
         self.session = session
@@ -58,7 +55,7 @@ class YoutubeLiveStream():
 
         self._player_config_args: Optional[Dict] = None
         self._player_response: Optional[Dict] = None
-        self._fmt_streams: Optional[List[Stream]] = None
+        self._fmt_streams: Optional[List[pytube.Stream]] = None
 
         self._chosen_itags: Dict = {}
 
@@ -68,25 +65,13 @@ class YoutubeLiveStream():
 
         self._age_restricted: Optional[bool] = None
 
-        ##############################
         self.url = url
         self.max_video_quality = max_video_quality
 
-        # self.video_info = {}
-        # FIXME check and sanitize before constructing the object
-        # self.video_info['id'] = extract.get_video_id(url) if not video_id else video_id
-
-        # self.json = {}
-        # self.video_title = None
-        # self.video_author = None
-        # self.thumbnail_url = None
-        # self.video_itag = None
-        # self.audio_itag = None
         self.video_base_url = None
         self.audio_base_url = None
         self.seg = 0
         self.status = Status.OFFLINE
-        # self.scheduled_timestamp = None
         self.done = False
         self.error = None
 
@@ -94,17 +79,12 @@ class YoutubeLiveStream():
 
         self.logger = self.setup_logger(self.output_dir, log_level)
 
-        self.video_outpath = f'{self.output_dir}{sep}vid'
-        self.audio_outpath = f'{self.output_dir}{sep}aud'
+        self.video_outpath = self.output_dir / 'vid'
+        self.audio_outpath = self.output_dir / 'aud'
 
-        # Initialize
-        # self.json
-        # self.populate_info()  # obsolete
-        # self.download_thumbnail()
-
-    def create_output_dir(self, output_dir):
+    def create_output_dir(self, output_dir: Path):
         capturedirname = f"stream_capture_{self.video_id}"
-        capturedirpath = f'{output_dir}{sep}{capturedirname}'
+        capturedirpath = output_dir / capturedirname
         makedirs(capturedirpath, 0o766, exist_ok=True)
         return capturedirpath
 
@@ -121,7 +101,7 @@ class YoutubeLiveStream():
         logger.setLevel(logging.DEBUG)
         # File output
         logfile = logging.FileHandler(\
-            filename=path + sep + "download.log", delay=True)
+            filename=path / "download.log", delay=True)
         logfile.setLevel(logging.DEBUG)
         formatter = logging.Formatter(\
             '%(asctime)s - %(levelname)s - %(name)s - %(message)s')
@@ -453,7 +433,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
     def download_thumbnail(self):
         # TODO write more thumbnail files in case the first one somehow
         #  got updated.
-        thumbnail_path = self.output_dir + sep + 'thumbnail'
+        thumbnail_path = self.output_dir / 'thumbnail'
         if self.thumbnail_url and not path.exists(thumbnail_path):
             with closing(urlopen(self.thumbnail_url)) as in_stream:
                 self.write_to_file(in_stream, thumbnail_path)
@@ -470,7 +450,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
         # TODO get the description once the stream has started
 
-        metadata_file = self.output_dir + sep + 'metadata.json'
+        metadata_file = self.output_dir / 'metadata.json'
         if path.exists(metadata_file):
             # FIXME this avoids writing this file more than once for now.
             # No further updates.

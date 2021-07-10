@@ -1,13 +1,8 @@
-import io
 import logging
-import time
 # from sys import version_info
 # from platform import python_version_tuple
 import re
-from os import sep, makedirs
 from random import randint
-from platform import system
-from pathlib import Path
 from urllib.request import Request, urlopen #, build_opener, HTTPCookieProcessor, HTTPHandler
 import http.cookiejar
 from http.cookies import SimpleCookie
@@ -23,8 +18,9 @@ class YoutubeUrllibSession:
     """
     Keep cookies in memory for reuse or update.
     """
-    def __init__(self, cookie_path=None):
-        self.user_supplied_cookies = True if cookie_path else False
+    def __init__(self, cookie_path=None, notifier=None):
+        # Hack to only warn user once after first validity check
+        self.user_supplied_cookies = 1 if cookie_path else 0
         self.cookie_jar = get_cookie(cookie_path)
         # TODO add proxies
         self.headers = {
@@ -32,6 +28,8 @@ class YoutubeUrllibSession:
         'accept-language': 'en-US,en' # ensure messages in english from the API
         }
         self._initialize_consent()
+        self._logged_in = False
+        self.notify_h = notifier
 
 
     def _initialize_consent(self):
@@ -113,21 +111,38 @@ class YoutubeUrllibSession:
         return self.get_html(req)
 
     # TODO Place this in both monitor and download
+    def _check_logged_out(self, json_obj):
+        logged_out = json_obj.get("responseContext", {}) \
+                .get("mainAppWebResponseContext", {}) \
+                .get("loggedOut", True)
+        return logged_out
+
     def is_logged_out(self, json_obj):
         """Take a json object and return if we detect logged out status
         only if we have supplied our own cookies, which we ASSUME are meant
         to be logged in."""
-        # TODO only warn when the status changed (from logged in to logged out)
         if not json_obj:
             return False
-        if json_obj.get("responseContext", {})\
-                .get("mainAppWebResponseContext", {})\
-                .get("loggedOut")\
-        and self.user_supplied_cookies:
-            logger.critical("We are not logged in anymore. Update your cookies!")
-            # TODO send warning email to user
-            return True
-        return False
+        logged_out = self._check_logged_out(json_obj)
+
+        if logged_out and self.user_supplied_cookies:
+            self.user_supplied_cookies = 0
+            logger.critical(
+                "We are not logged in. Check the validity of your cookies!"
+            )
+
+        if logged_out and self._logged_in == True:
+            logger.critical(
+                "We are not logged in anymore! Are cookies still valid?"
+            )
+            if self.notify_h:
+                self.notify_h.send_email(
+                    subject="Not logged in anymore",
+                    message_text=f"We are logged out: {json_obj}"
+                )
+        
+        self._logged_in = not logged_out
+        return logged_out
 
     def update_cookies(self, req, res):
         """
@@ -148,7 +163,9 @@ class YoutubeUrllibSession:
 
         self.cookie_jar.extract_cookies(res, req)
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"CookieJar after extract_cookies(): {self.cookie_jar}")
+            logger.debug(
+                f"CookieJar after extract_cookies(): {self.cookie_jar}"
+            )
 
     def get_html(self, req: Request) -> str:
         """
@@ -159,14 +176,17 @@ class YoutubeUrllibSession:
         with urlopen(req) as res:
             logger.info(f"GET {res.url}")
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Response Status code: {res.status}.\n\
-Response headers:\n{res.headers}")
+                logger.debug(
+                    f"Response Status code: {res.status}.\n"
+                    f"Response headers:\n{res.headers}")
 
             self.update_cookies(req, res)
 
             if res.status == 429:
-                raise Exception("Error 429. Too many requests? \
-Please try again later or get a new IP (also a new cookie?).")
+                raise Exception(
+                    "Error 429. Too many requests? Please try again later "
+                    "or get a new IP (also a new cookie?)."
+                )
 
             try:
                 content_page = str(res.read().decode('utf-8'))
@@ -174,4 +194,3 @@ Please try again later or get a new IP (also a new cookie?).")
             except Exception as e:
                 logger.critical(f"Failed to load html: {e}")
                 raise e
-

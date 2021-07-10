@@ -1,5 +1,6 @@
 #!/bin/env python3
 from os import sep, remove, path, stat, rename
+from typing import Optional
 import subprocess
 from json import load
 from pathlib import Path
@@ -11,9 +12,9 @@ logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
 
-def get_metadata_info(path):
+def get_metadata_info(path: Path):
     try:
-        with open(path + sep + "metadata.json", 'r') as fp:
+        with open(path / "metadata.json", 'r') as fp:
             return load(fp)
     except Exception as e:
         logger.exception(f"Exception while trying to load metadata.json: {e}")
@@ -181,8 +182,8 @@ def probe(fpath):
     return values
 
 
-def merge(info, data_dir,
-          output_dir=None,
+def merge(info, data_dir: Path,
+          output_dir: Optional[Path] = None,
           keep_concat=False,
           delete_source=False):
     if not output_dir:
@@ -200,7 +201,7 @@ def merge(info, data_dir,
         logger.setLevel(logging.DEBUG)
         # File output
         logfile = logging.FileHandler(\
-            filename=data_dir + sep +  "download.log", delay=True)
+            filename=data_dir / "download.log", delay=True)
         logfile.setLevel(logging.DEBUG)
         formatter = logging.Formatter(\
             '%(asctime)s - %(levelname)s - %(name)s - %(message)s')
@@ -213,8 +214,8 @@ def merge(info, data_dir,
         conhandler.setFormatter(formatter)
         logger.addHandler(conhandler)
 
-    video_seg_dir = data_dir + sep + "vid"
-    audio_seg_dir = data_dir + sep + "aud"
+    video_seg_dir = data_dir / "vid"
+    audio_seg_dir = data_dir / "aud"
 
     video_files = collect(video_seg_dir)
     audio_files = collect(audio_seg_dir)
@@ -263,7 +264,7 @@ Retrying with concat demuxer...")
         f".{ext}"
     )
 
-    final_output_file = output_dir + sep + final_output_name
+    final_output_file = output_dir / final_output_name
 
     try_thumb = True
     while True:
@@ -277,7 +278,7 @@ Retrying with concat demuxer...")
         # ffmpeg -hide_banner -i video.mp4 -i audio.m4a -i thumbnail.jpg -map 0
         # -map 1 -map 2 -c:v:2 jpg -disposition:v:1 attached_pic -c copy out.mp4
         ffmpeg_command.extend(metadata_cmd)
-        ffmpeg_command.extend(["-c", "copy", final_output_file])
+        ffmpeg_command.extend(["-c", "copy", str(final_output_file)])
 
         try:
             cproc = subprocess.run(ffmpeg_command,

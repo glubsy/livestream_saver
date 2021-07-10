@@ -1,0 +1,44 @@
+[DEFAULT]
+log_level = DEBUG
+# Path to cookies that is commmon to all modes:
+cookie = 
+
+# email_notifications = False
+# smtp_server = localhost
+# smtp_port = 25
+# smtp_login =
+# smtp_password =
+# to_email =
+# from_email =
+
+email_notifications = True
+smtp_server = 
+smtp_port = 25
+smtp_login =
+smtp_password =
+to_email = 
+from_email =
+
+[monitor]
+scan_delay = 15.5
+log_level = INFO
+
+[download]
+scan_delay = 2.5
+log_level = WARNING
+# cookie = /path/to/cookies.txt
+
+# [channel_monitor]
+# channel_name = Matsuro Meru
+# scan_delay = 20.0
+# URL = https://www.youtube.com/channel/UCIJ6TGsTcBlYGUj-zbL60EQ
+
+# [channel_monitor]
+# channel_name = Kamiko Kana
+# scan_delay = 20.0
+# URL = https://www.youtube.com/c/kamikokana
+
+[channel_monitor]
+channel_name = Gawr Gura
+scan_delay = 20.0
+URL = https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g

@@ -1,20 +1,23 @@
 #!/bin/env python3
 from os import sep, makedirs, path, getcwd
+from re import sub
+from sys import argv
 import argparse
 import logging
 from pathlib import Path
 from configparser import ConfigParser
+import traceback
 from livestream_saver.monitor import YoutubeChannel, wait_block
 from livestream_saver.download import YoutubeLiveStream
 from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import get_channel_id
 from livestream_saver.request import YoutubeUrllibSession
-# from livestream_saver.smtp import MailHandler
+from livestream_saver.smtp import NotificationHandler
 
 logger = logging.getLogger('livestream_saver')
 logger.setLevel(logging.DEBUG)
 
-# MAIL = MailHandler()
+notif_h = NotificationHandler()
 
 def parse_args(config):
     """
@@ -201,7 +204,12 @@ streams has been successful. This is only useful for debugging.'
 
 
 def _get_target_params(config, args):
-    """Return tuple (URL, channel_name, scan_delay) taken from arguments + config."""
+    """
+    Deal with case where URL positional argument is not supplied by user, but
+    could be supplied in config file in appropriate section.
+    Return tuple (URL, channel_name, scan_delay) 
+    taken from arguments + config.
+    """
     URL = args.get("URL", None)
     rv = (None, None, config.getfloat("monitor", "scan_delay"))
 
@@ -235,44 +243,29 @@ def _get_target_params(config, args):
 
 
 def monitor_mode(config, args):
-    log_enabled(config, args, "monitor")
-
-    URL, channel_name, scan_delay = _get_target_params(config, args)
-
-    channel_id = get_channel_id(URL, "youtube")
-
-    # We need to setup output dir before instanciating downloads
-    # because we use it to store our logs
-    output_dir = config.get("monitor", "output_dir", vars=args)
-    if channel_name is not None:
-        output_dir = output_dir + sep + channel_name
-    else:
-        output_dir = output_dir + sep + channel_id
-
-    makedirs(output_dir, exist_ok=True)
-
-    setup_logger(
-        output_dir + f'{sep}monitor_{channel_id}.log',
-        config.get("monitor", "log_level", vars=args)
-    )
+    URL = args["URL"]
+    channel_id = args["channel_id"]
+    scan_delay = args["scan_delay"]
 
     session = YoutubeUrllibSession(
-        config.get("monitor", "cookie", vars=args, fallback=None)
+        config.get("monitor", "cookie", vars=args, fallback=None),
+        notifier=notif_h
     )
 
-    # FIXME this is dumb
+    # FIXME needs smarter safeguard
     if "http" not in URL and "youtube.com" not in URL:
         URL = f"https://www.youtube.com/channel/{URL}"
 
     ch = YoutubeChannel(URL, channel_id, session)
 
-    logger.info(f"Monitoring channel: {ch.info.get('id')}")
+    logger.info(f"Monitoring channel: {ch.id}")
 
     while True:
         live_videos = ch.get_live_videos()
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                f"Live videos found for channel {ch.get_name()}: {live_videos}"
+                "Live videos found for channel "
+                f"\"{ch.get_channel_name()}\": {live_videos}"
             )
 
         if not live_videos:
@@ -281,12 +274,11 @@ def monitor_mode(config, args):
 
         target_live = live_videos[0]
         _id = target_live.get('videoId')
-        stream = None
-
+        livestream = None
         try:
-            stream = YoutubeLiveStream(
+            livestream = YoutubeLiveStream(
                 url=f"https://www.youtube.com{target_live.get('url')}", # /watch?v=...
-                output_dir=output_dir,
+                output_dir=args["output_dir"],
                 session=ch.session,
                 video_id=_id,
                 max_video_quality=config.getint(
@@ -295,28 +287,32 @@ def monitor_mode(config, args):
                 log_level=config.get("monitor", "log_level", vars=args)
             )
         except ValueError as e:
-            # May be thrown by constructor
+            # Constructor may throw
             logger.critical(e)
             wait_block(min_minutes=scan_delay, variance=3.5)
             continue
 
-        logger.info(f"Found live: {_id} title: {target_live.get('title')}."
-                    " Downloading...")
+        logger.info(
+            f"Found live: {_id} title: {target_live.get('title')}. "
+            "Downloading..."
+        )
 
         try:
-            stream.download()
+            livestream.download()
         except Exception as e:
-            logger.exception(f"Got error in stream download but continuing...\n {e}")
+            logger.exception(
+                f"Got error in stream download but continuing...\n {e}"
+            )
             pass
 
-        if stream.done:
+        if livestream.done:
             logger.info(f"Finished downloading {_id}.")
             if not config.getboolean("monitor", "no_merge", vars=args):
                 logger.info("Merging segments...")
                 # TODO in a separate thread?
                 merge(
-                    info=stream.video_info,
-                    data_dir=stream.output_dir,
+                    info=livestream.video_info,
+                    data_dir=livestream.output_dir,
                     keep_concat=config.getboolean(
                         "monitor", "keep_concat", vars=args
                     ),
@@ -326,9 +322,12 @@ def monitor_mode(config, args):
                 )
                 # TODO get the updated stream title from the channel page if
                 # the stream was recorded correctly?
-        if stream.error:
-            # TODO Send notification or email to admin here
-            # MAIL.send("Error downloading stream", stream.error)
+        if livestream.error:
+            notif_h.send_email(
+                subject=f"Error downloading stream {livestream.video_id}",
+                message_text=f"Error was: {livestream.error}\n"
+                              "Resuming monitoring..."
+            )
             logger.critical("Error during stream download! Resuming monitoring...")
             pass
 
@@ -336,22 +335,14 @@ def monitor_mode(config, args):
 
 
 def download_mode(config, args):
-    log_enabled(config, args, "download")
-
-    setup_logger(
-        config.get("download", "output_dir", vars=args) + sep + "download.log",
-        config.get("download", "log_level")
-    )
-
     session = YoutubeUrllibSession(
-        config.get("download", "cookie", vars=args, fallback=None)
+        config.get("download", "cookie", vars=args, fallback=None),
+        notifier=notif_h
     )
     try:
         dl = YoutubeLiveStream(
             url=args.get("URL"),
-            output_dir=config.get(
-                "download", "output_dir", vars=args, fallback=getcwd()
-            ),
+            output_dir=args["output_dir"],
             session=session,
             max_video_quality=config.getint(
                 "download", "max_video_quality", vars=args, fallback=None
@@ -375,14 +366,7 @@ def download_mode(config, args):
 
 
 def merge_mode(config, args):
-    log_enabled(config, args, "merge")
-
-    setup_logger(
-        args["PATH"] + sep + "merge.log",
-        config.get("merge", "log_level", vars=args)
-    )
-
-    data_path = path.abspath(args["PATH"])
+    data_path = Path(path.abspath(args["PATH"]))
     info = get_metadata_info(data_path)
     written_file = merge(
         info=info,
@@ -407,7 +391,7 @@ def log_enabled(config, args, mode_str):
     return True
 
 
-def setup_logger(output_dir, loglevel, log_to_file=True):
+def setup_logger(*, output_filepath, loglevel, log_to_file=True):
     if loglevel is None:
         logger.disabled = True
         return
@@ -421,7 +405,7 @@ def setup_logger(output_dir, loglevel, log_to_file=True):
 
     if log_to_file:
         logfile = logging.FileHandler(
-            filename=output_dir, delay=True
+            filename=output_filepath, delay=True
         )
         # FIXME DEBUG by default for file
         logfile.setLevel(logging.DEBUG)
@@ -451,7 +435,8 @@ def init_config():
         "email_notifications": "False",
         "smtp_server": "",
         "smtp_port": "",
-        "email_address": "",
+        "to_email": "",
+        "from_email": "",
     }
 
     config = ConfigParser(
@@ -491,13 +476,102 @@ def main():
     config = parse_config(config, args)
     # print(f"parse_config() -> {[opt for sect in config.sections() for opt in config.options(sect)]}")
 
-    args["func"](config, args)
+    notif_h.setup(config, args)
+
+    sub_cmd = args.get("sub-command")
+    if sub_cmd is None:
+        print("No sub-command used. Exiting.")
+        return
+
+    log_enabled(config, args, sub_cmd)
+
+    logfile_path = Path("")
+    if sub_cmd == "monitor":
+        URL, channel_name, scan_delay = _get_target_params(config, args)
+        args["URL"] = URL
+        args["channel_name"] = channel_name
+        args["scan_delay"] = scan_delay
+
+        channel_id = get_channel_id(URL, "youtube")
+        args["channel_id"] = channel_id
+
+        # We need to setup output dir before instanciating downloads
+        # because we use it to store our logs
+        output_dir = Path(config.get("monitor", "output_dir", vars=args))
+        if channel_name is not None:
+            output_dir = output_dir / channel_name
+        else:
+            output_dir = output_dir / channel_id
+
+        makedirs(output_dir, exist_ok=True)
+        args["output_dir"] = output_dir
+
+        logfile_path = output_dir / f'monitor_{channel_id}.log'
+
+        setup_logger(
+            output_filepath=logfile_path,
+            loglevel=config.get(sub_cmd, "log_level", vars=args)
+        )
+    elif sub_cmd  == "download":
+        output_dir = Path(
+            config.get(
+                "download", "output_dir", vars=args, fallback=getcwd()
+            )
+        )
+        args["output_dir"] = output_dir
+        logfile_path = output_dir / "download.log"
+        setup_logger(
+            output_filepath=logfile_path,
+            loglevel=config.get(sub_cmd, "log_level")
+        )
+    elif sub_cmd == "merge":
+        logfile_path = Path(args["PATH"]) / "merge.log"
+        setup_logger(
+            output_filepath= logfile_path,
+            loglevel=config.get(sub_cmd, "log_level", vars=args)
+        )
+    else:
+        print("Wrong sub-command. Exiting.")
+        return
+
+    # from time import sleep
+    # for n in range(2):
+    #     notif_h.send_email(f"message #{n}", f"body {n}")
+    #     # sleep(1)
+
+    # for _ in range(8):
+    #     sleep(1)
+    #     print("monitoring ...")
+
+    # mail = notif_h.create_email("we crashin'", "crashin mah server oh noes!")
+    # notif_h.send_email(mail)
+
+    try:
+        # raise Exception("fuuuuuuuuuck crash.")
+        args["func"](config, args)
+    except Exception as e:
+        from sys import exc_info
+        exc_type, exc_value, exc_traceback = exc_info()
+        logger.exception(e)
+        notif_h.send_email(
+            subject=f"{argv[0].split(sep)[-1]} crashed!",
+            message_text=f"Mode: {args.get('sub-command', '').split('_')[0]}\n" \
+            + f"Exception was: {e}\n" \
+            + "\n".join(
+                traceback.format_exception(
+                    exc_type, exc_value,exc_traceback
+                )
+            ),
+            attachments=[logfile_path]
+        )
+
+    # We need to join here (or sleep) otherwise any email still in the queue 
+    # will fail to get sent!
+    if not notif_h.disabled:
+        notif_h.q.join()
+        # notif_h.thread.join()
+    logging.shutdown()
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        # mail.send("We crashed", f"Crash traceback: {e}")
-        raise
-    logging.shutdown()
+    main()
