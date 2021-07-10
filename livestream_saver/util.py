@@ -144,6 +144,10 @@ def get_channel_id(str_url, service_name):
 
         if '/watch' in str_url:
             raise Exception("Not a valid channel URL. Is this a video URL?")
+        
+        # Apparently this also exists: https://www.youtube.com/recordedamigagames
+        if 'youtube.com/' in str_url:
+            return str_url.split("/")[-1]
 
     raise Exception(f"No valid channel ID found in \"{str_url}\".")
 
@@ -275,8 +279,8 @@ class YoutubeUrllibSession:
         # logger.debug(f"Req header cookie: \"{cookies}\".")
 
         ret_cookies = self.cookie_jar.make_cookies(res, req)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"make_cookies(): {ret_cookies}")
+        # if logger.isEnabledFor(logging.DEBUG):
+        #     logger.debug(f"make_cookies(): {ret_cookies}")
 
         for cook in ret_cookies:
             if cook.name == "SIDCC" and cook.value == "EXPIRED":

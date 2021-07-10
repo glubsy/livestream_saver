@@ -25,6 +25,22 @@ video_height_ranking = {
 # TODO check https://github.com/pytube/pytube/blob/master/pytube/itags.py#L97
 quality_audio_ranking = [140]
 
+# DASH_AUDIO = {
+#     # DASH Audio
+#     139: (None, "48kbps"),  # MP4
+#     140: (None, "128kbps"),  # MP4
+#     141: (None, "256kbps"),  # MP4
+#     171: (None, "128kbps"),  # WEBM
+#     172: (None, "256kbps"),  # WEBM
+#     249: (None, "50kbps"),  # WEBM
+#     250: (None, "70kbps"),  # WEBM
+#     251: (None, "160kbps"),  # WEBM
+#     256: (None, "192kbps"),  # MP4
+#     258: (None, "384kbps"),  # MP4
+#     325: (None, None),  # MP4
+#     328: (None, None),  # MP4
+# }
+
 
 # Experimental - VP9 support
 # quality_video_ranking = [

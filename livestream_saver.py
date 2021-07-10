@@ -288,7 +288,7 @@ def monitor_mode(config, args):
                 output_dir=output_dir,
                 session=ch.session,
                 video_id=_id,
-                max_video_quality=config.get(
+                max_video_quality=config.getint(
                     "monitor", "max_video_quality", vars=args, fallback=None
                 ),
                 log_level=config.get("monitor", "log_level", vars=args)
@@ -299,12 +299,12 @@ def monitor_mode(config, args):
             continue
 
         logger.info(f"Found live: {_id} title: {target_live.get('title')}."
-                    "Downloading..."
-                )
+                    " Downloading...")
 
         try:
             stream.download()
-        except Exception:
+        except Exception as e:
+            logger.exception(f"Got error in stream download but continuing...\n {e}")
             pass
 
         if stream.done:
@@ -327,6 +327,7 @@ def monitor_mode(config, args):
         if stream.error:
             # TODO Send notification or email to admin here
             # MAIL.send("Error downloading stream", stream.error)
+            logger.critical("Error during stream download! Resuming monitoring...")
             pass
 
         wait_block(min_minutes=scan_delay, variance=3.5)
@@ -348,7 +349,7 @@ def download_mode(config, args):
                 "download", "output_dir", vars=args, fallback=getcwd()
             ),
             session=session,
-            max_video_quality=config.get(
+            max_video_quality=config.getint(
                 "download", "max_video_quality", vars=args, fallback=None
             ),
             log_level=config.get("download", "log_level", vargs=args)

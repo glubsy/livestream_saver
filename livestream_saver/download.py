@@ -70,6 +70,11 @@ class YoutubeLiveStream:
             log_level = str.upper(log_level)
 
         logger = logging.getLogger("download" + "." + self.video_info['id'])
+
+        if logger.hasHandlers():
+            logger.debug(f"logger {logger} already had handlers!")
+            return logger
+
         logger.setLevel(logging.DEBUG)
         # File output
         logfile = logging.FileHandler(\
@@ -309,8 +314,6 @@ Previous audio itag: {self.video_info.get('audio_itag')}. New: {audio_quality}")
         self.logger.debug(f"Audio base url: {self.audio_base_url}")
 
     def download(self, wait_delay=2.0):
-        """wait_delay in minutes."""
-
         self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
         self.logger.info(f'Will start downloading from segment number {self.seg}.')
 
