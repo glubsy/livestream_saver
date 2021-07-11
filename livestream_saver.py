@@ -341,7 +341,7 @@ def download_mode(config, args):
         config.get("download", "log_level")
     )
 
-    session = YoutubeUrllibSession(config.get("download", "cookie", vars=args))
+    session = YoutubeUrllibSession(config.get("download", "cookie", vars=args, fallback=None))
     try:
         dl = YoutubeLiveStream(
             url=args.get("URL"),
