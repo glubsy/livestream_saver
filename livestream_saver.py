@@ -352,7 +352,7 @@ def download_mode(config, args):
             max_video_quality=config.getint(
                 "download", "max_video_quality", vars=args, fallback=None
             ),
-            log_level=config.get("download", "log_level", vargs=args)
+            log_level=config.get("download", "log_level", vars=args)
         )
     except ValueError as e:
         logger.critical(e)
