@@ -1,6 +1,6 @@
 # TODO also check https://github.com/pytube/pytube/blob/master/pytube/itags.py
 video_height_ranking = {
-    "4320": [402, 138],
+    "4320": [402, 138, 308],
     "2160": [401, 266],
     "1440": [400, 264],
     "1080": [399, 299, 137],
