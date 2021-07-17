@@ -7,7 +7,8 @@ from configparser import ConfigParser
 from livestream_saver.monitor import YoutubeChannel, wait_block
 from livestream_saver.download import YoutubeLiveStream
 from livestream_saver.merge import merge, get_metadata_info
-from livestream_saver.util import YoutubeUrllibSession, get_channel_id
+from livestream_saver.util import get_channel_id
+from livestream_saver.request import YoutubeUrllibSession
 # from livestream_saver.smtp import MailHandler
 
 logger = logging.getLogger('livestream_saver')
@@ -284,7 +285,7 @@ def monitor_mode(config, args):
 
         try:
             stream = YoutubeLiveStream(
-                url=f"https://www.youtube.com{target_live.get('url')}",
+                url=f"https://www.youtube.com{target_live.get('url')}", # /watch?v=...
                 output_dir=output_dir,
                 session=ch.session,
                 video_id=_id,
@@ -294,6 +295,7 @@ def monitor_mode(config, args):
                 log_level=config.get("monitor", "log_level", vars=args)
             )
         except ValueError as e:
+            # May be thrown by constructor
             logger.critical(e)
             wait_block(min_minutes=scan_delay, variance=3.5)
             continue
@@ -337,11 +339,13 @@ def download_mode(config, args):
     log_enabled(config, args, "download")
 
     setup_logger(
-        config.get("download", "output_dir", vars=args) + sep + "downloader.log",
+        config.get("download", "output_dir", vars=args) + sep + "download.log",
         config.get("download", "log_level")
     )
 
-    session = YoutubeUrllibSession(config.get("download", "cookie", vars=args, fallback=None))
+    session = YoutubeUrllibSession(
+        config.get("download", "cookie", vars=args, fallback=None)
+    )
     try:
         dl = YoutubeLiveStream(
             url=args.get("URL"),
@@ -439,6 +443,7 @@ def init_config():
         "conf_file": CWD + sep + "livestream_saver.cfg",
         "output_dir": CWD,
         "log_level": "INFO",
+        "cookie": "",
 
         "delete_source": "False",
         "keep_concat": "False",

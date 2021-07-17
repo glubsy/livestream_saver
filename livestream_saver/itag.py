@@ -10,6 +10,25 @@ video_height_ranking = {
     "240":  [395, 133],
     "144":  [394, 160]
 }
+
+# itag: 308      qualityLabel: 1440p60   mimeType: video/webm; codecs="vp9"      bitrate: 9016000        quality: hd1440 fps: 60
+# itag: 299      qualityLabel: 1080p60   mimeType: video/mp4; codecs="avc1.64002a"       bitrate: 6686125        quality: hd1080     fps: 60
+# itag: 303      qualityLabel: 1080p60   mimeType: video/webm; codecs="vp9"      bitrate: 3016000        quality: hd1080 fps: 60
+# itag: 136      qualityLabel: 720p      mimeType: video/mp4; codecs="avc1.4d401f"       bitrate: 2684050        quality: hd720      fps: 30
+# itag: 247      qualityLabel: 720p      mimeType: video/webm; codecs="vp9"      bitrate: 1040000        quality: hd720  fps: 30
+# itag: 298      qualityLabel: 720p60    mimeType: video/mp4; codecs="avc1.4d4020"       bitrate: 4018075        quality: hd720      fps: 60
+# itag: 302      qualityLabel: 720p60    mimeType: video/webm; codecs="vp9"      bitrate: 1816000        quality: hd720  fps: 60
+# itag: 135      qualityLabel: 480p      mimeType: video/mp4; codecs="avc1.4d401f"       bitrate: 1350025        quality: large      fps: 30
+# itag: 244      qualityLabel: 480p      mimeType: video/webm; codecs="vp9"      bitrate: 528000 quality: large  fps: 30
+# itag: 134      qualityLabel: 360p      mimeType: video/mp4; codecs="avc1.4d401e"       bitrate: 1008250        quality: medium     fps: 30
+# itag: 243      qualityLabel: 360p      mimeType: video/webm; codecs="vp9"      bitrate: 292000 quality: medium fps: 30
+# itag: 133      qualityLabel: 240p      mimeType: video/mp4; codecs="avc1.4d4015"       bitrate: 456228 quality: small  fps: 30
+# itag: 242      qualityLabel: 240p      mimeType: video/webm; codecs="vp9"      bitrate: 166000 quality: small  fps: 30
+# itag: 160      qualityLabel: 144p      mimeType: video/mp4; codecs="avc1.42c00b"       bitrate: 212465 quality: tiny   fps: 15
+# itag: 278      qualityLabel: 144p      mimeType: video/webm; codecs="vp9"      bitrate: 111000 quality: tiny   fps: 30
+# itag: 140      audioQuality: AUDIO_QUALITY_MEDIUM      mimeType: audio/mp4; codecs="mp4a.40.2" bitrate: 144000 audioSampleRate: 44100
+
+
 # quality_video_ranking = [
 #     402, 138,         # 4320p: AV1 HFR | VP9 HFR | H.264
 #     401, 266,         # 2160p: AV1 HFR | VP9.2 HDR HFR | VP9 HFR | VP9 | H.264
