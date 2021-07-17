@@ -1,10 +1,8 @@
 #!/usr/bin/env python
-from json.decoder import JSONDecoder
 from os import sep, path, makedirs, listdir
 from platform import system
 import logging
 from datetime import date, datetime
-from random import randbytes
 from time import time, sleep
 from json import dumps, dump, loads
 from contextlib import closing
