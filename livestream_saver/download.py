@@ -19,6 +19,7 @@ import pytube
 from livestream_saver import exceptions
 from livestream_saver import extract
 from livestream_saver import util
+from livestream_saver import stream
 from livestream_saver.stream import Stream
 # from livestream_saver import itag
 
@@ -34,7 +35,7 @@ COPY_BUFSIZE = 1024 * 1024 if ISWINDOWS else 64 * 1024
 class YoutubeLiveStream():
     def __init__(self, url, output_dir, session, video_id=None,\
                  max_video_quality=None, log_level=logging.INFO):
-        
+
         self.session = session
 
         self._js: Optional[str] = None  # js fetched by js_url
@@ -74,7 +75,7 @@ class YoutubeLiveStream():
         # self.video_info = {}
         # FIXME check and sanitize before constructing the object
         # self.video_info['id'] = extract.get_video_id(url) if not video_id else video_id
-        
+
         # self.json = {}
         # self.video_title = None
         # self.video_author = None
@@ -228,7 +229,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
             remove_useless_keys(self._json)
             if self.logger.isEnabledFor(logging.DEBUG):
                 self.logger.debug(
-                    "Extracted JSON from html:\n" 
+                    "Extracted JSON from html:\n"
                     + dumps(self._json, indent=4, ensure_ascii=False)
                 )
         except Exception as e:
@@ -265,7 +266,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
         :rtype: :class:`StreamQuery <StreamQuery>`.
         """
-        self.update_status()
+        # self.update_status()
         return pytube.StreamQuery(self.fmt_streams)
 
 
@@ -348,6 +349,15 @@ We assume a failed download attempt. Last segment available was {seg}.")
     def title(self, value):
         """Sets the title value."""
         self._title = value
+
+    @property
+    def description(self) -> str:
+        """Get the video description.
+
+        :rtype: str
+        """
+        return self.player_response.get("videoDetails", {}).get("shortDescription")
+
 
 
     # # NOT USED
@@ -470,7 +480,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
     @property
     def video_info(self):
-        """Return a representation of the class for fake serialization."""
+        """Return current metadata for writing to disk as JSON."""
         info = {
             "id": self.video_id,
             "title": self.title,
@@ -480,6 +490,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
             "download_date": date.fromtimestamp(time()).__str__(),
             "video_itag": self.video_itag,
             "audio_itag": self.audio_itag,
+            "description": self.description,
         }
         if self.scheduled_timestamp is not None:
             info["scheduled_time"] = datetime.utcfromtimestamp(
@@ -555,7 +566,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
         elif status == 'UNPLAYABLE':
             raise exceptions.UnplayableException(
-                self.video_id, 
+                self.video_id,
                 playabilityStatus.get('reason', 'No reason found.')
             )
 
@@ -585,7 +596,10 @@ playability status is: {status} \
             maxq=self.max_video_quality
         )
 
-        print(f"GOT itags: {video_quality} / {audio_quality}")
+        self.logger.debug(
+            f"Selected video itag {video_quality} / "
+            f"Selected audio itag:{audio_quality}"
+        )
 
         if ((self.video_itag is not None
         and self.video_itag != video_quality)
@@ -608,7 +622,7 @@ playability status is: {status} \
         # self.audio_base_url = extract.get_base_url_from_itag(self.json, audio_quality)
         self.video_base_url = self.video_itag.url
         self.audio_base_url = self.audio_itag.url
- 
+
         self.logger.debug(f"Video base url: {self.video_base_url}")
         self.logger.debug(f"Audio base url: {self.audio_base_url}")
 
@@ -774,7 +788,17 @@ playability status is: {status} \
                 result += f"{k}: {item.get(k)}\t"
             self.logger.info(result)
         except Exception as e:
-            self.logger.critical(f"Exception while trying to print found {datatype} quality: {e}")
+            self.logger.critical(
+                f"Exception while trying to print found {datatype} quality: {e}"
+            )
+
+    def print_available_streams(self, stream_list):
+        if not self.logger.isEnabledFor(logging.INFO):
+            return
+        for s in stream_list:
+            self.logger.info(
+                "Available {}".format(s.__repr__().replace(' ', '\t'))
+            )
 
     @property
     def player_config_args(self):
@@ -830,9 +854,9 @@ playability status is: {status} \
     def get_best_streams(self, maxq=None, codec="mp4", fps="60"):
         """Return a tuple of pytube.Stream objects, first one for video
         second one for audio.
-        If only progressive streams are available, the second item in tuple 
+        If only progressive streams are available, the second item in tuple
         will be None.
-        :param str maxq: 
+        :param str maxq:
         :param str codec: mp4, webm
         :param str fps: 30, 60"""
         video_stream = None
@@ -853,8 +877,8 @@ playability status is: {status} \
             #     maxq = int(match.group(1))
             if maxq is None:
                 self.logger.warning(
-                    f"Max quality setting \"{maxq}\" is incorrect."
-                    " Defaulting to best video quality available."
+                    f"Max quality setting \"{maxq}\" is incorrect. "
+                    "Defaulting to best video quality available."
                 )
 
         custom_filters = None
@@ -867,29 +891,31 @@ playability status is: {status} \
             custom_filters = [filter_maxq]
 
         video_streams = self.streams.filter(
-            file_extension=codec, 
+            file_extension=codec,
             custom_filter_functions=custom_filters
             ) \
             .order_by('resolution') \
             .desc()
+        self.print_available_streams(video_streams)
         video_stream = video_streams.first()
-        self.logger.debug(f"video streams: {video_streams}\nselected video stream: {video_stream}")
-        
+        self.logger.info(f"Selected video {video_stream}")
+
         audio_streams = self.streams.filter(
             only_audio=True
             ) \
             .order_by('abr') \
             .desc()
+        self.print_available_streams(audio_streams)
         audio_stream = audio_streams.first()
-        self.logger.debug(f"audio streams: {audio_streams}\nselected audio stream: {audio_stream}")
+        self.logger.info(f"selected audio {audio_stream}")
 
         # FIXME need a fallback in case we didn't have an audio stream
         # TODO need a strategy if progressive has better audio quality:
-        # use progressive stream's audio track only? Would that work with the 
+        # use progressive stream's audio track only? Would that work with the
         # DASH stream video?
         if len(audio_streams) == 0:
             self.streams.filter(
-                progressive=False, 
+                progressive=False,
                 file_extension=codec
                 ) \
                 .order_by('abr') \
@@ -944,7 +970,7 @@ playability status is: {status} \
     #                 if res_int > maxq:
     #                     continue
     #             ranked_profiles.append(itag_profile)
-        
+
     #     if datatype == "audio":
     #         ranked_profiles.sort(key=lambda s: s.get("abr"))
     #     else:

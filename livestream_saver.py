@@ -443,7 +443,6 @@ def init_config():
         "conf_file": CWD + sep + "livestream_saver.cfg",
         "output_dir": CWD,
         "log_level": "INFO",
-        "cookie": "",
 
         "delete_source": "False",
         "keep_concat": "False",
@@ -487,10 +486,10 @@ def main():
     config = init_config()
 
     args = parse_args(config)
-    print(f"parse_args() -> {args}")
+    # print(f"parse_args() -> {args}")
 
     config = parse_config(config, args)
-    print(f"parse_config() -> {[opt for sect in config.sections() for opt in config.options(sect)]}")
+    # print(f"parse_config() -> {[opt for sect in config.sections() for opt in config.options(sect)]}")
 
     args["func"](config, args)
 

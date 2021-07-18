@@ -56,8 +56,10 @@ def concat(datatype, video_id, seg_list, output_dir, method=0):
 {video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
 
     if path.exists(ffmpeg_output_filename):
-        logger.info(f"Skipping concatenation because {ffmpeg_output_filename} \
-already exists from a previous run.")
+        logger.info(
+            f"Skipping concatenation because \"{ffmpeg_output_filename}\" "
+            "already exists from a previous run."
+        )
         return ffmpeg_output_filename
 
     list_file_path = None
@@ -109,7 +111,7 @@ already exists from a previous run.")
         cmd = ["ffmpeg", "-hide_banner", "-y",
                "-i", concat_filepath,
                "-map_metadata", "-1", # remove metadata
-               "-c", "copy", 
+               "-c", "copy",
                ffmpeg_output_filename]
 
     cproc = None
@@ -120,8 +122,10 @@ already exists from a previous run.")
                                text=True)
         logger.debug(f"{cproc.args} stderr output:\n{cproc.stderr}")
     except subprocess.CalledProcessError as e:
-        logger.exception(f"{e.cmd} returned error {e.returncode}. \
-STDERR:\n{e.stderr}")
+        logger.exception(
+            f"{e.cmd} returned error {e.returncode}. "
+            f"STDERR:\n{e.stderr}"
+        )
         raise
     finally:
         if list_file_path is not None and path.exists(list_file_path):
@@ -134,8 +138,10 @@ STDERR:\n{e.stderr}")
 
     props = probe(ffmpeg_output_filename)
     if len(seg_list) * 0.80 < props.get("duration", 0) > len(seg_list) * 20:
-        logger.info(f"""Abnormal duration of {ffmpeg_output_filename}: \
-{props.get("duration")}. Removing...""")
+        logger.info(
+            f"Abnormal duration of {ffmpeg_output_filename}: "
+            f"{props.get('duration')}. Removing..."
+        )
 
         remove(ffmpeg_output_filename)
         if method < len(METHOD) - 1:
@@ -167,8 +173,10 @@ def probe(fpath):
             values["codec_name"] = val if val != "N/A" else None
             continue
 
-    logger.debug(f"""{path.basename(fpath)} \
-codec: {values.get("codec_name")}, duration: {values.get("duration")}""")
+    logger.debug(
+        f"{path.basename(fpath)} codec: {values.get('codec_name')}, "
+        f"duration: {values.get('duration')}"
+    )
 
     return values
 
@@ -224,14 +232,18 @@ def merge(info, data_dir,
     vid_props = probe(str(video_files[0]))
     aud_props = probe(str(audio_files[0]))
 
-    ffmpeg_output_path_video = concat(vid_props.get("codec_name", "video"),
-                                      info.get('id'),
-                                      video_files,
-                                      data_dir)
-    ffmpeg_output_path_audio = concat(aud_props.get("codec_name", "audio"),
-                                      info.get('id'),
-                                      audio_files,
-                                      data_dir)
+    ffmpeg_output_path_video = concat(
+        vid_props.get("codec_name", "video"),
+        info.get('id'),
+        video_files,
+        data_dir
+    )
+    ffmpeg_output_path_audio = concat(
+        aud_props.get("codec_name", "audio"),
+        info.get('id'),
+        audio_files,
+        data_dir
+    )
 
     if not ffmpeg_output_path_audio or not ffmpeg_output_path_video:
         logger.error(f"Missing video or audio concatenated file!\
@@ -244,9 +256,12 @@ Retrying with concat demuxer...")
     # if vid_props.get("codec_name") == "vp9":
     #     ext = "mkv"
 
-    final_output_name = sanitize_filename(f"{info.get('author')}_\
-[{info.get('download_date')}]_{info.get('title')}_\
-[{info.get('video_resolution')}]_{info.get('id')}.{ext}")
+    final_output_name = sanitize_filename(
+        f"{info.get('author')}_"
+        f"[{info.get('download_date')}]_{info.get('title')}_"
+        f"[{info.get('video_resolution')}]_{info.get('id')}",
+        f".{ext}"
+    )
 
     final_output_file = output_dir + sep + final_output_name
 
@@ -271,12 +286,16 @@ Retrying with concat demuxer...")
                                text=True)
             logger.debug(f"{cproc.args} stderr output:\n{cproc.stderr}")
         except subprocess.CalledProcessError as e:
-            logger.debug(f"{e.cmd} return code {e.returncode}. STDERR:\n{e.stderr}")
+            logger.debug(
+                f"{e.cmd} return code {e.returncode}. STDERR:\n{e.stderr}"
+            )
 
             if try_thumb \
             and 'Unable to parse option value "attached_pic"' in e.stderr:
-                logger.error("Failed to embed the thumbnail into the final video \
-file! Trying again without it...")
+                logger.error(
+                    "Failed to embed the thumbnail into the final video "
+                    "file! Trying again without it..."
+                )
                 try_thumb = False
                 if path.exists(final_output_file)\
                 and stat(final_output_file).st_size == 0:
@@ -328,19 +347,25 @@ def print_missing_segments(filelist, filetype):
         last_segnum = int(filelist[-1].name.split(filetype + ".ts")[0])
 
     if first_segnum != 0:
-        logger.warning(f"First {filetype[1:]} segment number starts at \
-{first_segnum} instead of 0.")
+        logger.warning(
+            f"First {filetype[1:]} segment number starts at {first_segnum} "
+            "instead of 0."
+        )
 
     # Numbering in filenames starts from 0
     if len(filelist) != last_segnum + 1:
-        logger.warning(f"Number of {filetype[1:]} segments doesn't match last \
-segment number: \
-Last {filetype[1:]} segment number: {last_segnum} / {len(filelist)} total files.")
+        logger.warning(
+            f"Number of {filetype[1:]} segments doesn't match last segment "
+            f"number: Last {filetype[1:]} segment number: "
+            f"{last_segnum} / {len(filelist)} total files."
+        )
         i = 0
         for f in filelist:
             if f.name != f"{i:0{10}}{filetype}.ts":
                 missing = True
-                logger.warning(f"Segment {i:0{10}}{filetype}.ts seems to be missing.")
+                logger.warning(
+                    f"Segment {i:0{10}}{filetype}.ts seems to be missing."
+                )
                 i += 1
             i += 1
     return missing
@@ -353,14 +378,14 @@ def metadata_arguments(info, data_path, want_thumb=True):
         cmd = get_thumbnail_command_prefix(data_path)
 
     # These have to be placed AFTER, otherwise they affect one stream in particular
-    if info.get('title'):
-        cmd.extend(["-metadata", f"title={info.get('title')}"])
-    if info.get('author'):
-        cmd.extend(["-metadata", f"artist={info.get('author')}"])
-    if info.get('download_date'):
-        cmd.extend(["-metadata", f"date={info.get('download_date')}"])
-    if info.get('description'):
-        cmd.extend(["-metadata", f"description={info.get('description')}"])
+    if title := info.get('title'):
+        cmd.extend(["-metadata", f"title='{title}'"])
+    if author := info.get('author'):
+        cmd.extend(["-metadata", f"artist='{author}'"])
+    if download_date := info.get('download_date'):
+        cmd.extend(["-metadata", f"date='{download_date}'"])
+    if description := info.get('description'):
+        cmd.extend(["-metadata", f"description='{description}'"])
     return cmd
 
 
@@ -376,11 +401,15 @@ def get_thumbnail_command_prefix(data_path):
             try:
                 convert_thumbnail(thumb_path, _type)
             except Exception as e:
-                logger.error(f"Failed converting thumbnail from {_type} format. {e}")
+                logger.error(
+                    f"Failed converting thumbnail from {_type} format. {e}"
+                )
                 return []
         else:
-            logger.warning(f"Unsupported thumbnail format: {_type}. \
-Skipping embedding into video.")
+            logger.warning(
+                f"Unsupported thumbnail format: {_type}. "
+                "Skipping embedding into video."
+            )
             return []
 
     # https://ffmpeg.org/ffmpeg.html#toc-Stream-selection
@@ -428,6 +457,9 @@ def collect(data_path):
     files.sort()
     return files
 
-def sanitize_filename(name):
-    """Removes characters in a file name that are illegal in Windows."""
-    return "".join(c for c in name if 31 < ord(c) and c not in r'<>:"/\|?*')
+def sanitize_filename(name, extension):
+    """Remove characters in name that are illegal in some file systems."""
+    filename = "".join(c for c in name if 31 < ord(c) and c not in r'<>:"/\|?*')
+    # Coerce filename length to 255 characters which is a common limit.
+    filename = filename[:255 - len(extension)]
+    return filename + extension
