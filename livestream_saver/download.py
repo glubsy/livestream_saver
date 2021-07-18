@@ -229,7 +229,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
             if self.logger.isEnabledFor(logging.DEBUG):
                 self.logger.debug(
                     "Extracted JSON from html:\n" 
-                    + dumps(self._json, indent=4)
+                    + dumps(self._json, indent=4, ensure_ascii=False)
                 )
         except Exception as e:
             self.logger.debug(f"Error extracting JSON from HTML: {e}")
@@ -466,7 +466,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
             # No further updates.
             return
         with open(metadata_file, 'w') as fp:
-            dump(obj=self.video_info, fp=fp, indent=4)
+            dump(obj=self.video_info, fp=fp, indent=4, ensure_ascii=False)
 
     @property
     def video_info(self):
