@@ -106,14 +106,27 @@ optional arguments:
 # Dependencies
 
 * python3
+* [pytube](https://github.com/pytube/pytube)
 * ffmpeg to concatenate segments and merge them into one file 
 * [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional) to convert webp thumbnail
 
-Install with `python3 -m pip install --upgrade Pillow` or with your preferred package manager.
+# Installation
+
+Either install dependencies system-wide (requires root privileges, use `sudo`):
+```
+python3 -m pip install -r requirements.txt
+``` 
+Or create a virtual environment and install the dependencies inside it, but do note that in this case you will need to activate the venv everytime you need to run the program.
+```
+virtualenv -p python3 --system-site-packages venv
+source ./venv/bin/activate
+pip3 install -r requirements.txt
+```
+One could also clone the corresponding repositories manually to get the latest updates.
 
 # Archived
 
-The `archived` directory contains archived scripts which may still be useful in case of emergency (ie. getting a fatal error in a pinch). These are what the program above was based on originally. They should still work, but are very limited.
+The `archived` directory contains archived scripts which may still be useful in case of emergency (ie. getting a fatal error in a pinch). These are what the program above was based on originally. They are very limited, and should still mostly work, apart from the Youtube throttling problem which requires advanced pre-processing of the download URLs such as computing token signature (thanks Youtube for breaking our things on purpose!).
 
 # License
 
@@ -126,7 +139,7 @@ This is beta software. It should work, but in case it doesn't, feel free to repo
 # TODO
 
 * Add proxy support.
-* Fetch segments in threads to catch up faster.
-* Make sure age-restricted videos are not blocked by the new Youtube Cookies consent page.
+* Fetch segments in parallel to catch up faster.
+* Make sure age-restricted videos are not blocked (we rely on Pytube for this).
 * Monitor Twitch channels.
 * Send e-mail alerts in case of fatal error. 
