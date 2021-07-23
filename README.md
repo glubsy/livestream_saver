@@ -127,7 +127,11 @@ One could also clone the corresponding repositories manually to get the latest u
 ## Configuration
 
 The template config file is provided as an example. Options can generally be overriden via command line arguments.
+
+### e-mail notifications
+
 The email options can be overriden via environment variables if you find it more secure.
+Login and password are not mandatory. That depends on your smtp server configuration.
 
 # License
 

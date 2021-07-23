@@ -3,15 +3,7 @@ log_level = DEBUG
 # Path to cookies that is commmon to all modes:
 cookie = 
 
-# email_notifications = False
-# smtp_server = localhost
-# smtp_port = 25
-# smtp_login =
-# smtp_password =
-# to_email =
-# from_email =
-
-email_notifications = True
+email_notifications = False
 smtp_server = 
 smtp_port = 25
 smtp_login =
