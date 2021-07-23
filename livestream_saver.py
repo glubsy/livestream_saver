@@ -200,6 +200,14 @@ streams has been successful. This is only useful for debugging.'
         default=None,
         help='Output directory where to write final merged file.'
     )
+
+    # Sub-command "test-notification"
+    monitor_parser = subparsers.add_parser('test-notification',
+        help='Send a test e-mail to check if your configuration works.',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        parents=[parent_parser]
+    )
+
     return vars(parser.parse_args())
 
 
@@ -449,6 +457,7 @@ def init_config():
     config.add_section("download")
     config.set("download", "scan_delay", "2.0")  # minutes
     config.add_section("merge")
+    config.add_section("test-notification")
     return config
 
 
@@ -530,24 +539,35 @@ def main():
             output_filepath= logfile_path,
             loglevel=config.get(sub_cmd, "log_level", vars=args)
         )
+    elif sub_cmd == "test-notification":
+        logfile_path = getcwd()
+        setup_logger(
+            output_filepath=logfile_path,
+            loglevel=config.get(sub_cmd, "log_level", vars=args),
+            log_to_file=False
+        )
+        if notif_h.disabled:
+            print("Emails are currenly disabled by configuration.")
+            return
+        notif_h.send_email(
+            subject=f"{__file__.split(sep)[-1]} test email.",
+            message_text="The current configuration works fine!\nYay.\n"
+                         "You will receive notifications if the program " 
+                         "encounters an issue while doing its tasks."
+        )
+        print(
+            f"Sent test e-mail to {notif_h.receiver_email} via "
+            f"SMTP server {notif_h.smtp_server}:{notif_h.smtp_port}... "
+            "Check your inbox!"
+            )
+        if not notif_h.disabled:
+            notif_h.q.join()
+        return
     else:
         print("Wrong sub-command. Exiting.")
         return
 
-    # from time import sleep
-    # for n in range(2):
-    #     notif_h.send_email(f"message #{n}", f"body {n}")
-    #     # sleep(1)
-
-    # for _ in range(8):
-    #     sleep(1)
-    #     print("monitoring ...")
-
-    # mail = notif_h.create_email("we crashin'", "crashin mah server oh noes!")
-    # notif_h.send_email(mail)
-
     try:
-        # raise Exception("fuuuuuuuuuck crash.")
         args["func"](config, args)
     except Exception as e:
         from sys import exc_info
@@ -565,8 +585,8 @@ def main():
             attachments=[logfile_path]
         )
 
-    # We need to join here (or sleep) otherwise any email still in the queue 
-    # will fail to get sent!
+    # We need to join here (or sleep long enough) otherwise any email still 
+    # in the queue will fail to get sent because we exited too soon!
     if not notif_h.disabled:
         notif_h.q.join()
         # notif_h.thread.join()

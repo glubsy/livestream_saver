@@ -128,10 +128,15 @@ One could also clone the corresponding repositories manually to get the latest u
 
 The template config file is provided as an example. Options can generally be overriden via command line arguments.
 
-### e-mail notifications
+### Notifications via e-mail
 
-The email options can be overriden via environment variables if you find it more secure.
+The e-mail options can be overriden via environment variables if you find it more secure.
 Login and password are not mandatory. That depends on your smtp server configuration.
+You can send a test e-mail notification with this sub-command: 
+```
+livestream_saver.py test-notification
+```
+Whenever a crash, or an error occurs, the program should send you a notification at the configured e-mail address via the configured smtp server.
 
 # License
 
