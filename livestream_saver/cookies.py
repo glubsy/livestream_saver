@@ -14,7 +14,7 @@ def get_cookie(path):
     return _get_cookie_jar(path)
 
 
-def _get_cookie_jar(cookie_path):
+def _get_cookie_jar(cookie_path: str):
     """Necessary for urllib.request."""
 
     # Before Python 3.10, these cookies are ignored which breaks our credentials
@@ -26,7 +26,7 @@ def _get_cookie_jar(cookie_path):
         logger.info(f"No cookie path submitted. Using a blank cookie jar.")
         return cj
 
-    cp = Path(cookie_path).absolute()
+    cp = Path(cookie_path).expanduser()
 
     if not cp.is_file():  # either file doesn't exist, or it's a directory
         cp_str = str(cp)

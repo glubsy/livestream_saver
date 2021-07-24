@@ -374,7 +374,7 @@ def download_mode(config, args):
 
 
 def merge_mode(config, args):
-    data_path = Path(path.abspath(args["PATH"]))
+    data_path = Path(args["PATH"]).resolve()
     info = get_metadata_info(data_path)
     written_file = merge(
         info=info,

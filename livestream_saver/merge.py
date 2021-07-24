@@ -1,6 +1,6 @@
 #!/bin/env python3
-from os import sep, remove, path, stat, rename
-from typing import Optional
+from shutil import rmtree
+from typing import Optional, Dict, List
 import subprocess
 from json import load
 from pathlib import Path
@@ -21,7 +21,8 @@ def get_metadata_info(path: Path):
         return {}
 
 
-def concat(datatype, video_id, seg_list, output_dir, method=0):
+def concat(datatype: str, video_id: str, seg_list: list,
+           output_dir: Path, method: int = 0) -> Optional[Path]:
     """
     Concatenate segments.
     :param str datatype:
@@ -29,19 +30,20 @@ def concat(datatype, video_id, seg_list, output_dir, method=0):
     :param str video_id:
         Youtube ID.
     :param list seg_list:
-        List of path to .ts files.
+        List of Paths to .ts files.
     :param str output_dir:
         Output directory where to write resulting file.
-    :rtype: str
+    :param int method: index of method to use
+    :rtype: Path|None
     :returns:
-        Path to concatenated video or audio file.
+        Path to concatenated video or audio file, or None on failure.
     """
     METHOD = ["concat", "concat_demuxer"]
 
     logger.info(f"Trying concatenation method: \"{METHOD[method]}\".")
 
     concat_filename = f"concat_{video_id}_{datatype}.ts"
-    concat_filepath = output_dir + sep + concat_filename
+    concat_filepath = output_dir / concat_filename
 
     # Determine container type according to codec
     if datatype == "vp9":
@@ -53,10 +55,10 @@ def concat(datatype, video_id, seg_list, output_dir, method=0):
     else:
         ext = "m4a" if datatype == "audio" else "mp4"
 
-    ffmpeg_output_filename = f"{output_dir}{sep}\
-{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
+    ffmpeg_output_filename =  output_dir / \
+f"{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
 
-    if path.exists(ffmpeg_output_filename):
+    if ffmpeg_output_filename.exists():
         logger.info(
             f"Skipping concatenation because \"{ffmpeg_output_filename}\" "
             "already exists from a previous run."
@@ -70,7 +72,7 @@ def concat(datatype, video_id, seg_list, output_dir, method=0):
         # Does not work, duration is always messed up.
         # Also a bunch of "Auto-inserting h264_mp4toannexb bitstream filter"
         # warnings (-auto_convert 0 might disable them, but no different result)
-        list_file_path = f"{output_dir}{sep}list_{video_id}_{datatype}.txt"
+        list_file_path = output_dir / f"list_{video_id}_{datatype}.txt"
         with open(list_file_path, "w") as f:
             for i in seg_list:
                 f.write(f"file '{i}'\n")
@@ -78,12 +80,12 @@ def concat(datatype, video_id, seg_list, output_dir, method=0):
         cmd = ["ffmpeg", "-hide_banner", "-y",
                "-f", "concat",
                "-safe", "0",
-               "-i", list_file_path,
+               "-i", str(list_file_path),
                "-map_metadata", "-1", # remove metadata
             #  "-auto_convert", "0" # might disable warnings?
                "-c", "copy",
             #    "-bsf:v", "h264_mp4toannexb", # or [hevc|h264]_mp4toannexb
-               ffmpeg_output_filename]
+               str(ffmpeg_output_filename)]
 
     elif METHOD[method] == "concat_protocol":
         # http://www.ffmpeg.org/faq.html#How-can-I-concatenate-video-files_003f
@@ -97,30 +99,32 @@ def concat(datatype, video_id, seg_list, output_dir, method=0):
               f"concat:\"{list_files}\"", # this may overflow. Stupid design!
                "-map_metadata", "-1",  # remove metadata
                "-c", "copy",
-               ffmpeg_output_filename]
+               str(ffmpeg_output_filename)]
         print(f"len cmd: {len(cmd)} cmd:\n{cmd}")
 
     else:
-        if not path.exists(concat_filepath):
+        if not concat_filepath.exists():
             # Concatenate segments through python
-            with open(concat_filepath,"wb") as f:
+            with open(concat_filepath, "wb") as f:
                 for i in seg_list:
                     with open(i, "rb") as ff:
                         copyfileobj(ff, f)
         # Fix broken container. This seems to fix the messed up duration.
         # Note: '-c:a' if datatype == 'audio' else '-c:v' but '-c copy' might work for both here.
         cmd = ["ffmpeg", "-hide_banner", "-y",
-               "-i", concat_filepath,
+               "-i", str(concat_filepath),
                "-map_metadata", "-1", # remove metadata
                "-c", "copy",
-               ffmpeg_output_filename]
+               str(ffmpeg_output_filename)]
 
     cproc = None
     try:
-        cproc = subprocess.run(cmd,
-                               check=True,
-                               capture_output=True,
-                               text=True)
+        cproc = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True
+        )
         logger.debug(f"{cproc.args} stderr output:\n{cproc.stderr}")
     except subprocess.CalledProcessError as e:
         logger.exception(
@@ -129,8 +133,9 @@ def concat(datatype, video_id, seg_list, output_dir, method=0):
         )
         raise
     finally:
-        if list_file_path is not None and path.exists(list_file_path):
-            remove(list_file_path)
+        # Remove filelist.txt
+        if list_file_path is not None:
+            list_file_path.unlink(missing_ok=True)
 
     # Something might be wrong? Those might just be harmless warning?
     # if cproc is not None\
@@ -140,26 +145,28 @@ def concat(datatype, video_id, seg_list, output_dir, method=0):
     props = probe(ffmpeg_output_filename)
     if len(seg_list) * 0.80 < props.get("duration", 0) > len(seg_list) * 20:
         logger.info(
-            f"Abnormal duration of {ffmpeg_output_filename}: "
+            f"Abnormal duration of {ffmpeg_output_filename.name}: "
             f"{props.get('duration')}. Removing..."
         )
 
-        remove(ffmpeg_output_filename)
+        ffmpeg_output_filename.unlink(missing_ok=True)
         if method < len(METHOD) - 1:
-            logger.info(f"Trying next method... {METHOD[method+1]}")
-            return concat(datatype, video_id, seg_list, output_dir,
-                            method=method + 1)
+            logger.info(f"Trying next method \"{METHOD[method+1]}\"...")
+            return concat(
+                datatype, video_id, seg_list, output_dir,
+                method = method + 1
+            )
 
-    if path.exists(concat_filepath):
-        remove(concat_filepath)
-    if not path.exists(ffmpeg_output_filename):
+    if concat_filepath.exists():
+        concat_filepath.unlink(missing_ok=True)
+    if not ffmpeg_output_filename.exists():
         return None
     return ffmpeg_output_filename
 
 
-def probe(fpath):
+def probe(fpath: Path) -> Dict:
     probecmd = ['ffprobe', '-v', 'quiet', '-hide_banner',
-                '-show_streams', fpath]
+                '-show_streams', str(fpath)]
     probeproc = subprocess.run(probecmd, capture_output=True, text=True)
     logger.debug(f"{probeproc.args} stderr output:\n{probeproc.stdout}")
 
@@ -175,21 +182,21 @@ def probe(fpath):
             continue
 
     logger.debug(
-        f"{path.basename(fpath)} codec: {values.get('codec_name')}, "
+        f"{fpath.name} codec: {values.get('codec_name')}, "
         f"duration: {values.get('duration')}"
     )
 
     return values
 
 
-def merge(info, data_dir: Path,
+def merge(info: Dict, data_dir: Path,
           output_dir: Optional[Path] = None,
-          keep_concat=False,
-          delete_source=False):
+          keep_concat: bool = False,
+          delete_source: bool = False) -> Optional[Path]:
     if not output_dir:
         output_dir = data_dir
 
-    if not data_dir or not path.exists(data_dir):
+    if not data_dir or not data_dir.exists():
         # logger.critical(f"Data directory \"{data_dir}\" not found.")
         return None
 
@@ -230,25 +237,24 @@ def merge(info, data_dir: Path,
     print_missing_segments(audio_files, "_audio")
 
     # Determine codec from first file
-    vid_props = probe(str(video_files[0]))
-    aud_props = probe(str(audio_files[0]))
+    vid_props = probe(video_files[0])
+    aud_props = probe(audio_files[0])
 
     ffmpeg_output_path_video = concat(
-        vid_props.get("codec_name", "video"),
-        info.get('id'),
-        video_files,
-        data_dir
+        datatype=vid_props.get("codec_name", "video"),
+        video_id=info['id'],
+        seg_list=video_files,
+        output_dir=data_dir
     )
     ffmpeg_output_path_audio = concat(
-        aud_props.get("codec_name", "audio"),
-        info.get('id'),
-        audio_files,
-        data_dir
+        datatype=aud_props.get("codec_name", "audio"),
+        video_id=info['id'],
+        seg_list=audio_files,
+        output_dir=data_dir
     )
 
     if not ffmpeg_output_path_audio or not ffmpeg_output_path_video:
-        logger.error(f"Missing video or audio concatenated file!\
-Retrying with concat demuxer...")
+        logger.error("Missing video or audio concatenated file!")
         return None
 
     ext = "mp4"
@@ -268,23 +274,27 @@ Retrying with concat demuxer...")
 
     try_thumb = True
     while True:
-        ffmpeg_command = ["ffmpeg", "-hide_banner", "-y",\
-                        "-i", f"{ffmpeg_output_path_video}",\
-                        "-i", f"{ffmpeg_output_path_audio}"
-                        ]
-        metadata_cmd = metadata_arguments(info, data_dir,
-                                          want_thumb=try_thumb
-                                        )
+        ffmpeg_command = [
+            "ffmpeg", "-hide_banner", "-y",
+            "-i", str(ffmpeg_output_path_video),
+            "-i", str(ffmpeg_output_path_audio)
+        ]
+        metadata_cmd = metadata_arguments(
+            info, data_dir,
+            want_thumb=try_thumb
+        )
         # ffmpeg -hide_banner -i video.mp4 -i audio.m4a -i thumbnail.jpg -map 0
         # -map 1 -map 2 -c:v:2 jpg -disposition:v:1 attached_pic -c copy out.mp4
         ffmpeg_command.extend(metadata_cmd)
         ffmpeg_command.extend(["-c", "copy", str(final_output_file)])
 
         try:
-            cproc = subprocess.run(ffmpeg_command,
-                               check=True,
-                               capture_output=True,
-                               text=True)
+            cproc = subprocess.run(
+                ffmpeg_command,
+                check=True,
+                capture_output=True,
+                text=True
+            )
             logger.debug(f"{cproc.args} stderr output:\n{cproc.stderr}")
         except subprocess.CalledProcessError as e:
             logger.debug(
@@ -298,44 +308,56 @@ Retrying with concat demuxer...")
                     "file! Trying again without it..."
                 )
                 try_thumb = False
-                if path.exists(final_output_file)\
-                and stat(final_output_file).st_size == 0:
-                    logger.info("Removing zero length ffmpeg output...")
-                    remove(final_output_file)
+                if final_output_file.exists() \
+                and final_output_file.stat().st_size == 0:
+                    logger.info(
+                        "Removing zero length ffmpeg output "
+                        "\"{}\" ...".format(final_output_file.name)
+                    )
+                    final_output_file.unlink()
                 continue
 
-        if not path.exists(final_output_file):
-            logger.critical("Missing final merged output file! \
-Something went wrong.")
+        if not final_output_file.exists():
+            logger.critical(
+                "Missing final merged output file! Something went wrong.")
             return None
         break
 
-    if path.exists(final_output_file) and stat(final_output_file).st_size == 0:
-        logger.critical("Final merged output file is zero length! \
-Something went wrong. Try again with DEBUG log level and check for errors.")
-        remove(final_output_file)
+    if final_output_file.exists() and final_output_file.stat().st_size == 0:
+        logger.critical(
+            "Final merged output file is zero length! Something went wrong. "
+            "Check for errors in DEBUG log level.")
+        final_output_file.unlink()
         return None
 
-    logger.info(f"Successfully wrote file \"{final_output_file}\".")
+    logger.info(f"Successfully wrote file \"{final_output_file.name}\".")
 
     if not keep_concat:
-        logger.debug(f"Removing temporary audio/video concatenated files...")
-        remove(ffmpeg_output_path_audio)
-        remove(ffmpeg_output_path_video)
+        logger.debug(
+            f"Removing temporary audio/video concatenated files "
+            "{} and {}".format(
+                ffmpeg_output_path_audio.name, ffmpeg_output_path_video.name
+            )
+        )
+        ffmpeg_output_path_audio.unlink()
+        ffmpeg_output_path_video.unlink()
 
     if delete_source:
-        logger.info(f"Deleting source segments...")
-        remove(video_seg_dir)
-        remove(audio_seg_dir)
+        logger.info("Deleting source segments in {} and {}...".format(
+            video_seg_dir, audio_seg_dir)
+        )
+        rmtree(video_seg_dir)
+        rmtree(audio_seg_dir)
 
     return final_output_file
 
 
-def print_missing_segments(filelist, filetype):
+def print_missing_segments(filelist: List, filetype: str) -> bool:
     """
         Check that all segments are available.
         :param list filelist: a list of pathlib.Path
         :param str filetype: "_video" or "_audio"
+        :return bool: whether one or more segment seems to be missing.
     """
     missing = False
     first_segnum = 0
@@ -372,7 +394,10 @@ def print_missing_segments(filelist, filetype):
     return missing
 
 
-def metadata_arguments(info, data_path, want_thumb=True):
+def metadata_arguments(
+        info: Dict,
+        data_path: Path,
+        want_thumb: bool = True) -> List[str]:
     cmd = []
     # Embed thumbnail if a valid one is found
     if want_thumb:
@@ -390,71 +415,78 @@ def metadata_arguments(info, data_path, want_thumb=True):
     return cmd
 
 
-def get_thumbnail_command_prefix(data_path):
+def get_thumbnail_command_prefix(data_path: Path) -> List:
     thumb_path = get_thumbnail_pathname(data_path)
     if not thumb_path:
         return []
 
     _type = what(thumb_path)
-    logger.info(f"Detected thumbnail: {thumb_path}. Type: {_type}.")
+    logger.info(f"Detected thumbnail \"{thumb_path}\" type: {_type}.")
+
+    if _type is None:
+        return []
+
     if _type != "jpeg" and _type != "png":
-        if _type == "webp":
-            try:
-                convert_thumbnail(thumb_path, _type)
-            except Exception as e:
-                logger.error(
-                    f"Failed converting thumbnail from {_type} format. {e}"
-                )
-                return []
-        else:
-            logger.warning(
-                f"Unsupported thumbnail format: {_type}. "
-                "Skipping embedding into video."
+        try:
+            convert_thumbnail(thumb_path, _type)
+        except Exception as e:
+            logger.error(
+                f"Failed converting thumbnail \"{thumb_path}\" "
+                f"from detected {_type} format. {e}"
             )
             return []
 
     # https://ffmpeg.org/ffmpeg.html#toc-Stream-selection
-    return ["-i", f"{thumb_path}",\
-            "-map", "0", "-map", "1", "-map", "2",\
-            # "-c:v:2", _type,
-            # copy probably means no re-encoding again into jpg/png
-            "-c:a:2", "copy",\
-            "-disposition:v:1",\
-            "attached_pic"]
+    return [
+        "-i", str(thumb_path),
+        "-map", "0", "-map", "1", "-map", "2",
+        # "-c:v:2", _type,
+        # copy probably means no re-encoding again into jpg/png
+        "-c:a:2", "copy",
+        "-disposition:v:1",
+        "attached_pic"
+    ]
 
 
-def convert_thumbnail(thumb_path, fromformat):
+def convert_thumbnail(thumb_path: Path, fromformat: str) -> Path:
+    """Move file 'thumbnail' pointed by thumb_path as 'thumbnail.fromformat',
+    then convert the file to PNG and saves it as 'filename' from thumb_path."""
     try:
         from PIL import Image
     except ImportError as e:
         logger.error(f"Failed loading PIL (pillow) module. {e}")
         raise e
 
-    old_path = str(thumb_path)
-    new_name = ".".join((old_path, fromformat))
-    rename(old_path, new_name)
+    # old_path = str(thumb_path)
+    # new_name = ".".join((old_path, fromformat))
+    # rename(old_path, new_name)
+
+    new_name = Path(thumb_path.absolute().name + f".{fromformat}")
+    if not new_name.exists():
+        thumb_path.rename(new_name)
 
     # TODO Pillow can detect and try all available formats
+    logger.info(f"Converting \"{new_name}\" to PNG...")
     with Image.open(new_name) as im:
-        logger.debug(f"Converting {new_name} to PNG...")
         im.convert("RGB")
-        im.save(old_path, "PNG")
-        logger.debug(f"Saved PNG thumbnail as {old_path}")
+        im.save(thumb_path, "PNG")
+    logger.info(f"Saved PNG thumbnail as \"{thumb_path}\"")
+    return thumb_path
 
 
-def get_thumbnail_pathname(data_path):
-    """Returns Path to a file named "thumbnail" if found in data_path."""
-    fl = list(Path(data_path).glob('thumbnail'))
+def get_thumbnail_pathname(data_path: Path) -> Optional[Path]:
+    """Returns the first file named "thumbnail" if found in data_path."""
+    fl = list(data_path.glob('thumbnail'))
     if fl:
         return fl[0]
     return None
 
 
-def collect(data_path):
-    if not path.exists(data_path):
+def collect(data_path: Path) -> List[Path]:
+    if not data_path.exists():
         logger.warning(f"{data_path} does not exist!")
         return []
-    files = [p for p in Path(data_path).glob('*.ts')]
+    files = [p for p in data_path.glob('*.ts')]
     files.sort()
     return files
 
