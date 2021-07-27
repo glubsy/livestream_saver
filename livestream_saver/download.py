@@ -301,10 +301,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
     @property
     def title(self) -> Optional[str]:
-        """Get the video title.
-
-        :rtype: str
-        """
+        """Get the video title."""
         if self._title:
             return self._title
 

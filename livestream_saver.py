@@ -315,6 +315,11 @@ def monitor_mode(config, args):
 
         if livestream.done:
             logger.info(f"Finished downloading {_id}.")
+            notif_h.send_email(
+                subject=f"Finished downloading {ch.get_channel_name()} - \
+{livestream.title} {_id}",
+                message_text=f""
+            )
             if not config.getboolean("monitor", "no_merge", vars=args):
                 logger.info("Merging segments...")
                 # TODO in a separate thread?

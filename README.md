@@ -105,7 +105,7 @@ optional arguments:
 
 # Dependencies
 
-* python3
+* python3.8
 * [pytube](https://github.com/pytube/pytube)
 * ffmpeg to concatenate segments and merge them into one file 
 * [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional) to convert webp thumbnail
