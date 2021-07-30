@@ -28,6 +28,9 @@ def get_video_id(url: str) -> str:
         video_id = url.split("v=")[1]
     elif "youtu.be" in url:
         video_id = url.split('/')[-1]
+    
+    if "&pp=" in video_id:
+        video_id = video_id.split("&pp=")[0]
 
     if len(video_id) != 11:
         raise ValueError(f"Invalid video ID length for \
