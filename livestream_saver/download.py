@@ -867,22 +867,22 @@ playability status is: {status} \
                 return res_int <= maxq
             custom_filters = [filter_maxq]
 
-        video_streams = self.streams.filter(
-            file_extension=codec,
+        avail_streams = self.streams
+        self.print_available_streams(avail_streams)
+        video_streams = avail_streams.filter(file_extension=codec,
             custom_filter_functions=custom_filters
             ) \
             .order_by('resolution') \
             .desc()
-        self.print_available_streams(video_streams)
+
         video_stream = video_streams.first()
         self.logger.info(f"Selected video {video_stream}")
 
-        audio_streams = self.streams.filter(
+        audio_streams = avail_streams.filter(
             only_audio=True
             ) \
             .order_by('abr') \
             .desc()
-        self.print_available_streams(audio_streams)
         audio_stream = audio_streams.first()
         self.logger.info(f"selected audio {audio_stream}")
 
