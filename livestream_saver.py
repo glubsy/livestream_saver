@@ -345,6 +345,7 @@ def monitor_mode(config, args):
             pass
 
         wait_block(min_minutes=scan_delay, variance=3.5)
+    return 1
 
 
 def download_mode(config, args):
@@ -364,7 +365,7 @@ def download_mode(config, args):
         )
     except ValueError as e:
         logger.critical(e)
-        exit(1)
+        return 1
 
     dl.download(config.getfloat("download", "scan_delay", vars=args))
 
@@ -376,6 +377,7 @@ def download_mode(config, args):
             keep_concat=config.getboolean("download", "keep_concat", vars=args),
             delete_source=config.getboolean("download", "delete_source", vars=args)
         )
+    return 0
 
 
 def merge_mode(config, args):
@@ -391,7 +393,8 @@ def merge_mode(config, args):
 
     if not written_file:
         logger.critical("Something failed. Please report the issue with logs.")
-
+        return 1
+    return 0
 
 def log_enabled(config, args, mode_str):
     """Sanitize log level input value, return False if disabled by user."""
@@ -572,9 +575,11 @@ def main():
         print("Wrong sub-command. Exiting.")
         return
 
+    error = 0
     try:
-        args["func"](config, args)
+        error = args["func"](config, args)
     except Exception as e:
+        error = 1
         from sys import exc_info
         exc_type, exc_value, exc_traceback = exc_info()
         logger.exception(e)
@@ -596,7 +601,8 @@ def main():
         notif_h.q.join()
         # notif_h.thread.join()
     logging.shutdown()
+    return error
 
 
 if __name__ == "__main__":
-    main()
+    exit(main())
