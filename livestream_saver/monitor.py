@@ -1,7 +1,6 @@
 from time import sleep
 from random import uniform
 import logging
-from typing import Dict
 from livestream_saver import extract
 
 logger = logging.getLogger(__name__)

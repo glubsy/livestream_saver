@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from configparser import ConfigParser
 import traceback
+from livestream_saver import extract, util
 from livestream_saver.monitor import YoutubeChannel, wait_block
 from livestream_saver.download import YoutubeLiveStream
 from livestream_saver.merge import merge, get_metadata_info
@@ -282,11 +283,12 @@ def monitor_mode(config, args):
 
         target_live = live_videos[0]
         _id = target_live.get('videoId')
+        sub_output_dir = args["output_dir"] / f"stream_capture_{_id}"
         livestream = None
         try:
             livestream = YoutubeLiveStream(
                 url=f"https://www.youtube.com{target_live.get('url')}", # /watch?v=...
-                output_dir=args["output_dir"],
+                output_dir=sub_output_dir,
                 session=ch.session,
                 video_id=_id,
                 max_video_quality=config.getint(
@@ -358,6 +360,7 @@ def download_mode(config, args):
             url=args.get("URL"),
             output_dir=args["output_dir"],
             session=session,
+            video_id=args["video_id"],
             max_video_quality=config.getint(
                 "download", "max_video_quality", vars=args, fallback=None
             ),
@@ -535,7 +538,14 @@ def main():
                 "download", "output_dir", vars=args, fallback=getcwd()
             )
         )
+        URL = args.get("URL", "")
+        video_id = extract.get_video_id(url=URL)
+        args["video_id"] = video_id
+        output_dir = util.create_output_dir(
+            output_dir=output_dir, video_id=video_id
+        )
         args["output_dir"] = output_dir
+
         logfile_path = output_dir / "download.log"
         setup_logger(
             output_filepath=logfile_path,

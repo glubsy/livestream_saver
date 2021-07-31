@@ -20,6 +20,8 @@ import pytube
 
 from livestream_saver import exceptions
 from livestream_saver import extract
+from livestream_saver import util
+from livestream_saver.request import YoutubeUrllibSession
 
 SYSTEM = system()
 ISPOSIX = SYSTEM == 'Linux' or SYSTEM == 'Darwin'
@@ -31,10 +33,20 @@ COPY_BUFSIZE = 1024 * 1024 if ISWINDOWS else 64 * 1024
 
 
 class YoutubeLiveStream():
-    def __init__(self, url, output_dir, session, video_id=None,
-                 max_video_quality=None, log_level=logging.INFO):
+    def __init__(
+        self, 
+        url: str, 
+        output_dir: Path, 
+        session: YoutubeUrllibSession, 
+        video_id: Optional[str] = None,
+        max_video_quality: Optional[str] = None, 
+        log_level = logging.INFO) -> None:
 
         self.session = session
+        self.url = url
+        self.max_video_quality = max_video_quality
+        self.video_id = video_id if video_id is not None \
+                                 else extract.get_video_id(url)
 
         self._js: Optional[str] = None  # js fetched by js_url
         self._js_url: Optional[str] = None  # the url to the js, parsed from watch html
@@ -44,7 +56,6 @@ class YoutubeLiveStream():
 
         self._json: Optional[Dict] = {}
 
-        self.video_id = extract.get_video_id(url)
         self.watch_url = f"https://youtube.com/watch?v={self.video_id}"
         self.embed_url = f"https://www.youtube.com/embed/{self.video_id}"
 
@@ -66,9 +77,6 @@ class YoutubeLiveStream():
 
         self._age_restricted: Optional[bool] = None
 
-        self.url = url
-        self.max_video_quality = max_video_quality
-
         self.video_base_url = None
         self.audio_base_url = None
         self.seg = 0
@@ -76,33 +84,42 @@ class YoutubeLiveStream():
         self.done = False
         self.error = None
 
-        self.output_dir = self.create_output_dir(output_dir)
+        self.output_dir = output_dir
+        if not self.output_dir.exists:
+            util.create_output_dir(
+                output_dir=output_dir, video_id=None
+            )
+
+        # self.output_dir = output_dir \
+        #     if output_dir.exists() \
+        #     else util.create_output_dir(
+        #         output_dir=output_dir, video_id=None
+        #     )
 
         self.logger = self.setup_logger(self.output_dir, log_level)
 
         self.video_outpath = self.output_dir / 'vid'
         self.audio_outpath = self.output_dir / 'aud'
 
-    def create_output_dir(self, output_dir: Path):
-        capturedirname = f"stream_capture_{self.video_id}"
-        capturedirpath = output_dir / capturedirname
-        makedirs(capturedirpath, 0o766, exist_ok=True)
-        return capturedirpath
-
-    def setup_logger(self, path, log_level):
+    def setup_logger(self, output_path, log_level):
         if isinstance(log_level, str):
             log_level = str.upper(log_level)
 
+        # We need to make an independent logger (with no parent) in order to
+        # avoid using the parent logger's handlers, although we are writing
+        # to the same file.
         logger = logging.getLogger("download" + "." + self.video_id)
 
         if logger.hasHandlers():
-            logger.debug(f"Logger {logger} already had handlers! {logger.handlers}")
+            logger.debug(
+                f"Logger {logger} already had handlers!"
+            )
             return logger
 
         logger.setLevel(logging.DEBUG)
         # File output
         logfile = logging.FileHandler(
-            filename=path / "download.log", delay=True
+            filename=output_path / "download.log", delay=True
         )
         logfile.setLevel(logging.DEBUG)
         formatter = logging.Formatter(
