@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from os import sep, path, makedirs, listdir
+from sys import stderr
 from platform import system
 import logging
 from datetime import date, datetime
@@ -95,16 +96,18 @@ class YoutubeLiveStream():
         logger = logging.getLogger("download" + "." + self.video_id)
 
         if logger.hasHandlers():
-            logger.debug(f"Logger {logger} already had handlers!")
+            logger.debug(f"Logger {logger} already had handlers! {logger.handlers}")
             return logger
 
         logger.setLevel(logging.DEBUG)
         # File output
-        logfile = logging.FileHandler(\
-            filename=path / "download.log", delay=True)
+        logfile = logging.FileHandler(
+            filename=path / "download.log", delay=True
+        )
         logfile.setLevel(logging.DEBUG)
-        formatter = logging.Formatter(\
-            '%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+        )
         logfile.setFormatter(formatter)
         logger.addHandler(logfile)
 
@@ -112,6 +115,17 @@ class YoutubeLiveStream():
         conhandler = logging.StreamHandler()
         conhandler.setLevel(log_level)
         conhandler.setFormatter(formatter)
+        confilter = logging.Filter()
+
+        def dumb_filter(record):
+            # if "Downloading segment" in record.msg:
+            # Only filter logRecords that came from our function
+            if record.funcName == self.print_progress:
+                return True
+            return False
+
+        confilter.filter = dumb_filter
+        conhandler.addFilter(confilter)
         logger.addHandler(conhandler)
         return logger
 
@@ -692,8 +706,7 @@ playability status is: {status} \
             try:
                 video_segment_url = f'{self.video_base_url}&sq={self.seg}'
                 audio_segment_url = f'{self.audio_base_url}&sq={self.seg}'
-                # TODO display rotating wheel in interactive mode
-                self.logger.info(f"Downloading segment {self.seg}...")
+                self.print_progress(self.seg)
 
                 # To have zero-padded filenames (not compatible with
                 # merge.py from https://github.com/mrwnwttk/youtube_stream_capture
@@ -752,6 +765,21 @@ playability status is: {status} \
             except IOError as e:
                 self.logger.exception(e)
                 raise e
+
+    def print_progress(self, seg: int) -> None:
+        # TODO display rotating wheel in interactive mode
+        fullmsg = f"Downloading segment {seg}..."
+        if ISWINDOWS:
+            prev_len = getattr(self, '_report_progress_prev_line_length', 0)
+            if prev_len > len(fullmsg):
+                fullmsg += ' ' * (prev_len - len(fullmsg))
+            self._report_progress_prev_line_length = len(fullmsg)
+            clear_line = '\r'
+        else:
+            clear_line = ('\r\x1b[K' if stderr.isatty() else '\r')
+
+        print(clear_line + fullmsg, end='')
+        self.logger.info(fullmsg)
 
     # OBSOLETE
     def print_found_quality(self, item, datatype):
