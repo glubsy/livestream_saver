@@ -261,9 +261,7 @@ def monitor_mode(config, args):
         notifier=notif_h
     )
 
-    # FIXME needs smarter safeguard
-    if "http" not in URL and "youtube.com" not in URL:
-        URL = f"https://www.youtube.com/channel/{URL}"
+    URL = util.sanitize_channel_url(URL)
 
     ch = YoutubeChannel(URL, channel_id, session)
 

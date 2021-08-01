@@ -56,7 +56,10 @@ class YoutubeLiveStream():
 
         self._json: Optional[Dict] = {}
 
-        self.watch_url = f"https://youtube.com/watch?v={self.video_id}"
+        # NOTE if "www" is omitted, it might force a redirect on YT's side
+        # (with &ucbcb=1) and force us to update cookies again. YT is very picky
+        # about that. Let's just avoid it.
+        self.watch_url = f"https://www.youtube.com/watch?v={self.video_id}"
         self.embed_url = f"https://www.youtube.com/embed/{self.video_id}"
 
         self._author: Optional[str] = None

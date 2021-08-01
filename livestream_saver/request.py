@@ -174,7 +174,7 @@ class YoutubeUrllibSession:
         # TODO get the DASH manifest (MPD) and parse that xml file instead
         # We could also use youtube-dl --dump-json instead
         with urlopen(req) as res:
-            logger.info(f"GET {res.url}")
+            logger.debug(f"REQUEST {req.full_url} -> response url: {res.url}")
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
                     f"Response Status code: {res.status}.\n"

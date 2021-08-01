@@ -38,6 +38,14 @@ def get_channel_id(str_url, service_name):
     raise Exception(f"No valid channel ID found in \"{str_url}\".")
 
 
+def sanitize_channel_url(url: str) -> str:
+    # FIXME needs smarter safeguard
+    if "http" not in url and "youtube.com" not in url:
+        url = f"https://www.youtube.com/channel/{url}"
+    if url.endswith("/"):
+        url = url[:-1]
+    return url
+
 def create_output_dir(output_dir: Path, video_id: Optional[str]) -> Path:
     capture_dirpath = output_dir
     if video_id is not None:
