@@ -547,7 +547,7 @@ def main():
         logfile_path = output_dir / "download.log"
         setup_logger(
             output_filepath=logfile_path,
-            loglevel=config.get(sub_cmd, "log_level")
+            loglevel=config.get(sub_cmd, "log_level", vars=args)
         )
     elif sub_cmd == "merge":
         logfile_path = Path(args["PATH"]) / "merge.log"

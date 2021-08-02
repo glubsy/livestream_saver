@@ -135,15 +135,15 @@ class YoutubeLiveStream():
         conhandler = logging.StreamHandler()
         conhandler.setLevel(log_level)
         conhandler.setFormatter(formatter)
-        confilter = logging.Filter()
 
         def dumb_filter(record):
             # if "Downloading segment" in record.msg:
             # Only filter logRecords that came from our function
-            if record.funcName == self.print_progress:
-                return True
-            return False
+            if record.funcName == "print_progress":
+                return False
+            return True
 
+        confilter = logging.Filter()
         confilter.filter = dumb_filter
         conhandler.addFilter(confilter)
         logger.addHandler(conhandler)
