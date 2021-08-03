@@ -486,7 +486,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
             # FIXME this avoids writing this file more than once for now.
             # No further updates.
             return
-        with open(metadata_file, 'w') as fp:
+        with open(metadata_file, 'w', encoding='utf8') as fp:
             dump(obj=self.video_info, fp=fp, indent=4, ensure_ascii=False)
 
     @property
