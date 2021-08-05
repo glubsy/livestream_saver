@@ -11,6 +11,7 @@ from imghdr import what
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
+MAX_NAME_LEN = 255
 
 def get_metadata_info(path: Path):
     try:
@@ -266,7 +267,7 @@ def merge(info: Dict, data_dir: Path,
     final_output_name = sanitize_filename(
         f"{info.get('author')}_"
         f"[{info.get('download_date')}]_{info.get('title')}_"
-        f"[{info.get('video_resolution')}]_{info.get('id')}",
+        f"[{info.get('video_resolution')}]_{info.get('id')}"
         f".{ext}"
     )
 
@@ -490,9 +491,54 @@ def collect(data_path: Path) -> List[Path]:
     files.sort()
     return files
 
-def sanitize_filename(name, extension):
-    """Remove characters in name that are illegal in some file systems."""
-    filename = "".join(c for c in name if 31 < ord(c) and c not in r'<>:"/\|?*')
-    # Coerce filename length to 255 characters which is a common limit.
-    filename = filename[:255 - len(extension)]
+
+def sanitize_filename(filename: str) -> str:
+    """Remove characters in name that are illegal in some file systems, and
+    make sure it is not too long, including the extension."""
+    extension = ""
+    ext_idx = filename.rfind(".")
+    if ext_idx > -1:
+        extension = filename[ext_idx:]
+        if not extension.isascii():
+            # There is a risk that we failed to detect an actual extension.
+            # Only preserve extension if it is valid ASCII, otherwise ignore it.
+            extension = ""
+
+    if extension:
+        filename = filename[:-len(extension)]
+
+    print(f"filename {filename}, extension {extension}")
+    if not filename.isascii():
+        name_bytes = filename.encode('utf-8')
+        length_bytes = len(name_bytes)
+        logger.debug(
+            f"Length of problematic filename is {length_bytes} bytes "
+            f"{'<' if length_bytes < MAX_NAME_LEN else '>='} {MAX_NAME_LEN}")
+        if length_bytes > MAX_NAME_LEN:
+            filename = simple_truncate(filename, MAX_NAME_LEN - len(extension))
+    else:
+        filename = "".join(
+            c for c in filename if 31 < ord(c) and c not in r'<>:"/\|?*'
+        )
+        # Coerce filename length to 255 characters which is a common limit.
+        filename = filename[:MAX_NAME_LEN - len(extension)]
+
+    logger.debug(f"Sanitized name: {filename + extension} "
+              f"({len((filename + extension).encode('utf-8'))} bytes)")
+    assert(
+        len(
+            filename.encode('utf-8') + extension.encode('utf-8')
+        ) <= MAX_NAME_LEN
+    )
     return filename + extension
+
+
+def simple_truncate(unistr: str, maxsize: int) -> str:
+    # from https://joernhees.de/blog/2010/12/14/how-to-restrict-the-length-of-a-unicode-string/
+    import unicodedata
+    if not unicodedata.is_normalized("NFC", unistr):
+        unistr = unicodedata.normalize("NFC", unistr)
+    return str(
+        unistr.encode("utf-8")[:maxsize],
+        encoding="utf-8", errors='ignore'
+    )
