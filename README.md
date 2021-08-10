@@ -81,7 +81,7 @@ optional arguments:
 
 The *download* sub-command above should automatically merge the downloaded segments once the live stream has ended. If it failed for whatever reason, this sub-command can be invoked on the directory path to the downloaded segments. That directory should be named something like "segments_{VIDEO_ID}".
 
-Basic usage: `python livestream_saver.py merge /path/to/segments_{VIDEO_ID}`
+Basic usage: `python livestream_saver.py merge /path/to/segments_{VIDEO_ID}` (Note to Windows users: use `py livestream_saver.py` instead)
 
 ```
 > python3 livestream_saver.py merge --help
@@ -106,7 +106,7 @@ optional arguments:
 # Dependencies
 
 * python3.8
-* [pytube](https://github.com/pytube/pytube)
+* [pytube](https://github.com/pytube/pytube) 10.9.2
 * ffmpeg to concatenate segments and merge them into one file 
 * [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional) to convert webp thumbnail
 
@@ -118,7 +118,7 @@ python3 -m pip install -r requirements.txt
 ``` 
 Or create a virtual environment and install the dependencies inside it, but do note that in this case you will need to activate the venv everytime you need to run the program.
 ```
-virtualenv -p python3 --system-site-packages venv
+virtualenv -p python3 venv
 source ./venv/bin/activate
 pip3 install -r requirements.txt
 ```

@@ -1,6 +1,4 @@
-#!/bin/env python3
-from os import sep, makedirs, path, getcwd
-from re import sub
+from os import sep, makedirs, getcwd
 from sys import argv
 import argparse
 import logging
