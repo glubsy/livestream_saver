@@ -294,7 +294,8 @@ def merge(info: Dict, data_dir: Path,
                 ffmpeg_command,
                 check=True,
                 capture_output=True,
-                text=True
+                text=True,
+                encoding="utf-8"
             )
             logger.debug(f"{cproc.args} stderr output:\n{cproc.stderr}")
         except subprocess.CalledProcessError as e:
