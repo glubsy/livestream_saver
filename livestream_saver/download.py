@@ -122,7 +122,7 @@ class YoutubeLiveStream():
         logger.setLevel(logging.DEBUG)
         # File output
         logfile = logging.FileHandler(
-            filename=output_path / "download.log", delay=True
+            filename=output_path / "download.log", delay=True, encoding='utf-8'
         )
         logfile.setLevel(logging.DEBUG)
         formatter = logging.Formatter(

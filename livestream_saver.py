@@ -420,7 +420,7 @@ def setup_logger(*, output_filepath, loglevel, log_to_file=True):
 
     if log_to_file:
         logfile = logging.FileHandler(
-            filename=output_filepath, delay=True
+            filename=output_filepath, delay=True, encoding='utf-8'
         )
         # FIXME DEBUG by default for file
         logfile.setLevel(logging.DEBUG)
