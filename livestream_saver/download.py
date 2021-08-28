@@ -16,6 +16,7 @@ import urllib.error
 from http.client import IncompleteRead
 
 import pytube
+import pytube.cipher
 # from pytube import Youtube
 
 from livestream_saver import exceptions
@@ -30,6 +31,36 @@ COPY_BUFSIZE = 1024 * 1024 if ISWINDOWS else 64 * 1024
 
 # logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
+
+# Temporary backport from pytube 11.0.1
+def get_throttling_function_name(js: str) -> str:
+    """Extract the name of the function that computes the throttling parameter.
+
+    :param str js:
+        The contents of the base.js asset file.
+    :rtype: str
+    :returns:
+        The name of the function used to compute the throttling parameter.
+    """
+    function_patterns = [
+        # https://github.com/ytdl-org/youtube-dl/issues/29326#issuecomment-865985377
+        # a.C&&(b=a.get("n"))&&(b=Dea(b),a.set("n",b))}};
+        # In above case, `Dea` is the relevant function name
+        r'a\.[A-Z]&&\(b=a\.get\("n"\)\)&&\(b=([^(]+)\(b\)',
+    ]
+    print('Finding throttling function name')
+    for pattern in function_patterns:
+        regex = re.compile(pattern)
+        function_match = regex.search(js)
+        if function_match:
+            print("finished regex search, matched: %s", pattern)
+            return function_match.group(1)
+
+
+    raise pytube.RegexMatchError(
+        caller="get_throttling_function_name", pattern="multiple"
+    )
+pytube.cipher.get_throttling_function_name = get_throttling_function_name
 
 
 class YoutubeLiveStream():
@@ -362,7 +393,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
         self._title = value
 
     @property
-    def description(self) -> str:
+    def description(self) -> Optional[str]:
         """Get the video description.
 
         :rtype: str

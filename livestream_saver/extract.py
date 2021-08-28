@@ -89,7 +89,7 @@ def str_as_json(string: str) -> Dict:
     return j
 
 
-# from pytube.extract
+# from pytube.extract, with some modifications
 def publish_date(watch_html: Optional[str]=None):
     """Extract publish date
     :param str watch_html:
