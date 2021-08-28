@@ -209,7 +209,7 @@ def merge(info: Dict, data_dir: Path,
         logger.setLevel(logging.DEBUG)
         # File output
         logfile = logging.FileHandler(\
-            filename=data_dir / "download.log", delay=True)
+            filename=data_dir / "download.log", delay=True, encoding='utf-8')
         logfile.setLevel(logging.DEBUG)
         formatter = logging.Formatter(\
             '%(asctime)s - %(levelname)s - %(name)s - %(message)s')
