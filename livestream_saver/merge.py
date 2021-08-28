@@ -508,7 +508,11 @@ def sanitize_filename(filename: str) -> str:
     if extension:
         filename = filename[:-len(extension)]
 
-    print(f"filename {filename}, extension {extension}")
+    filename = "".join(
+        c for c in filename if 31 < ord(c) and c not in r'<>:"/\|?*'
+    )
+    logger.debug(f"filename {filename}, extension {extension}")
+
     if not filename.isascii():
         name_bytes = filename.encode('utf-8')
         length_bytes = len(name_bytes)
@@ -518,9 +522,6 @@ def sanitize_filename(filename: str) -> str:
         if length_bytes > MAX_NAME_LEN:
             filename = simple_truncate(filename, MAX_NAME_LEN - len(extension))
     else:
-        filename = "".join(
-            c for c in filename if 31 < ord(c) and c not in r'<>:"/\|?*'
-        )
         # Coerce filename length to 255 characters which is a common limit.
         filename = filename[:MAX_NAME_LEN - len(extension)]
 
