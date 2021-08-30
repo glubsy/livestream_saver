@@ -106,7 +106,7 @@ optional arguments:
 # Dependencies
 
 * python3.8
-* [pytube](https://github.com/pytube/pytube) 10.9.2
+* [pytube](https://github.com/pytube/pytube)
 * ffmpeg to concatenate segments and merge them into one file 
 * [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional) to convert webp thumbnail
 
@@ -144,7 +144,7 @@ GPLv3
 
 # Notes:
 
-This is beta software. It should work, but in case it doesn't, feel free to report issues. Or better yet, fix them yourself and submit a merge request. Keep in mind that these mega corporations love to break things.
+This is beta software. It should work, but in case it doesn't, feel free to report issues. Or better yet, fix them yourself and submit a merge request. Keep in mind that these mega corporations love to break our things out of spite.
 
 # TODO
 
@@ -153,3 +153,6 @@ This is beta software. It should work, but in case it doesn't, feel free to repo
 * Fetch segments in parallel to catch up faster.
 * Make sure age-restricted videos are not blocked (we rely on Pytube for this).
 * Monitor Twitch channels.
+* Integrate yt-dlp and streamlink as secondary back-ends.
+* Add user-supplied command after merge successful.
+* Make Docker image and a web-interface.

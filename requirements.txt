@@ -1,6 +1,5 @@
-pytube==10.9.2
+pytube==11.0.1
 Pillow
-#pytest
 # yt-dlp
 # youtube-dlp
 # streamlink

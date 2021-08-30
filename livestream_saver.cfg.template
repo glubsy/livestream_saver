@@ -20,6 +20,7 @@ scan_delay = 2.5
 log_level = WARNING
 # cookie = /path/to/cookies.txt
 
+# NOTE: for now, you can only have ONE active (uncommented) channel_monitor active!
 # [channel_monitor]
 # channel_name = Matsuro Meru
 # scan_delay = 20.0

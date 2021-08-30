@@ -69,16 +69,17 @@ Either a full youtube URL, /channel/ID, or /c/name format.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookie file.'
     )
-    monitor_parser.add_argument('-q', '--max-video-quality', action='store',
-        default=argparse.SUPPRESS, type=int,
-        help='Use best available video resolution up to this height in pixels.'\
-             ' Example: "360" for maximum height 360p. Get the highest available'
-             ' resolution by default.'
+    monitor_parser.add_argument('-f', '--max-video-resolution', action='store',
+        default=argparse.SUPPRESS, type=str,
+        help='Try getting the best available video resolution up to this height '
+             'in pixels. '
+             'Example: "360" for maximum height 360p. Get the highest available '
+             'resolution by default.'
     )
     monitor_parser.add_argument('-o', '--output-dir', action='store',
         default=argparse.SUPPRESS, type=str,
-        help='Output directory where to save channel data.'\
-            f' (Default: {config.get("monitor", "output_dir")})'
+        help='Output directory where to save channel data. '
+            f'(Default: {config.get("monitor", "output_dir")})'
     )
     monitor_parser.add_argument('--channel-name', action='store',
         default=argparse.SUPPRESS, type=str,
@@ -132,12 +133,13 @@ merging of streams has been successful. Only useful for troubleshooting.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookie file.'
     )
-    download_parser.add_argument('-q', '--max-video-quality',
-        action='store', type=int,
+    download_parser.add_argument('-f', '--max-video-resolution', 
+        action='store', type=str,
         default=argparse.SUPPRESS,
-        help='Use best available video resolution up to this height in pixels.'\
-             ' Example: "360" for maximum height 360p. Get the highest available'
-             ' resolution by default.'
+        help='Try getting the best available video resolution up to this height '
+             'in pixels. '
+             'Example: "360" for maximum height 360p. Get the highest available '
+             'resolution by default.'
     )
     download_parser.add_argument('-o', '--output-dir',
         action='store', type=str,
@@ -287,8 +289,8 @@ def monitor_mode(config, args):
                 output_dir=sub_output_dir,
                 session=ch.session,
                 video_id=_id,
-                max_video_quality=config.getint(
-                    "monitor", "max_video_quality", vars=args, fallback=None
+                max_video_quality=config.get(
+                    "monitor", "max_video_resolution", vars=args, fallback=None
                 ),
                 log_level=config.get("monitor", "log_level", vars=args)
             )
@@ -357,8 +359,8 @@ def download_mode(config, args):
             output_dir=args["output_dir"],
             session=session,
             video_id=args["video_id"],
-            max_video_quality=config.getint(
-                "download", "max_video_quality", vars=args, fallback=None
+            max_video_quality=config.get(
+                "download", "max_video_resolution", vars=args, fallback=None
             ),
             log_level=config.get("download", "log_level", vars=args)
         )
