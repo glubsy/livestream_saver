@@ -65,12 +65,12 @@ pytube.cipher.get_throttling_function_name = get_throttling_function_name
 
 class YoutubeLiveStream():
     def __init__(
-        self, 
-        url: str, 
-        output_dir: Path, 
-        session: YoutubeUrllibSession, 
+        self,
+        url: str,
+        output_dir: Path,
+        session: YoutubeUrllibSession,
         video_id: Optional[str] = None,
-        max_video_quality: Optional[str] = None, 
+        max_video_quality: Optional[str] = None,
         log_level = logging.INFO) -> None:
 
         self.session = session
@@ -776,21 +776,34 @@ playability status is: {status} \
                     headers = in_stream.headers
                     status = in_stream.status
                     if self.logger.isEnabledFor(logging.DEBUG):
-                        self.logger.debug(f"Seg {self.seg} URL: {video_segment_url}")
+                        self.logger.debug(f"Seg {self.seg} video URL: {video_segment_url}")
                         self.logger.debug(f"Seg status: {status}")
                         self.logger.debug(f"Seg headers:\n{headers}")
 
                     if not self.write_to_file(in_stream, video_segment_filename):
                         if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
                             raise exceptions.EmptySegmentException(\
-                                f"Segment {self.seg} is empty, stream might have ended...")
+                                f"Segment {self.seg} (video) is empty, stream might have ended...")
                         self.logger.warning(f"Waiting for {wait_sec} seconds before retrying...")
                         sleep(wait_sec)
                         continue
 
                 # urllib.request.urlretrieve(audio_segment_url, audio_segment_filename)
                 with closing(urlopen(audio_segment_url)) as in_stream:
-                    self.write_to_file(in_stream, audio_segment_filename)
+                    headers = in_stream.headers
+                    status = in_stream.status
+                    if self.logger.isEnabledFor(logging.DEBUG):
+                        self.logger.debug(f"Seg {self.seg} audio URL: {audio_segment_url}")
+                        self.logger.debug(f"Seg status: {status}")
+                        self.logger.debug(f"Seg headers:\n{headers}")
+
+                    if not self.write_to_file(in_stream, audio_segment_filename):
+                        if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
+                            raise exceptions.EmptySegmentException(\
+                                f"Segment {self.seg} (audio) is empty, stream might have ended...")
+                        self.logger.warning(f"Waiting for {wait_sec} seconds before retrying...")
+                        sleep(wait_sec)
+                        continue
 
                 attempt = 0
                 self.seg += 1
