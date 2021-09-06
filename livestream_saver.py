@@ -5,9 +5,10 @@ import logging
 from pathlib import Path
 from configparser import ConfigParser
 import traceback
+
 from livestream_saver import extract, util
 from livestream_saver.monitor import YoutubeChannel, wait_block
-from livestream_saver.download import YoutubeLiveStream
+from livestream_saver.download import YoutubeLiveBroadcast
 from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import get_channel_id
 from livestream_saver.request import YoutubeUrllibSession
@@ -17,6 +18,10 @@ logger = logging.getLogger('livestream_saver')
 logger.setLevel(logging.DEBUG)
 
 notif_h = NotificationHandler()
+
+DEFAULT_VIDEO_CODEC = "mp4" # or webm
+DEFAULT_AUDIO_CODEC = "mp4" # or webm
+
 
 def parse_args(config):
     """
@@ -69,20 +74,42 @@ Either a full youtube URL, /channel/ID, or /c/name format.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookie file.'
     )
-    monitor_parser.add_argument('-f', '--max-video-resolution', action='store',
+    monitor_parser.add_argument('-f', '--itags', 
+        action='store', type=str,
+        default=argparse.SUPPRESS, 
+        help='Try getting these itags (separated by +), otherwise fall back to '
+             'getting the best quality, up to optional max resolution if '
+             'specified. Example: 134+140'
+    )
+    monitor_parser.add_argument('-q', '--max-video-resolution', action='store',
         default=argparse.SUPPRESS, type=str,
         help='Try getting the best available video resolution up to this height '
              'in pixels. '
-             'Example: "360" for maximum height 360p. Get the highest available '
-             'resolution by default.'
+             'Example: "360" for a maximum height of 360 pixels. '
+             'If not specified, will get the highest resolution available. '
+             'Common values: 1080, 720, 480, 360, 240, 144.'
     )
-    monitor_parser.add_argument('-o', '--output-dir', action='store',
-        default=argparse.SUPPRESS, type=str,
+    monitor_parser.add_argument('--video-codec', 
+        action='store', type=str,
+        default=argparse.SUPPRESS, 
+        help='Filter available streams with this preferred video codec. '
+              f'Default: {DEFAULT_VIDEO_CODEC}. Example: webm (for vp8/9).'
+    )
+    monitor_parser.add_argument('--audio-codec',
+        action='store', type=str,
+        default=argparse.SUPPRESS, 
+        help='Filter available streams with this preferred audio codec. '
+              f'Default: {DEFAULT_AUDIO_CODEC}. Example: webm (for opus/vorbis).'
+    )
+    monitor_parser.add_argument('-o', '--output-dir', 
+        action='store', type=str,
+        default=argparse.SUPPRESS, 
         help='Output directory where to save channel data. '
             f'(Default: {config.get("monitor", "output_dir")})'
     )
-    monitor_parser.add_argument('--channel-name', action='store',
-        default=argparse.SUPPRESS, type=str,
+    monitor_parser.add_argument('--channel-name', 
+        action='store', type=str,
+        default=argparse.SUPPRESS, 
         help='User-defined name of the channel to monitor. Will fallback to \
 channel ID deduced from the URL otherwise.'
     )
@@ -90,8 +117,8 @@ channel ID deduced from the URL otherwise.'
     monitor_group = monitor_parser.add_mutually_exclusive_group()
     monitor_parser.add_argument('-d', '--delete-source',
         action='store_true',
-        help='Delete source segment files once the final \
-merging of them has been done.'
+        help='Delete source segment files once the final '
+             'merging of them has been done.'
     )
     monitor_group.add_argument('-n', '--no-merge',
         action='store_true',
@@ -99,8 +126,8 @@ merging of them has been done.'
     )
     monitor_parser.add_argument('-k', '--keep-concat',
         action='store_true',
-        help='Keep concatenated intermediary files even if \
-merging of streams has been successful. Only useful for troubleshooting.'
+        help='Keep concatenated intermediary files even if merging of streams '
+             'has been successful. Only useful for troubleshooting.'
     )
     # monitor_parser.add_argument('--interactive', action='store_true',
     #    help='Allow user input to skip the current download.')
@@ -133,13 +160,37 @@ merging of streams has been successful. Only useful for troubleshooting.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookie file.'
     )
-    download_parser.add_argument('-f', '--max-video-resolution', 
-        action='store', type=str,
+    download_parser.add_argument('-F', '--list-formats', 
+        action='store_true',
         default=argparse.SUPPRESS,
+        help='List available formats for that stream, then exit.'
+    )
+    download_parser.add_argument('-f', '--itags', 
+        action='store', type=str,
+        default=argparse.SUPPRESS, 
+        help='Try getting these itags (separated by +), otherwise fall back to '
+             'getting the best quality, up to optional max resolution if '
+             'specified. Example: 134+140'
+    )
+    download_parser.add_argument('-q', '--max-video-resolution', action='store',
+        default=argparse.SUPPRESS, type=str,
         help='Try getting the best available video resolution up to this height '
              'in pixels. '
-             'Example: "360" for maximum height 360p. Get the highest available '
-             'resolution by default.'
+             'Example: "360" for a maximum height of 360 pixels. '
+             'If not specified, will get the highest resolution available. '
+             'Common values: 1080, 720, 480, 360, 240, 144.'
+    )
+    download_parser.add_argument('--video-codec', 
+        action='store', type=str,
+        default=argparse.SUPPRESS, 
+        help='Filter available streams with this preferred video codec. '
+              f'Default: {DEFAULT_VIDEO_CODEC}. Example: webm (for vp8/9).'
+    )
+    download_parser.add_argument('--audio-codec', 
+        action='store', type=str,
+        default=argparse.SUPPRESS, 
+        help='Filter available streams with this preferred audio codec. '
+              f'Default: {DEFAULT_AUDIO_CODEC}. Example: webm (for opus/vorbis).'
     )
     download_parser.add_argument('-o', '--output-dir',
         action='store', type=str,
@@ -282,16 +333,13 @@ def monitor_mode(config, args):
         target_live = live_videos[0]
         _id = target_live.get('videoId')
         sub_output_dir = args["output_dir"] / f"stream_capture_{_id}"
-        livestream = None
+        live_broadcast = None
         try:
-            livestream = YoutubeLiveStream(
+            live_broadcast = YoutubeLiveBroadcast(
                 url=f"https://www.youtube.com{target_live.get('url')}", # /watch?v=...
                 output_dir=sub_output_dir,
                 session=ch.session,
                 video_id=_id,
-                max_video_quality=config.get(
-                    "monitor", "max_video_resolution", vars=args, fallback=None
-                ),
                 log_level=config.get("monitor", "log_level", vars=args)
             )
         except ValueError as e:
@@ -302,30 +350,49 @@ def monitor_mode(config, args):
 
         logger.info(
             f"Found live: {_id} title: {target_live.get('title')}. "
-            "Downloading..."
         )
 
+        # This should log to stream log file
+        live_broadcast.print_available_streams()
+
+        live_broadcast.filter_streams(
+            vcodec=config.get(
+                "monitor", "video-codec", vars=args, fallback=DEFAULT_VIDEO_CODEC
+            ),
+            acodec=config.get(
+                "monitor", "audio-codec", vars=args, fallback=DEFAULT_AUDIO_CODEC
+            ),
+            itags=config.get(
+                "monitor", "itags", vars=args, fallback=None
+            ),
+            maxq=config.get(
+                "monitor", "max_video_resolution", vars=args, fallback=None
+            )
+        )
+        logger.info(f"Selected streams: {live_broadcast.selected_streams}")
+
         try:
-            livestream.download()
+            logger.info(f"Downloading {_id}...")
+            live_broadcast.download()
         except Exception as e:
             logger.exception(
                 f"Got error in stream download but continuing...\n {e}"
             )
             pass
 
-        if livestream.done:
+        if live_broadcast.done:
             logger.info(f"Finished downloading {_id}.")
             notif_h.send_email(
                 subject=f"Finished downloading {ch.get_channel_name()} - \
-{livestream.title} {_id}",
+{live_broadcast.ptyt.title} {_id}",
                 message_text=f""
             )
             if not config.getboolean("monitor", "no_merge", vars=args):
                 logger.info("Merging segments...")
                 # TODO in a separate thread?
                 merge(
-                    info=livestream.video_info,
-                    data_dir=livestream.output_dir,
+                    info=live_broadcast.video_info,
+                    data_dir=live_broadcast.output_dir,
                     keep_concat=config.getboolean(
                         "monitor", "keep_concat", vars=args
                     ),
@@ -335,10 +402,10 @@ def monitor_mode(config, args):
                 )
                 # TODO get the updated stream title from the channel page if
                 # the stream was recorded correctly?
-        if livestream.error:
+        if live_broadcast.error:
             notif_h.send_email(
-                subject=f"Error downloading stream {livestream.video_id}",
-                message_text=f"Error was: {livestream.error}\n"
+                subject=f"Error downloading stream {live_broadcast.video_id}",
+                message_text=f"Error was: {live_broadcast.error}\n"
                               "Resuming monitoring..."
             )
             logger.critical("Error during stream download! Resuming monitoring...")
@@ -353,28 +420,51 @@ def download_mode(config, args):
         config.get("download", "cookie", vars=args, fallback=None),
         notifier=notif_h
     )
+
     try:
-        dl = YoutubeLiveStream(
+        live_broadcast = YoutubeLiveBroadcast(
             url=args.get("URL"),
             output_dir=args["output_dir"],
             session=session,
             video_id=args["video_id"],
-            max_video_quality=config.get(
-                "download", "max_video_resolution", vars=args, fallback=None
-            ),
             log_level=config.get("download", "log_level", vars=args)
         )
     except ValueError as e:
         logger.critical(e)
         return 1
 
-    dl.download(config.getfloat("download", "scan_delay", vars=args))
+    live_broadcast.print_available_streams(logger=logger)
 
-    if dl.done and not config.getboolean("download", "no_merge", vars=args):
+    # FIXME avoid creating directories in this case
+    if config.getboolean("download", "list_formats", vars=args, fallback=False):
+        return 0
+
+    live_broadcast.filter_streams(
+        vcodec=config.get(
+            "download", "video_codec", vars=args, fallback=DEFAULT_VIDEO_CODEC
+        ),
+        acodec=config.get(
+            "download", "audio_codec", vars=args, fallback=DEFAULT_AUDIO_CODEC
+        ),
+        itags=config.get(
+            "download", "itags", vars=args, fallback=None
+        ),
+        maxq=config.get(
+            "download", "max_video_resolution", vars=args, fallback=None
+        )
+    )
+    logger.info(f"Selected streams: {live_broadcast.selected_streams}")
+    return 0
+
+    live_broadcast.download(
+        wait_delay=config.getfloat("download", "scan_delay", vars=args)
+    )
+
+    if live_broadcast.done and not config.getboolean("download", "no_merge", vars=args):
         logger.info("Merging segments...")
         merge(
-            info=dl.video_info,
-            data_dir=dl.output_dir,
+            info=live_broadcast.video_info,
+            data_dir=live_broadcast.output_dir,
             keep_concat=config.getboolean("download", "keep_concat", vars=args),
             delete_source=config.getboolean("download", "delete_source", vars=args)
         )
@@ -450,6 +540,7 @@ def init_config():
         "no_merge": "False",
 
         "email_notifications": "False",
+        "list_formats": "False",
         "smtp_server": "",
         "smtp_port": "",
         "to_email": "",
@@ -463,8 +554,12 @@ def init_config():
     # Set defaults for each section
     config.add_section("monitor")
     config.set("monitor", "scan_delay", "15.0")  # minutes
+    config.set("monitor", "video_codec", DEFAULT_VIDEO_CODEC)
+    config.set("monitor", "audio_codec", DEFAULT_AUDIO_CODEC)
     config.add_section("download")
     config.set("download", "scan_delay", "2.0")  # minutes
+    config.set("download", "video_codec", DEFAULT_VIDEO_CODEC)
+    config.set("download", "audio_codec", DEFAULT_AUDIO_CODEC)
     config.add_section("merge")
     config.add_section("test-notification")
     return config
@@ -552,7 +647,7 @@ def main():
     elif sub_cmd == "merge":
         logfile_path = Path(args["PATH"]) / "merge.log"
         setup_logger(
-            output_filepath= logfile_path,
+            output_filepath=logfile_path,
             loglevel=config.get(sub_cmd, "log_level", vars=args)
         )
     elif sub_cmd == "test-notification":

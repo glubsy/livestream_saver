@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from os import sep, path, makedirs, listdir
+from os import path, makedirs, listdir
 from sys import stderr
 from platform import system
 import logging
@@ -8,8 +8,9 @@ from time import time, sleep
 from json import dumps, dump, loads
 from contextlib import closing
 from enum import Flag, auto
-from typing import Optional, Dict, Tuple, Union
+from typing import Optional, Dict, Tuple, Union, List, Set
 from pathlib import Path
+from queue import LifoQueue
 import re
 from urllib.request import urlopen
 import urllib.error
@@ -48,7 +49,7 @@ class PytubeYoutube(YouTube):
     due to lacking features in pytube (most notably live stream support)."""
     def __init__(self, *args, **kwargs):
         # Keep a handle to update its status
-        self.parent: YoutubeLiveStream = kwargs["parent"]
+        self.parent: YoutubeLiveBroadcast = kwargs["parent"]
         super().__init__(*args)
         # NOTE if "www" is omitted, it might force a redirect on YT's side
         # (with &ucbcb=1) and force us to update cookies again. YT is very picky
@@ -148,7 +149,7 @@ class PytubeYoutube(YouTube):
     #     return pytube.StreamQuery(self.fmt_streams)
 
 
-class YoutubeLiveStream():
+class YoutubeLiveBroadcast():
     def __init__(
         self,
         url: str,
@@ -160,6 +161,7 @@ class YoutubeLiveStream():
 
         self.session = session
         self.url = url
+        self.wanted_itags: Optional[Tuple] = None
         self.max_video_quality: Optional[str] = max_video_quality
         self.video_id = video_id if video_id is not None \
                                  else extract.get_video_id(url)
@@ -168,14 +170,15 @@ class YoutubeLiveStream():
 
         self.ptyt = PytubeYoutube(url, parent=self)
 
+        self.selected_streams: set[pytube.Stream] = set()
+        self.video_stream = None
         self.video_itag = None
+        self.audio_stream = None
         self.audio_itag = None
 
         self._scheduled_timestamp = None
         self._start_time: Optional[str] = None
 
-        self.video_base_url = None
-        self.audio_base_url = None
         self.seg = 0
         self._status = Status.OFFLINE
         self.done = False
@@ -193,44 +196,251 @@ class YoutubeLiveStream():
         self.video_outpath = self.output_dir / 'vid'
         self.audio_outpath = self.output_dir / 'aud'
 
-    def get_first_segment(self, paths):
+    @property
+    def streams(self) -> pytube.StreamQuery:
+        return self.ptyt.streams
+
+    def print_available_streams(self, logger: logging.Logger = None) -> None:
+        if logger is None:
+            logger = self.logger
+        for s in self.streams:
+            logger.info(
+                "Available {}".format(s.__repr__().replace(' ', '\t'))
+            )
+
+    def filter_streams(
+        self,
+        vcodec: str,
+        acodec: str,
+        itags: Optional[str] = None,
+        maxq: Optional[str] = None,
+    ) -> None:
+        """Sets selected_streams property to a set of streams selected from
+        user supplied parameters (itags, or max quality threshold)."""
+        self.logger.debug(f"Filtering streams: itag {itags}, maxq {maxq}")
+
+        submitted_itags = util.split_by_plus(itags)
+
+        selected_streams = set()
+        # If an itag is supposed to provide a video track, we assume
+        # the user wants a video track. Same goes for audio.
+        wants_video = wants_audio = True
+        invalid_itags = None
+
+        if submitted_itags is not None:
+            wants_video, wants_audio, invalid_itags = \
+                util.check_available_tracks_from_itags(submitted_itags)
+            if invalid_itags:
+                # However, if we discarded an itag, we cannot be sure of what
+                # the user really wanted. We assume they wanted both.
+                self.logger.warning(f"Invalid itags {invalid_itags} supplied.")
+                wants_video = wants_audio = True
+
+            submitted_itags = tuple(
+                itag for itag in submitted_itags if itag not in invalid_itags
+            )
+
+        found_by_itags = set()
+        itags_not_found = set()
+        if submitted_itags:
+            for itag in submitted_itags:
+                # if available_stream := util.stream_by_itag(itag, self.streams):
+                if available_stream := self.streams.get_by_itag(itag):
+                    found_by_itags.add(available_stream)
+                else:
+                    itags_not_found.add(itag)
+                    self.logger.warning(
+                        f"itag {itag} could not be found among available streams.")
+
+            # This is exactly what the user wanted
+            # FIXME fail if we have specified 2 progressive streams?
+            if found_by_itags and len(found_by_itags) == len(submitted_itags) \
+            and not invalid_itags:
+                self.selected_streams = found_by_itags
+                return
+            elif found_by_itags:
+                selected_streams = found_by_itags
+
+            if len(found_by_itags) == 0:
+                self.logger.warning(
+                    "Could not find any of the specified itags "
+                    f"\"{submitted_itags}\" among the available streams."
+                )
+
+        missing_audio = True
+        missing_video = True
+
+        for stream in selected_streams:
+            self.selected_streams.add(stream)
+            # At least one stream should be enough since it has both video/audio
+            if stream.is_progressive:
+                self.selected_streams = selected_streams
+                return
+            if stream.includes_audio_track:
+                missing_audio = False
+            if stream.includes_video_track:
+                missing_video = False
+
+        if missing_video and wants_video:
+            video_stream = self._filter_streams(
+                tracktype="video", codec=vcodec, maxq=maxq
+            )
+            self.selected_streams.add(video_stream)
+
+        if missing_audio and wants_audio:
+            for stream in self.selected_streams:
+                if stream.is_progressive:
+                    # We already have an audio track
+                    return
+
+            # No quality limit for now on audio
+            audio_stream = self._filter_streams(
+                tracktype="audio", codec=acodec, maxq=None
+            )
+            self.selected_streams.add(audio_stream)
+
+        if not self.selected_streams:
+            raise Exception(f"No stream assigned to {self.video_id} object!")
+
+    def _filter_streams(
+        self,
+        tracktype: str,
+        codec: str,
+        maxq: Optional[str] = None
+    ) -> pytube.Stream:
         """
-        Create each path in paths. If one already existed, return the last
-        segment already downloaded, otherwise return 1.
+        tracktype == video or audio
+        Coalesce filters depending on user-specified criteria.
         """
-        # If one of the directories exists, assume we are resuming a previously
-        # failed download attempt.
-        dir_existed = False
-        for path in paths:
-            try:
-                makedirs(path, 0o766)
-            except FileExistsError:
-                dir_existed = True
+        if tracktype == "video":
+            custom_filters = self.generate_custom_filter(maxq)
+            criteria = "resolution"
+        else:
+            custom_filters = None
+            criteria = "abr"
 
-        # The sequence number to start downloading from (acually starts at 0).
-        seg = 0
+        q = LifoQueue(maxsize=5)
+        self.logger.debug(f"Filtering {tracktype} streams by type: \"{codec}\"")
+        streams = self.streams.filter(
+            subtype=codec,
+            type=tracktype
+        )
 
-        if dir_existed:
-            # Get the latest downloaded segment number,
-            # unless one directory holds an earlier segment than the other.
-            # video_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[0])])
-            # audio_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[1])])
-            # seg = min(video_last_segment, audio_last_segment)
-            seg = min([
-                    max([int(f[:f.index('.')].split('_')[0])
-                    for f in listdir(p)], default=1)
-                    for p in paths
-                ])
+        if len(streams) == 0:
+            self.logger.debug(
+                f"No {tracktype} streams for type: \"{codec}\". "
+                "Falling back to removing selection criterium."
+            )
+            streams = self.streams.filter(type=tracktype)
 
-            # Step back one file just in case the latest segment got only partially
-            # downloaded (we want to overwrite it to avoid a corrupted segment)
-            if seg > 0:
-                self.logger.warning(f"An output directory already existed. \
-We assume a failed download attempt. Last segment available was {seg}.")
-                seg -= 1
-        return seg
+        self.logger.debug(f"Pushing onto stack: {streams}")
+        q.put(streams)
 
+        # This one will usually be empty for livestreams anyway
+        # NOTE the if statement is not really necessary, we could push
+        # an empty query, it would not matter much in the end
+        if progressive_streams := streams.filter(progressive=True):
+            self.logger.debug(
+                f"Pushing progressive {tracktype} streams to stack: {progressive_streams}"
+            )
+            q.put(progressive_streams)
 
+        # Prefer adaptive to progressive, so we do this last in order to
+        # put on top of the stack and test it first
+        if adaptive_streams := streams.filter(adaptive=True):
+            self.logger.debug(
+                f"Pushing adaptive {tracktype} streams to stack: {adaptive_streams}"
+            )
+            q.put(adaptive_streams)
+
+        selected_stream = None
+        while not selected_stream:
+            query = q.get()
+            # Filter anything above our maximum desired resolution
+            query = query.filter(custom_filter_functions=custom_filters) \
+                            .order_by(criteria).desc()
+            selected_stream = query.first()
+            if q.empty():
+                break
+
+        if not selected_stream:
+            self.logger.critical(
+                f"Could not get a specified {tracktype} stream! "
+            )
+            selected_stream = self.streams.filter(type=tracktype) \
+                        .order_by(criteria).desc().first()
+            self.logger.critical(
+                f"Falling back to best quality available: {selected_stream}"
+            )
+        else:
+            self.logger.info(f"Selected {tracktype} stream: {selected_stream}")
+
+        return selected_stream
+
+    def generate_custom_filter(self, maxq: Optional[str]) -> Optional[List]:
+        """Generate a list of (currently one) callback functions to use in
+        pytube.StreamQuery to filter streams up to a specified maximum
+        resolution, or average bitrate (although we don't use audio bitrate)."""
+        if maxq is None:
+            return None
+
+        def as_int_re(res_or_abr: str) -> Optional[int]:
+            if res_or_abr is None:
+                return None
+            as_int = None
+            # looks for "1080p" or "48kbps", either a resolution or abr
+            if match := re.search(r"(\d{3,4})(p)?|(\d{2,4})(kpbs)?", res_or_abr):
+                as_int = int(match.group(1))
+            return as_int
+
+        i_maxq = None
+        if maxq is not None:
+            i_maxq = as_int_re(maxq)
+            # if match := re.search(r"(\d{3,4})(p)?|(\d{2,4}(kpbs)?", maxq):
+            #     maxq = int(match.group(1))
+            if i_maxq is None:
+                self.logger.warning(
+                    f"Max resolution setting \"{maxq}\" is incorrect. "
+                    "Defaulting to best video quality available."
+                )
+        elif isinstance(maxq, int):
+            i_maxq = maxq
+
+        custom_filters = None
+        if i_maxq is not None:  # int
+            def resolution_filter(s):
+                res_int = as_int_re(s.resolution)
+                if res_int is None:
+                    return False
+                return res_int <= i_maxq
+
+            def abitrate_filter(s):
+                res_int = as_int_re(s.abr)
+                if res_int is None:
+                    return False
+                return res_int <= i_maxq
+
+            # FIXME currently we don't use audio track filtering and we take
+            # the highest abr available.
+            if "kpbs" in maxq:
+                custom_filters = [abitrate_filter]
+            else:
+                custom_filters = [resolution_filter]
+        return custom_filters
+
+    @property
+    def title(self):
+        return self.ptyt.title
+
+    @property
+    def video_streams(self):
+        return (s for s in self.streams if s.includes_video_track())
+
+    @property
+    def audio_streams(self):
+        return (s for s in self.streams if s.includes_audio_track())
+
+    # was is_live()
     def status(self, update=False) -> Status:
         """Check if the stream is still reported as being 'live' and update
         the status property accordingly."""
@@ -342,11 +552,11 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
     def update_metadata(self) -> None:
         """Fetch various metadata and write them to disk."""
-        if self.video_itag:
-            if info := pytube.itags.ITAGS.get(self.video_itag):
+        if self.video_stream:
+            if info := pytube.itags.ITAGS.get(self.video_stream):
                 self.video_resolution = info[0]
-        if self.audio_itag:
-            if info := pytube.itags.ITAGS.get(self.audio_itag):
+        if self.audio_stream:
+            if info := pytube.itags.ITAGS.get(self.audio_stream):
                 self.audio_bitrate = info[0]
 
         self.download_thumbnail()
@@ -371,8 +581,8 @@ We assume a failed download attempt. Last segment available was {seg}.")
             "publish_date": str(self.ptyt.publish_date),
             "start_time": self.start_time,
             "download_date": date.fromtimestamp(time()).__str__(),
-            "video_itag": self.video_itag,
-            "audio_itag": self.audio_itag,
+            "video_streams": [],
+            "audio_streams": [],
             "description": self.ptyt.description,
         }
         if self.scheduled_timestamp is not None:
@@ -380,12 +590,16 @@ We assume a failed download attempt. Last segment available was {seg}.")
                 self.scheduled_timestamp
             ).__str__()
 
-        if self.video_itag:
-            info["video_itag"] = self.video_itag.itag
-            info["video_resolution"] = self.video_itag.resolution
-        if self.audio_itag:
-            info["audio_itag"] = self.audio_itag.itag
-            info["audio_bitrate"] = self.audio_itag.abr
+        for stream in self.video_streams:
+            s_info = {}
+            s_info["itag"] = stream.itag
+            s_info["resolution"] = stream.resolution
+            info["video_streams"].append(s_info)
+        for stream in self.audio_streams:
+            s_info = {}
+            s_info["itag"] = stream.itag
+            s_info["audio_bitrate"] = stream.abr
+            info["audio_streams"].append(s_info)
         return info
 
     def update_status(self):
@@ -452,9 +666,11 @@ We assume a failed download attempt. Last segment available was {seg}.")
                                          .get('subreason', {})\
                                          .get('simpleText', \
                                               'No subreason found in JSON.')
-            self.logger.warning(f"Livestream {self.video_id} \
-playability status is: {status} \
-{playabilityStatus.get('reason', 'No reason found')}. Sub-reason: {subreason}")
+            self.logger.warning(
+                f"Livestream {self.video_id} playability status is: {status}"
+                f"{playabilityStatus.get('reason', 'No reason found')}. "
+                f"Sub-reason: {subreason}"
+            )
             self._status &= ~Status.AVAILABLE
             # return
         else: # status == 'OK'
@@ -468,43 +684,68 @@ playability status is: {status} \
     # TODO get itag by quality first, and then update the itag download url
     # if needed by selecting by itag (the itag we have chosen by best quality)
     def update_download_urls(self):
-        video_quality, audio_quality = self.get_best_streams(
-            maxq=self.max_video_quality
-        )
+        video_stream = self.get_best_stream(tracktype="video")
 
-        self.logger.debug(
-            f"Selected video itag {video_quality} / "
-            f"Selected audio itag:{audio_quality}"
-        )
+        try:
+            audio_stream = self.get_best_stream(tracktype="audio")
+        except Exception as e:
+            # FIXME need a fallback in case we didn't have an audio stream
+            # but that probably would rarely happen (if ever!).
+            # In this case, we'll fall back to progressive streams, at the
+            # expense of poorer video resolution.
+            video_stream = None
+            audio_stream = self.streams.filter(
+                progressive=True,
+                # file_extension="mp4"
+            ).order_by('abr').desc().first()
+            self.logger.critical(
+                "No DASH audio stream found! Falling back to progressive stream..."
+            )
 
-        if ((self.video_itag is not None
-        and self.video_itag != video_quality)
-        or
-        (self.audio_itag is not None
-        and self.audio_itag != audio_quality)):
+        # TODO If a progressive track has a better audio quality track:
+        # use progressive stream's audio track only?
+        # This probably won't work with the DASH video stream, so we'll have
+        # to download the progressive (video+audio) track only.
+
+        self.logger.info(f"Selected Video {video_stream}")
+        self.logger.info(f"Selected Audio {audio_stream}")
+
+        if (
+            (self.video_stream is not None and self.video_stream != video_stream)
+            or
+            (self.audio_stream is not None and self.audio_stream != audio_stream)
+        ):
             # Probably should fail if we suddenly get a different format than the
             # one we had before to avoid problems during merging.
             self.logger.critical(
                 "Got a different format after refresh of download URL!\n"
-                f"Previous video itag: {self.video_itag}. New: {video_quality}.\n"
-                f"Previous audio itag: {self.audio_itag}. New: {audio_quality}"
+                f"Previous video: {self.video_stream}. New: {video_stream}.\n"
+                f"Previous audio: {self.audio_stream}. New: {audio_stream}"
             )
-            raise Exception("Format mismatch after update of base URL.")
+            raise Exception("Format mismatch after update of download URL.")
 
-        self.video_itag = video_quality
-        self.audio_itag = audio_quality
+        self.video_stream = video_stream
+        self.audio_stream = audio_stream
 
-        # self.video_base_url = ls_extract.get_base_url_from_itag(self.json, video_quality)
-        # self.audio_base_url = ls_extract.get_base_url_from_itag(self.json, audio_quality)
-        self.video_base_url = self.video_itag.url
-        self.audio_base_url = self.audio_itag.url
+        self.logger.debug(
+            f"Initial video base url: {getattr(self.video_stream, 'url', None)}"
+        )
+        self.logger.debug(
+            f"Initial audio base url: {getattr(self.audio_stream, 'url', None)}"
+        )
 
-        self.logger.debug(f"Video base url: {self.video_base_url}")
-        self.logger.debug(f"Audio base url: {self.audio_base_url}")
-
-    def download(self, wait_delay=2.0):
-        self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
+    def download(self, wait_delay: float = 2.0):
+        self.seg = get_first_segment((self.video_outpath, self.audio_outpath))
+        if self.seg > 0:
+            self.logger.warning(
+                "An output directory already existed. We assume a previously "
+                "failed download attempt."
+            )
         self.logger.info(f'Will start downloading from segment number {self.seg}.')
+
+        # TODO get the current segment from the url, then start downloading
+        # from that segment on (like ytdl), but also download from the start
+        # in parallel until that segment we got from the server
 
         attempt = 0
         while not self.done and not self.error:
@@ -542,7 +783,7 @@ playability status is: {status} \
                         IncompleteRead,
                         ValueError) as e:
                     self.logger.info(e)
-                    # force update
+                    # Force a status update
                     status = self.status(update=True)
                     if Status.LIVE | Status.VIEWED_LIVE in status:
 
@@ -580,22 +821,30 @@ playability status is: {status} \
             )
 
     def do_download(self):
-        if not self.video_base_url or not self.audio_base_url:
-            raise Exception("Missing video or audio base url!")
+        if not self.video_stream or not self.video_stream.url:
+            raise Exception(
+                f"Missing video stream: {self.video_stream}, "
+                f"url {getattr(self.video_stream, 'url', 'Missing URL')}"
+            )
+        if not self.audio_stream or not self.audio_stream.url:
+            raise Exception(
+                f"Missing audio stream: {self.audio_stream}, "
+                f"url {getattr(self.audio_stream, 'url', 'Missing URL')}"
+            )
 
         wait_sec = 60
         attempt = 0
         while True:
             try:
-                video_segment_url = f'{self.video_base_url}&sq={self.seg}'
-                audio_segment_url = f'{self.audio_base_url}&sq={self.seg}'
+                video_segment_url = f'{self.video_stream.url}&sq={self.seg}'
+                audio_segment_url = f'{self.audio_stream.url}&sq={self.seg}'
                 self.print_progress(self.seg)
 
                 # To have zero-padded filenames (not compatible with
                 # merge.py from https://github.com/mrwnwttk/youtube_stream_capture
                 # as it doesn't expect any zero padding )
-                video_segment_filename = f'{self.video_outpath}{sep}{self.seg:0{10}}_video.ts'
-                audio_segment_filename = f'{self.audio_outpath}{sep}{self.seg:0{10}}_audio.ts'
+                video_segment_filename = self.video_outpath / f'{self.seg:0{10}}_video.ts'
+                audio_segment_filename = self.audio_outpath / f'{self.seg:0{10}}_audio.ts'
 
                 # urllib.request.urlretrieve(video_segment_url, video_segment_filename)
                 # # Assume stream has ended if last segment is empty
@@ -608,21 +857,38 @@ playability status is: {status} \
                     headers = in_stream.headers
                     status = in_stream.status
                     if self.logger.isEnabledFor(logging.DEBUG):
-                        self.logger.debug(f"Seg {self.seg} URL: {video_segment_url}")
+                        self.logger.debug(f"Seg {self.seg} (video) URL: {video_segment_url}")
                         self.logger.debug(f"Seg status: {status}")
                         self.logger.debug(f"Seg headers:\n{headers}")
 
                     if not self.write_to_file(in_stream, video_segment_filename):
                         if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
                             raise exceptions.EmptySegmentException(\
-                                f"Segment {self.seg} is empty, stream might have ended...")
+                                f"Segment {self.seg} (video) is empty, stream might have ended...")
                         self.logger.warning(f"Waiting for {wait_sec} seconds before retrying...")
                         sleep(wait_sec)
+                        # FIXME perhaps update the base urls here to avoid
+                        # hitting the same (unresponsive?) CDN server again?
                         continue
 
                 # urllib.request.urlretrieve(audio_segment_url, audio_segment_filename)
                 with closing(urlopen(audio_segment_url)) as in_stream:
-                    self.write_to_file(in_stream, audio_segment_filename)
+                    headers = in_stream.headers
+                    status = in_stream.status
+                    if self.logger.isEnabledFor(logging.DEBUG):
+                        self.logger.debug(f"Seg {self.seg} (audio) URL: {audio_segment_url}")
+                        self.logger.debug(f"Seg status: {status}")
+                        self.logger.debug(f"Seg headers:\n{headers}")
+
+                    if not self.write_to_file(in_stream, audio_segment_filename):
+                        if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
+                            raise exceptions.EmptySegmentException(\
+                                f"Segment {self.seg} (audio) is empty, stream might have ended...")
+                        self.logger.warning(f"Waiting for {wait_sec} seconds before retrying...")
+                        sleep(wait_sec)
+                        # FIXME perhaps update the base urls here to avoid
+                        # hitting the same (unresponsive?) CDN server again?
+                        continue
 
                 attempt = 0
                 self.seg += 1
@@ -664,93 +930,7 @@ playability status is: {status} \
         print(clear_line + fullmsg, end='')
         self.logger.info(fullmsg)
 
-    def print_available_streams(self, stream_list):
-        if not self.logger.isEnabledFor(logging.INFO):
-            return
-        for s in stream_list:
-            self.logger.info(
-                "Available {}".format(s.__repr__().replace(' ', '\t'))
-            )
-
-    def get_best_streams(
-        self,
-        maxq: Union[str, None] = None,
-        codec="mp4",
-        fps="60") -> Tuple:
-        """Return a tuple of pytube.Stream objects, first one for video
-        second one for audio.
-        If only progressive streams are available, the second item in tuple
-        will be None.
-        :param str maxq:
-        :param str codec: mp4, webm
-        :param str fps: 30, 60"""
-        # FIXME needs improved selection criteria
-        video_stream = None
-        audio_stream = None
-
-        def re_as_int(res_or_abr: str) -> Optional[int]:
-            if res_or_abr is None:
-                return None
-            as_int = None
-            # looks for "1080p" or "48kbps", either a resolution or abr
-            if match := re.search(r"(\d{3,4})(p)?|(\d{2,4})(kpbs)?", res_or_abr):
-                as_int = int(match.group(1))
-            return as_int
-
-        i_maxq = None
-        if maxq is not None:
-            i_maxq = re_as_int(maxq)
-            # if match := re.search(r"(\d{3,4})(p)?|(\d{2,4}(kpbs)?", maxq):
-            #     maxq = int(match.group(1))
-            if i_maxq is None:
-                self.logger.warning(
-                    f"Max quality setting \"{maxq}\" is incorrect. "
-                    "Defaulting to best video quality available."
-                )
-        elif isinstance(maxq, int):
-            i_maxq = maxq
-
-        custom_filters = None
-        if i_maxq is not None:  # int
-            def filter_maxq(s):
-                res_int = re_as_int(s.resolution)
-                if res_int is None:
-                    return False
-                return res_int <= i_maxq
-            custom_filters = [filter_maxq]
-
-        avail_streams = self.ptyt.streams
-        self.print_available_streams(avail_streams)
-        video_streams = avail_streams.filter(
-            file_extension=codec,
-            custom_filter_functions=custom_filters
-        ).order_by('resolution').desc()
-
-        video_stream = video_streams.first()
-        self.logger.info(f"Selected Video {video_stream}")
-
-        audio_streams = avail_streams.filter(
-            only_audio=True
-        ).order_by('abr').desc()
-
-        audio_stream = audio_streams.first()
-        self.logger.info(f"Selected Audio {audio_stream}")
-
-        # FIXME need a fallback in case we didn't have an audio stream
-        # TODO need a strategy if progressive has better audio quality:
-        # use progressive stream's audio track only? Would that work with the
-        # DASH stream video?
-        if len(audio_streams) == 0:
-            self.ptyt.streams.filter(
-                progressive=False,
-                file_extension=codec
-            ).order_by('abr') \
-             .desc() \
-             .first()
-
-        return (video_stream, audio_stream)
-
-    def write_to_file(self, fsrc, fdst, length: int = 0) -> bool:
+    def write_to_file(self, fsrc, fdst: Path, length: int = 0) -> bool:
         """Copy data from file-like object fsrc to file-like object fdst.
         If no bytes are read from fsrc, do not create fdst and return False.
         Return True when file has been created and data has been written."""
@@ -844,3 +1024,40 @@ def setup_logger(
     conhandler.addFilter(confilter)
     logger.addHandler(conhandler)
     return logger
+
+
+def get_first_segment(paths: Tuple) -> int:
+    """
+    Create each path in paths. If one already existed, return the last
+    segment already downloaded, otherwise return 1.
+    :param paths: tuple of pathlib.Path
+    """
+    # If one of the directories exists, assume we are resuming a previously
+    # failed download attempt.
+    dir_existed = False
+    for path in paths:
+        try:
+            makedirs(path, 0o766)
+        except FileExistsError:
+            dir_existed = True
+
+    # The sequence number to start downloading from (acually starts at 0).
+    seg = 0
+
+    if dir_existed:
+        # Get the latest downloaded segment number,
+        # unless one directory holds an earlier segment than the other.
+        # video_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[0])])
+        # audio_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[1])])
+        # seg = min(video_last_segment, audio_last_segment)
+        seg = min([
+                max([int(f[:f.index('.')].split('_')[0])
+                for f in listdir(p)], default=1)
+                for p in paths
+            ])
+
+        # Step back one file just in case the latest segment got only partially
+        # downloaded (we want to overwrite it to avoid a corrupted segment)
+        if seg > 0:
+            seg -= 1
+    return seg

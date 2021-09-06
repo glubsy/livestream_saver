@@ -8,10 +8,10 @@ from shutil import copyfileobj
 import logging
 from imghdr import what
 
+from livestream_saver.util import sanitize_filename
+
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
-
-MAX_NAME_LEN = 255
 
 def get_metadata_info(path: Path):
     try:
@@ -53,7 +53,7 @@ def concat(datatype: str, video_id: str, seg_list: list,
         ext = "m4a"
     elif datatype == "h264":
         ext = "mp4"
-    else:
+    else: # we only use this currently
         ext = "m4a" if datatype == "audio" else "mp4"
 
     ffmpeg_output_filename =  output_dir / \
@@ -234,8 +234,12 @@ def merge(info: Dict, data_dir: Path,
     if len(video_files) != len(audio_files):
         logger.warning("Number of audio and video segments do not match.")
 
-    print_missing_segments(video_files, "_video")
-    print_missing_segments(audio_files, "_audio")
+    missing_video = print_missing_segments(video_files, "_video")
+    missing_audio = print_missing_segments(audio_files, "_audio")
+
+    # FIXME "remove" the corresponding segments from each list above
+    # in order to have exactly the same number of segments before
+    # trying to concatenate and merge tracks. (only true for DASH/adaptive)
 
     # Determine codec from first file
     vid_props = probe(video_files[0])
@@ -354,14 +358,14 @@ def merge(info: Dict, data_dir: Path,
     return final_output_file
 
 
-def print_missing_segments(filelist: List, filetype: str) -> bool:
+def print_missing_segments(filelist: List, filetype: str) -> list:
     """
         Check that all segments are available.
         :param list filelist: a list of pathlib.Path
         :param str filetype: "_video" or "_audio"
-        :return bool: whether one or more segment seems to be missing.
+        :return list: List of pathlib.Path of the missing segments.
     """
-    missing = False
+    missing = []
     first_segnum = 0
     last_segnum = 0
 
@@ -382,12 +386,12 @@ def print_missing_segments(filelist: List, filetype: str) -> bool:
         logger.warning(
             f"Number of {filetype[1:]} segments doesn't match last segment "
             f"number: Last {filetype[1:]} segment number: "
-            f"{last_segnum} / {len(filelist)} total files."
+            f"{last_segnum} out of {len(filelist)} total files."
         )
         i = 0
         for f in filelist:
             if f.name != f"{i:0{10}}{filetype}.ts":
-                missing = True
+                missing.append(f)
                 logger.warning(
                     f"Segment {i:0{10}}{filetype}.ts seems to be missing."
                 )
@@ -491,56 +495,3 @@ def collect(data_path: Path) -> List[Path]:
     files = [p for p in data_path.glob('*.ts')]
     files.sort()
     return files
-
-
-def sanitize_filename(filename: str) -> str:
-    """Remove characters in name that are illegal in some file systems, and
-    make sure it is not too long, including the extension."""
-    extension = ""
-    ext_idx = filename.rfind(".")
-    if ext_idx > -1:
-        extension = filename[ext_idx:]
-        if not extension.isascii():
-            # There is a risk that we failed to detect an actual extension.
-            # Only preserve extension if it is valid ASCII, otherwise ignore it.
-            extension = ""
-
-    if extension:
-        filename = filename[:-len(extension)]
-
-    filename = "".join(
-        c for c in filename if 31 < ord(c) and c not in r'<>:"/\|?*'
-    )
-    logger.debug(f"filename {filename}, extension {extension}")
-
-    if not filename.isascii():
-        name_bytes = filename.encode('utf-8')
-        length_bytes = len(name_bytes)
-        logger.debug(
-            f"Length of problematic filename is {length_bytes} bytes "
-            f"{'<' if length_bytes < MAX_NAME_LEN else '>='} {MAX_NAME_LEN}")
-        if length_bytes > MAX_NAME_LEN:
-            filename = simple_truncate(filename, MAX_NAME_LEN - len(extension))
-    else:
-        # Coerce filename length to 255 characters which is a common limit.
-        filename = filename[:MAX_NAME_LEN - len(extension)]
-
-    logger.debug(f"Sanitized name: {filename + extension} "
-              f"({len((filename + extension).encode('utf-8'))} bytes)")
-    assert(
-        len(
-            filename.encode('utf-8') + extension.encode('utf-8')
-        ) <= MAX_NAME_LEN
-    )
-    return filename + extension
-
-
-def simple_truncate(unistr: str, maxsize: int) -> str:
-    # from https://joernhees.de/blog/2010/12/14/how-to-restrict-the-length-of-a-unicode-string/
-    import unicodedata
-    if not unicodedata.is_normalized("NFC", unistr):
-        unistr = unicodedata.normalize("NFC", unistr)
-    return str(
-        unistr.encode("utf-8")[:maxsize],
-        encoding="utf-8", errors='ignore'
-    )

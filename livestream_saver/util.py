@@ -1,19 +1,22 @@
-import logging
 import re
 from os import makedirs
 from platform import system
 from pathlib import Path
-from typing import Optional
-
-
+from typing import Optional, Tuple, List
+import logging
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
+
+from pytube.itags import ITAGS
+from pytube.streams import Stream
+
 
 # Youtube channel IDs are 24 characters
 YT_CH_HASH_RE = re.compile(r".*(channel\/)?([0-9A-Za-z_-]{24}).*|.*youtube\.com\/c\/(.*)")
 # YT_CH_ID_HASH_RE = re.compile(r"^[0-9A-Za-z_-]{24}$")
 # YT_CH_NAME_RE = re.compile(r".*youtube\.com\/c\/(.*)")
 
+MAX_NAME_LEN = 255
 
 def get_channel_id(str_url, service_name):
     """
@@ -46,6 +49,7 @@ def sanitize_channel_url(url: str) -> str:
         url = url[:-1]
     return url
 
+
 def create_output_dir(output_dir: Path, video_id: Optional[str]) -> Path:
     capture_dirpath = output_dir
     if video_id is not None:
@@ -55,6 +59,7 @@ def create_output_dir(output_dir: Path, video_id: Optional[str]) -> Path:
     makedirs(capture_dirpath, 0o766, exist_ok=True)
     return capture_dirpath
 
+
 def get_system_ua():
     SYSTEM = system()
     if SYSTEM == 'Windows':
@@ -63,3 +68,125 @@ def get_system_ua():
         return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:89.0) Gecko/20100101 Firefox/89.0'
     return 'Mozilla/5.0 (X11; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0'
 
+
+def sanitize_filename(filename: str) -> str:
+    """Remove characters in name that are illegal in some file systems, and
+    make sure it is not too long, including the extension."""
+    extension = ""
+    ext_idx = filename.rfind(".")
+    if ext_idx > -1:
+        extension = filename[ext_idx:]
+        if not extension.isascii():
+            # There is a risk that we failed to detect an actual extension.
+            # Only preserve extension if it is valid ASCII, otherwise ignore it.
+            extension = ""
+
+    if extension:
+        filename = filename[:-len(extension)]
+
+    filename = "".join(
+        c for c in filename if 31 < ord(c) and c not in r'<>:"/\|?*'
+    )
+    logger.debug(f"filename {filename}, extension {extension}")
+
+    if not filename.isascii():
+        name_bytes = filename.encode('utf-8')
+        length_bytes = len(name_bytes)
+        logger.debug(
+            f"Length of problematic filename is {length_bytes} bytes "
+            f"{'<' if length_bytes < MAX_NAME_LEN else '>='} {MAX_NAME_LEN}")
+        if length_bytes > MAX_NAME_LEN:
+            filename = simple_truncate(filename, MAX_NAME_LEN - len(extension))
+    else:
+        # Coerce filename length to 255 characters which is a common limit.
+        filename = filename[:MAX_NAME_LEN - len(extension)]
+
+    logger.debug(f"Sanitized name: {filename + extension} "
+              f"({len((filename + extension).encode('utf-8'))} bytes)")
+    assert(
+        len(
+            filename.encode('utf-8') + extension.encode('utf-8')
+        ) <= MAX_NAME_LEN
+    )
+    return filename + extension
+
+
+def simple_truncate(unistr: str, maxsize: int) -> str:
+    # from https://joernhees.de/blog/2010/12/14/how-to-restrict-the-length-of-a-unicode-string/
+    import unicodedata
+    if not unicodedata.is_normalized("NFC", unistr):
+        unistr = unicodedata.normalize("NFC", unistr)
+    return str(
+        unistr.encode("utf-8")[:maxsize],
+        encoding="utf-8", errors='ignore'
+    )
+
+
+def check_available_tracks_from_itags(itags: Tuple[int, ...]) -> tuple[bool, bool, set]:
+    """
+    Return whether at least one video track and one audio track are provided
+    by all the supplied itags combined. Invalid itags are returned if not found
+    in known itags.
+    """
+    has_video = False
+    has_audio = False
+    invalid = set()
+    for itag in itags:
+        if itag not in ITAGS.keys():
+            invalid.add(itag)
+            continue
+        if ITAGS[itag][0] is not None: # video track
+            has_video = True
+        if ITAGS[itag][1] is not None: # audio track
+            has_audio = True
+    return has_video, has_audio, invalid
+
+
+def split_by_plus(itags: Optional[str]) -> Optional[Tuple[int, ...]]:
+    """Return string of itags separated by +, as a tuple of ints.
+    >>> split_by_plus("134+140")
+    (134, 140)
+    >>> split_by_plus("140")
+    (140,)
+    >>> split_by_plus("222+140")  #  222 does not exist but still returned
+    (222, 140)
+    >>> split_by_plus("a+b")
+    None
+    """
+    if not itags:
+        return None
+
+    itags = itags.strip()
+    if len(itags) == 0:
+        return None
+
+    itags = "".join(c for c in itags if c == "+" or 48 <= ord(c) <= 57)
+
+    if len(itags) == 0:
+        return None
+
+    splits = itags.split('+')
+
+    # if len(splits) == 0:
+    #     return None
+
+    # Remove empty entries if any
+    splits = tuple(filter(lambda x: x != '', splits))
+
+    if len(splits) == 0:
+        return None
+
+    # def filter_unknown(number):
+    #     if number not in ITAGS.keys():
+    #         logger.warning(
+    #             f"Invalid itag supplied: {number} not found in known itags."
+    #         )
+    #         return False
+    #     return True
+    # filtered = tuple(filter(filter_unknown, (int(num) for num in splits)))
+
+    # if len(filtered) > 0:
+        # return filtered
+        
+    as_ints = tuple(int(num) for num in splits)
+    return as_ints if as_ints else None
