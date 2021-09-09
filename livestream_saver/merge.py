@@ -15,7 +15,7 @@ MAX_NAME_LEN = 255
 
 def get_metadata_info(path: Path):
     try:
-        with open(path / "metadata.json", 'r') as fp:
+        with open(path / "metadata.json", 'r', encoding='utf-8') as fp:
             return load(fp)
     except Exception as e:
         logger.exception(f"Exception while trying to load metadata.json: {e}")
