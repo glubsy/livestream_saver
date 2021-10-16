@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-from os import path, makedirs, listdir
+from os import path, makedirs, listdir, setsid
+from random import uniform
 from sys import stderr
 from platform import system
 import logging
@@ -8,23 +9,30 @@ from time import time, sleep
 from json import dumps, dump, loads
 from contextlib import closing
 from enum import Flag, auto
-from typing import Optional, Dict, Tuple, Union, List, Set
+import asyncio
+from typing import Optional, Dict, Tuple, Union, List
+from types import MethodType
 from pathlib import Path
 from queue import LifoQueue
 import re
-from urllib.request import urlopen
+# from urllib.request import urlopen
+import urllib.request
 import urllib.error
 from http.client import IncompleteRead
+import subprocess
+# import concurrent.futures
 
 import pytube
 import pytube.cipher
 from pytube import YouTube
 import pytube.exceptions
+# import aiohttp
 
 from livestream_saver import exceptions
 from livestream_saver import extract
 from livestream_saver import util
-from livestream_saver.request import YoutubeUrllibSession
+# import livestream_saver
+from livestream_saver.request import Session
 
 SYSTEM = system()
 ISPOSIX = SYSTEM == 'Linux' or SYSTEM == 'Darwin'
@@ -49,9 +57,10 @@ class PytubeYoutube(YouTube):
     due to lacking features in pytube (most notably live stream support)."""
     def __init__(self, *args, **kwargs):
         # Keep a handle to update its status
-        self.parent: YoutubeLiveBroadcast = kwargs["parent"]
+        self.parent: Optional[YoutubeLiveBroadcast] = kwargs.get("parent")
+        self.session: Optional[Session] = kwargs.get("session")
         super().__init__(*args)
-        # NOTE if "www" is omitted, it might force a redirect on YT's side
+        # if "www" is omitted, it might force a redirect on YT's side
         # (with &ucbcb=1) and force us to update cookies again. YT is very picky
         # about that. Let's just avoid it.
         self.watch_url = f"https://www.youtube.com/watch?v={self.video_id}"
@@ -65,15 +74,45 @@ class PytubeYoutube(YouTube):
         """Override for livestream_saver. We have to make the request ourselves
         in order to pass the cookies."""
         # TODO get the DASH manifest (MPD) instead?
+        if not self.session:
+            return super().watch_html
         if self._watch_html:
             return self._watch_html
         try:
-            self._watch_html = self.parent.session.make_request(url=self.watch_url)
+            self._watch_html = self.session.make_request(url=self.watch_url)
         except Exception as e:
-            self.parent.logger.debug(f"Error getting watch_url: {e}")
             self._watch_html = None
 
         return self._watch_html
+
+    @property
+    def embed_html(self):
+        """Override for livestream_saver. We have to make the request ourselves
+        in order to pass the cookies."""
+        if not self.session:
+            return super().embed_html
+        if self._embed_html:
+            return self._embed_html
+        self._embed_html = self.session.make_request(url=self.embed_url)
+        return self._embed_html
+
+    @property
+    def js(self):
+        """Override for livestream_saver. We have to make the request ourselves
+        in order to pass the cookies."""
+        if not self.session:
+            return super().js
+        if self._js:
+            return self._js
+        if pytube.__js_url__ != self.js_url:
+            self._js = self.session.make_request(url=self.js_url)
+            pytube.__js__ = self._js
+            pytube.__js_url__ = self.js_url
+        else:
+            self._js = pytube.__js__
+
+        return self._js
+
 
     # @property
     # def fmt_streams(self):
@@ -154,12 +193,12 @@ class YoutubeLiveBroadcast():
         self,
         url: str,
         output_dir: Path,
-        session: YoutubeUrllibSession,
+        session: Session,
         video_id: Optional[str] = None,
         max_video_quality: Optional[str] = None,
         log_level = logging.INFO) -> None:
 
-        self.session = session
+        self.session: Session = session
         self.url = url
         self.wanted_itags: Optional[Tuple] = None
         self.max_video_quality: Optional[str] = max_video_quality
@@ -168,7 +207,7 @@ class YoutubeLiveBroadcast():
 
         self._json: Dict = {}
 
-        self.ptyt = PytubeYoutube(url, parent=self)
+        self.ptyt = PytubeYoutube(url, session=session, parent=self)
 
         self.selected_streams: set[pytube.Stream] = set()
         self.video_stream = None
@@ -191,10 +230,12 @@ class YoutubeLiveBroadcast():
                 output_dir=output_dir, video_id=None
             )
 
+        # global logger
         self.logger = setup_logger(self.output_dir, log_level, self.video_id)
 
         self.video_outpath = self.output_dir / 'vid'
         self.audio_outpath = self.output_dir / 'aud'
+        self.spawned_companion: bool = False
 
     @property
     def streams(self) -> pytube.StreamQuery:
@@ -210,11 +251,10 @@ class YoutubeLiveBroadcast():
 
     def filter_streams(
         self,
-        vcodec: str,
-        acodec: str,
+        vcodec: str = "mp4",
+        acodec: str = "mp4",
         itags: Optional[str] = None,
-        maxq: Optional[str] = None,
-    ) -> None:
+        maxq: Optional[str] = None) -> None:
         """Sets selected_streams property to a set of streams selected from
         user supplied parameters (itags, or max quality threshold)."""
         self.logger.debug(f"Filtering streams: itag {itags}, maxq {maxq}")
@@ -301,15 +341,27 @@ class YoutubeLiveBroadcast():
 
         if not self.selected_streams:
             raise Exception(f"No stream assigned to {self.video_id} object!")
+        else:
+            # We emulate an initializator because no idea how to subclass
+            # pytube.Stream unless with a monkeypatch
+            # TODO: see https://stackoverflow.com/questions/100003/what-are-metaclasses-in-python?rq=1
+            for stream in self.selected_streams:
+                stream.missing_segs = []
+                stream.start_seg = 0
+                stream.current_seg = 0
+                # stream.async_download = async_download
+                stream.async_download = MethodType(async_download, stream)
+                stream.fname_suffix = stream.type[1:] if stream.is_adaptive else "a+v"
+                stream.dir_suffix = "f" + str(stream.itag)
 
     def _filter_streams(
         self,
         tracktype: str,
         codec: str,
-        maxq: Optional[str] = None
-    ) -> pytube.Stream:
+        maxq: Optional[str] = None) -> pytube.Stream:
         """
         tracktype == video or audio
+        codec == mp4, mov, webm...
         Coalesce filters depending on user-specified criteria.
         """
         if tracktype == "video":
@@ -408,13 +460,13 @@ class YoutubeLiveBroadcast():
 
         custom_filters = None
         if i_maxq is not None:  # int
-            def resolution_filter(s):
+            def resolution_filter(s: pytube.Stream) -> bool:
                 res_int = as_int_re(s.resolution)
                 if res_int is None:
                     return False
                 return res_int <= i_maxq
 
-            def abitrate_filter(s):
+            def abitrate_filter(s: pytube.Stream) -> bool:
                 res_int = as_int_re(s.abr)
                 if res_int is None:
                     return False
@@ -441,24 +493,15 @@ class YoutubeLiveBroadcast():
         return (s for s in self.streams if s.includes_audio_track())
 
     # was is_live()
-    def status(self, update=False) -> Status:
-        """Check if the stream is still reported as being 'live' and update
-        the status property accordingly."""
-        if update:
-            self.ptyt._watch_html = None
-            self._json = {}
-            # self._player_config_args = None
-
+    def live_status(self, update=False) -> None:
         if not self.json:
-            raise Exception("Missing json data during status check")
-
-        status = self._status
+            return
 
         isLive = self.json.get('videoDetails', {}).get('isLive')
         if isLive is not None and isLive is True:
-            status |= Status.LIVE
+            self._status |= Status.LIVE
         else:
-            status &= ~Status.LIVE
+            self._status &= ~Status.LIVE
 
         # Is this actually being streamed live?
         val = None
@@ -470,12 +513,99 @@ class YoutubeLiveBroadcast():
                     val = key.get('value')
                     break
         if val and val == "True":
-            status |= Status.VIEWED_LIVE
+            self._status |= Status.VIEWED_LIVE
         else:
-            status &= ~Status.VIEWED_LIVE
-        self._status = status
-        self.logger.debug(f"is_live() status is now {status}")
-        return status
+            self._status &= ~Status.VIEWED_LIVE
+
+        self.logger.debug(f"is_live() status is now {self._status}")
+
+
+    def status(self, update=False) -> Status:
+        """Check if the stream is still reported as being 'live' and update
+        the status property accordingly."""
+        if update:
+            self.ptyt._watch_html = None
+            self._json = {}
+
+        if not self.json:
+            raise Exception("Missing json data during status check")
+
+        status = self._status
+
+        self.logger.info("Stream seems to be viewed live. Good.") \
+        if self._status & Status.VIEWED_LIVE \
+        else self.logger.warning(
+            "Stream is not being viewed live. This might not work!"
+        )
+
+        # Check if video is indeed available through its reported status.
+        playabilityStatus = self.json.get('playabilityStatus', {})
+        status = playabilityStatus.get('status')
+
+        if status == 'LIVE_STREAM_OFFLINE':
+            self._status |= Status.OFFLINE
+
+            scheduled_time = self.scheduled_timestamp
+            if scheduled_time is not None:
+                self._status |= Status.WAITING
+
+                # self._scheduled_timestamp = scheduled_time
+                reason = playabilityStatus.get('reason', 'No reason found.')
+
+                self.logger.info(f"Scheduled start time: {scheduled_time} \
+({datetime.utcfromtimestamp(scheduled_time)} UTC). We wait...")
+                # FIXME use local time zone for more accurate display of time
+                # for example: https://dateutil.readthedocs.io/
+                self.logger.warning(f"{reason}")
+
+                raise exceptions.WaitingException(
+                    self.video_id, reason, scheduled_time
+                )
+
+            elif (Status.LIVE | Status.VIEWED_LIVE) not in self._status:
+                raise exceptions.WaitingException(
+                    self.video_id,
+                    playabilityStatus.get('reason', 'No reason found.')
+                )
+
+            raise exceptions.OfflineException(
+                self.video_id,
+                playabilityStatus.get('reason', 'No reason found.')
+            )
+
+        elif status == 'LOGIN_REQUIRED':
+            raise exceptions.NoLoginException(
+                self.video_id,
+                playabilityStatus.get('reason', 'No reason found.')
+            )
+
+        elif status == 'UNPLAYABLE':
+            raise exceptions.UnplayableException(
+                self.video_id,
+                playabilityStatus.get('reason', 'No reason found.')
+            )
+
+        elif status != 'OK':
+            subreason = playabilityStatus.get('errorScreen', {})\
+                                         .get('playerErrorMessageRenderer', {})\
+                                         .get('subreason', {})\
+                                         .get('simpleText', \
+                                              'No subreason found in JSON.')
+            self.logger.warning(
+                f"Livestream {self.video_id} playability status is: {status}"
+                f"{playabilityStatus.get('reason', 'No reason found')}. "
+                f"Sub-reason: {subreason}"
+            )
+            self._status &= ~Status.AVAILABLE
+            # return
+        else: # status == 'OK'
+            self._status |= Status.AVAILABLE
+            self._status &= ~Status.OFFLINE
+            self._status &= ~Status.WAITING
+
+        self.logger.info(f"Stream status {self._status}")
+
+        return self._status
 
     @property
     def json(self) -> dict:
@@ -545,10 +675,10 @@ class YoutubeLiveBroadcast():
     def download_thumbnail(self) -> None:
         # TODO write more thumbnail files in case the first one somehow
         # got updated, by renaming, then placing in place.
-        thumbnail_path = self.output_dir / 'thumbnail'
+        thumbnail_path = self.output_dir / ('thumbnail_' + self.video_id)  
         if self.ptyt.thumbnail_url and not path.exists(thumbnail_path):
-            with closing(urlopen(self.ptyt.thumbnail_url)) as in_stream:
-                self.write_to_file(in_stream, thumbnail_path)
+            with closing(urllib.request.urlopen(self.ptyt.thumbnail_url)) as in_stream:
+                write_to_file(self.logger, in_stream, thumbnail_path)
 
     def update_metadata(self) -> None:
         """Fetch various metadata and write them to disk."""
@@ -605,11 +735,11 @@ class YoutubeLiveBroadcast():
     def update_status(self):
         self.logger.debug("update_status()...")
         # force update
-        self.status(update=True)
+        self.status(update=True)  # was is_live()
 
         self.logger.info("Stream seems to be viewed live. Good.") \
-        if self._status & Status.VIEWED_LIVE else \
-        self.logger.warning(
+        if self._status & Status.VIEWED_LIVE \
+        else self.logger.warning(
             "Stream is not being viewed live. This might not work!"
         )
 
@@ -683,29 +813,11 @@ class YoutubeLiveBroadcast():
 
     # TODO get itag by quality first, and then update the itag download url
     # if needed by selecting by itag (the itag we have chosen by best quality)
+    # TODO If a progressive track has a better audio quality track:
+    # use progressive stream's audio track only?
+    # This probably won't work with the DASH video stream, so we'll have
+    # to download the progressive (video+audio) track only.
     def update_download_urls(self):
-        video_stream = self.get_best_stream(tracktype="video")
-
-        try:
-            audio_stream = self.get_best_stream(tracktype="audio")
-        except Exception as e:
-            # FIXME need a fallback in case we didn't have an audio stream
-            # but that probably would rarely happen (if ever!).
-            # In this case, we'll fall back to progressive streams, at the
-            # expense of poorer video resolution.
-            video_stream = None
-            audio_stream = self.streams.filter(
-                progressive=True,
-                # file_extension="mp4"
-            ).order_by('abr').desc().first()
-            self.logger.critical(
-                "No DASH audio stream found! Falling back to progressive stream..."
-            )
-
-        # TODO If a progressive track has a better audio quality track:
-        # use progressive stream's audio track only?
-        # This probably won't work with the DASH video stream, so we'll have
-        # to download the progressive (video+audio) track only.
 
         self.logger.info(f"Selected Video {video_stream}")
         self.logger.info(f"Selected Audio {audio_stream}")
@@ -734,8 +846,191 @@ class YoutubeLiveBroadcast():
             f"Initial audio base url: {getattr(self.audio_stream, 'url', None)}"
         )
 
+    def get_currently_broadcast_segment(self):
+        # TODO parse mpd manifest to get the currently broadcast segment
+        return 10
+
     def download(self, wait_delay: float = 2.0):
-        self.seg = get_first_segment((self.video_outpath, self.audio_outpath))
+        # In case we forgot to fetch them first, get the default
+        if not self.selected_streams:
+            self.logger.warning(
+                "Missing selected streams, getting best available by default.")
+            self.filter_streams()
+
+        current_seg = self.get_currently_broadcast_segment()
+
+        for stream in self.selected_streams:
+            collect_missing_segments(self.output_dir, stream)
+            stream.current_seg = current_seg
+
+        asyncio.run(self.async_download())
+        # loop = asyncio.get_event_loop()
+        # dltask = loop.create_task(self.async_download())
+        # try:
+        #     loop.run_until_complete(dltask)
+        # except KeyboardInterrupt:
+        #     loop.stop()
+        # finally:
+        #     loop.close()
+
+    async def async_download(self):
+        loop = asyncio.get_running_loop()
+        stream_ended_event = asyncio.Event()
+
+        tasks = [
+            loop.create_task(stream.async_download(loop, stream_ended_event)) 
+            for stream in self.selected_streams
+        ]
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception as e:
+            print(e)
+            if tasks:
+                print(f"Cancelling remaining tasks {tasks}")
+                for task in tasks:
+                    task.cancel()
+            else:
+                print("Generic Exception in task.")
+            raise
+
+        # for task in tasks:
+        #     task.cancel()
+        print(f"Results: {results}")
+
+        # loop.run_forever()
+        # try:  
+        #     result = await aw
+        # except KeyboardInterrupt:
+        #     loop.stop()
+        # finally:
+        #     loop.close()
+
+        # loop.run_until_complete(ftasks)
+        # loop.close()
+        # async def gather_with_concurrency(max_conc, *tasks):
+        #     semaphore = asyncio.Semaphore(max_conc)
+
+        #     async def sem_task(task):
+        #         async with semaphore:
+        #             return await task
+        #     return await asyncio.gather(*(sem_task(task) for task in tasks))
+
+        # tasks = []
+        # for stream in self.selected_streams:
+        #     for segment in stream.missing_segs:
+        #         tasks.append(
+        #             asyncio.create_task(
+        #                 stream.download_segment(
+        #                     self=stream, logger=self.logger, segment=segment))
+        #         )
+
+        # q = Queue()
+        # for stream in self.selected_streams:
+        #     # stream.download_segments()
+
+        #     task = asyncio.create_task(
+        #         stream.download_segments(self=stream, logger=self.logger))
+        #     q.put(task)
+
+
+        # return await gather_with_concurrency(3, *tasks)
+        # loop = asyncio.get_event_loop()
+
+        # stream_ended_event = asyncio.Event()
+
+        # fnums = ["①", "②", "③", "④", "⑤", "⑥"]
+        # num_idx = 0
+        # tasks = []
+        # missingqs = []
+
+        # for stream in self.selected_streams:
+            
+        #     missingq = asyncio.Queue()
+        #     for miss in stream.missing_segs:
+        #         missingq.put_nowait(miss)
+        #         # missingqs.append(missingq)
+        #     print(f"Queue for stream {stream.itag} {fnums[num_idx]} : {missingq}")
+
+
+        #     # Missing segments, will keep adding as needed
+        #     task = loop.create_task(
+        #         worker_missing(
+        #             url=stream.url,
+        #             name=fnums[num_idx],
+        #             queue=missingq,
+        #             loop=loop
+        #         )
+        #     )
+        #     # tasks.append(task)
+        #     missingqs.append(task)
+        #     num_idx += 1
+
+        #     # Catching up from the last we've got
+        #     if current_seg >= 20:
+        #         task = loop.create_task(
+        #             worker(
+        #                 url=stream.url,
+        #                 start=stream.start_seg,
+        #                 upto=current_seg,
+        #                 name=fnums[num_idx],
+        #                 queue=missingq,
+        #                 loop=loop
+        #             )
+        #         )
+        #         tasks.append(task)
+        #         num_idx += 1
+
+        #     task = loop.create_task(
+        #         worker(
+        #             url=stream.url,
+        #             start=current_seg,
+        #             upto=-1,
+        #             name=fnums[num_idx],
+        #             queue=missingq,
+        #             loop=loop
+        #         )
+        #     )
+        #     tasks.append(task)
+        #     num_idx += 1
+
+        # Missing segments always done first, because usually closer to beginning
+        # Then from 
+
+        # task1 = loop.create_task(long_task(url="http://127.0.0.1:9999/133/", name="①", loop=loop))
+        # task2 = loop.create_task(long_task(url="http://127.0.0.1:9999/140/", name="②", loop=loop))
+        # task3 = loop.create_task(long_task(url="http://127.0.0.1:9999/133/", name="③", loop=loop))
+        # task4 = loop.create_task(long_task(url="http://127.0.0.1:9999/140/", name="④", loop=loop))
+        # task5 = loop.create_task(long_task(url="http://127.0.0.1:9999/133/", name="⑤", loop=loop))
+        # task6 = loop.create_task(long_task(url="http://127.0.0.1:9999/140/", name="⑥", loop=loop))
+        # task1 = asyncio.create_task(worker(loop, url="http://127.0.0.1:9999/vid/"))
+        # task2 = asyncio.create_task(worker(loop, url="http://127.0.0.1:9999/aud/"))
+        # loop.run_until_complete(task5)
+        # loop.run_until_complete(task6)
+        # tasks = asyncio.gather(task1, task2, task3, task4, task5, task6, loop=loop)
+       
+        # for q in missingqs:
+        #     _ = q.join()
+
+        # ftasks = asyncio.gather(*tasks, loop=loop, return_exceptions=True)
+        # fqs = asyncio.gather(*missingqs, loop=loop, return_exceptions=True)
+        # for task in tasks:
+            # task.cancel()
+
+        # loop.run_forever()
+        # loop.run_until_complete(ftasks)
+
+
+        # TODO If  finished or fatal exception (not live?), end everything? or 
+        # try to still finish (missing segs) download anyway while we know it's over
+
+
+        # loop.run_until_complete(tasks)
+
+
+    # Obsolete
+    def download_old(self, wait_delay: float = 2.0):
+        self.seg = get_latest_segment((self.video_outpath, self.audio_outpath))
+
         if self.seg > 0:
             self.logger.warning(
                 "An output directory already existed. We assume a previously "
@@ -743,14 +1038,17 @@ class YoutubeLiveBroadcast():
             )
         self.logger.info(f'Will start downloading from segment number {self.seg}.')
 
-        # TODO get the current segment from the url, then start downloading
-        # from that segment on (like ytdl), but also download from the start
-        # in parallel until that segment we got from the server
+        # TODO get the current segment from the manifest, then start downloading
+        # from that segment onward (like ytdl), but also download all the segments
+        # from the start in parallel.
 
         attempt = 0
+        need_status_update = True
         while not self.done and not self.error:
             try:
-                self.update_status()
+                # self.update_status()
+                self.status(need_status_update)
+                need_status_update = False
                 self.logger.debug(f"Status is {self._status}.")
 
                 if not self._status == Status.OK:
@@ -760,6 +1058,7 @@ class YoutubeLiveBroadcast():
                     return
 
             except exceptions.WaitingException as e:
+                need_status_update = True
                 self.logger.warning(
                     f"Status is {self._status}. "
                     f"Waiting for {wait_delay} minutes...")
@@ -775,17 +1074,21 @@ class YoutubeLiveBroadcast():
             self.update_download_urls()
             self.update_metadata()
 
+            # self.spawn_companion(self.url)
+
             while True:
                 try:
-                    self.do_download()
+                    self.download_segments()
                 except (exceptions.EmptySegmentException,
                         exceptions.ForbiddenSegmentException,
                         IncompleteRead,
                         ValueError) as e:
                     self.logger.info(e)
                     # Force a status update
-                    status = self.status(update=True)
-                    if Status.LIVE | Status.VIEWED_LIVE in status:
+                    self.ptyt._watch_html = None
+                    self._json = {}
+                    self.live_status()
+                    if Status.LIVE | Status.VIEWED_LIVE in self._status:
 
                         if attempt >= 15:
                             self.logger.critical(
@@ -820,7 +1123,8 @@ class YoutubeLiveBroadcast():
                 f"Some kind of error occured during download? {self.error}"
             )
 
-    def do_download(self):
+    # Obsolete
+    def download_segments(self):
         if not self.video_stream or not self.video_stream.url:
             raise Exception(
                 f"Missing video stream: {self.video_stream}, "
@@ -836,6 +1140,8 @@ class YoutubeLiveBroadcast():
         attempt = 0
         while True:
             try:
+                self.seg += 1
+
                 video_segment_url = f'{self.video_stream.url}&sq={self.seg}'
                 audio_segment_url = f'{self.audio_stream.url}&sq={self.seg}'
                 self.print_progress(self.seg)
@@ -843,8 +1149,10 @@ class YoutubeLiveBroadcast():
                 # To have zero-padded filenames (not compatible with
                 # merge.py from https://github.com/mrwnwttk/youtube_stream_capture
                 # as it doesn't expect any zero padding )
-                video_segment_filename = self.video_outpath / f'{self.seg:0{10}}_video.ts'
-                audio_segment_filename = self.audio_outpath / f'{self.seg:0{10}}_audio.ts'
+                video_segment_filename = \
+                    self.video_outpath / f'{self.seg:0{10}}_video.ts'
+                audio_segment_filename = \
+                    self.audio_outpath / f'{self.seg:0{10}}_audio.ts'
 
                 # urllib.request.urlretrieve(video_segment_url, video_segment_filename)
                 # # Assume stream has ended if last segment is empty
@@ -853,7 +1161,7 @@ class YoutubeLiveBroadcast():
                 #     break
 
                 # TODO pass proper user-agent headers to server (construct Request)
-                with closing(urlopen(video_segment_url)) as in_stream:
+                with closing(urllib.request.urlopen(video_segment_url)) as in_stream:
                     headers = in_stream.headers
                     status = in_stream.status
                     if self.logger.isEnabledFor(logging.DEBUG):
@@ -861,7 +1169,7 @@ class YoutubeLiveBroadcast():
                         self.logger.debug(f"Seg status: {status}")
                         self.logger.debug(f"Seg headers:\n{headers}")
 
-                    if not self.write_to_file(in_stream, video_segment_filename):
+                    if not write_to_file(self.logger, in_stream, video_segment_filename):
                         if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
                             raise exceptions.EmptySegmentException(\
                                 f"Segment {self.seg} (video) is empty, stream might have ended...")
@@ -872,7 +1180,7 @@ class YoutubeLiveBroadcast():
                         continue
 
                 # urllib.request.urlretrieve(audio_segment_url, audio_segment_filename)
-                with closing(urlopen(audio_segment_url)) as in_stream:
+                with closing(urllib.request.urlopen(audio_segment_url)) as in_stream:
                     headers = in_stream.headers
                     status = in_stream.status
                     if self.logger.isEnabledFor(logging.DEBUG):
@@ -880,7 +1188,7 @@ class YoutubeLiveBroadcast():
                         self.logger.debug(f"Seg status: {status}")
                         self.logger.debug(f"Seg headers:\n{headers}")
 
-                    if not self.write_to_file(in_stream, audio_segment_filename):
+                    if not write_to_file(self.logger, in_stream, audio_segment_filename):
                         if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
                             raise exceptions.EmptySegmentException(\
                                 f"Segment {self.seg} (audio) is empty, stream might have ended...")
@@ -930,32 +1238,288 @@ class YoutubeLiveBroadcast():
         print(clear_line + fullmsg, end='')
         self.logger.info(fullmsg)
 
-    def write_to_file(self, fsrc, fdst: Path, length: int = 0) -> bool:
-        """Copy data from file-like object fsrc to file-like object fdst.
-        If no bytes are read from fsrc, do not create fdst and return False.
-        Return True when file has been created and data has been written."""
-        # Localize variable access to minimize overhead.
-        if not length:
-            length = COPY_BUFSIZE
-        fsrc_read = fsrc.read
-
+    def spawn_companion(self, url):
+        # TODO apply substitution for %URL, %outputdir, etc.
+        # TODO provide command in config file
+        if self.spawned_companion:
+            return
+        user_command = [
+            "/home/nupupun/INSTALL/yt-dlp/yt-dlp.sh", 
+            "--embed-thumbnail", 
+            "--fragment-retries", "50", 
+            "-o", '%(upload_date)s %(uploader)s %(title)s_[%(height)s]_%(id)s.%(ext)s',
+            '-ciw', 
+            #'-f', 'bestvideo+bestaudio', 
+            '--add-metadata', 
+            url
+        ]
         try:
-            buf = fsrc_read(length)
+            # with open("testoutput.txt", "wb") as outfile:
+            p = subprocess.Popen(
+                user_command, 
+                preexec_fn=setsid, 
+                stdin=subprocess.DEVNULL, # PIPE
+                stdout=subprocess.DEVNULL, # outfile
+                stderr=subprocess.DEVNULL # PIPE
+            )
+            print(f"Spawned {user_command[0]} pid {p.pid}")
+            self.spawned_companion = True
         except Exception as e:
-            # FIXME handle these errors better, for now we just ignore and move on:
-            # ValueError: invalid literal for int() with base 16: b''
-            # http.client.IncompleteRead: IncompleteRead
-            self.logger.exception(e)
-            buf = None
+            print(e)
+            pass
 
-        if not buf:
-            return False
-        with open(fdst, 'wb') as out_file:
-            fdst_write = out_file.write
-            while buf:
-                fdst_write(buf)
-                buf = fsrc_read(length)
-        return True
+
+
+async def worker_retries(
+    stream: pytube.Stream,
+    name: str,
+    queue,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    while True:
+        seg = await queue.get()
+        print(f"Got from queue {name} : {seg}. {queue}")
+        # DEBUG only
+        # url = seg.base_url
+        # newurl = url + f"{seg.num:0{10}}" + ("_a.ts" if "f140" in url else "_v.ts")
+        try:
+            res = await loop.run_in_executor(None, simulate_req, seg.url, name)
+        except Exception as e:
+            # TODO count errors and attach to Segment
+            # TODO use PriorityQueue to push back segments with higher number of errors to the back of the queue
+            print(f"Exception in retry: {seg}: {e}")
+            pass
+
+        # TODO
+        # with closing(res) as in_stream:
+        #     headers = in_stream.headers
+        #     status = in_stream.status
+        #     if not write_to_file(self.logger, in_stream, audio_segment_filename):
+        #         if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
+        #             raise exceptions.EmptySegmentException(\
+        #                 f"Segment {self.seg} (audio) is empty, stream might have ended...")
+        #         self.logger.warning(f"Waiting for {wait_sec} seconds before retrying...")
+        #         sleep(wait_sec)
+        queue.task_done()
+
+
+async def worker(
+    stream: pytube.Stream,
+    start: int,
+    upto: int,
+    name: str,
+    queue,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    # upto = 10 if "vid" in url else 20
+    # if not loop:
+    #     loop = asyncio.get_event_loop()
+    seg = Segment(start, stream)
+    while True:
+        # newurl = stream.url + f"{seg.num:0{10}}" + ("_a.ts" if "f140" in seg.url else "_v.ts")
+        newurl = seg.url
+        # fut = asyncio.Future()
+        try:
+            fut = await loop.run_in_executor(None, simulate_req, newurl, name)
+        except Exception as e:
+            # fut.set_exception(e)
+            # DEBUG
+            if "404" in str(e):
+                break
+            print(f"{name} Error getting {seg}: {e}. Putting to queue.")
+            await queue.put(seg)
+            # queue.put_nowait(seg)
+        # print(f"Read data from: {newurl}")
+        # print(await asyncio.sleep(uniform(0.5, 5.5), result=f"{datetime.now()} read {seg}"))
+        
+        # Create a new object here, otherwise the change will affect the item placed in the queue!
+        seg += 1
+        if upto > 0 and seg.num >= upto:
+            print(f"{name} Reached upto {upto}.")
+            break
+        # DEBUG simulate end of stream -> 403 error
+        if seg.num > 20:
+            print(f"{name} Reached end of stream...")
+            break
+            
+    # loop.stop()
+    print(f"{name} has finished.")
+    # await queue.join()
+    return
+
+
+def simulate_req(url, name):
+    print(f"{datetime.now()} {url} ↘ {name}")
+    res = urllib.request.urlopen(url).read()
+    # DEBUG simulate slower download speed and thus blocking longer
+    # sleep(1 if "vid" in url else 4)
+    print(f"{datetime.now()} {url} ☻ {name}")
+    return res
+
+
+# Just to test blocking and see if it's still concurrent (worse but works too)
+async def long_task(loop, url, name):
+    f = await loop.run_in_executor(None, coro_block_req, url, name)
+    # print(f"Read data from: {newurl}")
+    # print(await asyncio.sleep(uniform(0.5, 5.5), result=f"{datetime.now()} read {seg}"))
+    return
+
+def coro_block_req(url, name):
+    seg = 0
+    # max = 10 if "vid" in url else 20
+    max = 10
+    while seg <= max:
+        # sleep(uniform(0.5, 3))
+        newurl = url + f"{seg:0{10}}" + ("_a.ts" if "f140" in url else "_v.ts")
+        print(f"{datetime.now()} {newurl} ↘ {name}")
+        res = urllib.request.urlopen(newurl).read()
+        # sleep(uniform(0.5, 3))
+        print(f"{datetime.now()} {newurl} ☻ {name}")
+        seg += 1
+
+
+# pytube.Stream
+async def async_download(self, loop, stream_ended_event):
+    fnums = [f"{self.itag} ①", f"{self.itag} ②", f"{self.itag} ③",]
+    num_idx = 0
+    tasks = []
+
+    missingq = asyncio.Queue()
+
+    for miss in self.missing_segs:
+        # FIXME missing_segs is now left as an unused list of ints
+        missingq.put_nowait(Segment(miss, self))
+    print(f"Queue for stream {fnums[num_idx]} : {missingq}")
+
+
+    # Missing segments, and will keep adding more as needed (due to errors)
+    retry_task = asyncio.create_task(
+        worker_retries(
+            stream=self,
+            name=fnums[num_idx],
+            queue=missingq,
+            loop=loop
+        ),
+        name=f"Retries {self.itag}"
+    )
+    # tasks.append(retry_task)
+    num_idx += 1
+
+    # Catching up from the most recent segment we've got on disk
+    if self.current_seg >= 10:
+        task = asyncio.ensure_future(
+            worker(
+                stream=self,
+                start=self.start_seg,
+                upto=self.current_seg,
+                name=fnums[num_idx],
+                queue=missingq,
+                loop=loop
+            )
+        )
+        tasks.append(task)
+        num_idx += 1
+
+    # Start from the currently broadcast segment
+    task = asyncio.ensure_future(
+        worker(
+            stream=self,
+            start=self.current_seg,
+            upto=-1,
+            name=fnums[num_idx],
+            queue=missingq,
+            loop=loop
+        )
+    )
+    tasks.append(task)
+    num_idx += 1
+
+    # ftasks = asyncio.gather(*tasks, loop=loop, return_exceptions=True)
+    # loop = asyncio.get_event_loop()
+    done, pending = await asyncio.wait(
+        tasks, return_when=asyncio.FIRST_EXCEPTION)
+
+    print(f"Joining retry task {retry_task}... queue {missingq}")
+    await missingq.join()
+    print(f"Joined retry task {retry_task} queue {missingq}")
+    retry_task.cancel()
+    print(f"Canceled retry task done {retry_task}.")
+
+    for pending_task in pending:
+        pending_task.cancel()
+    
+    for d in done:
+        d.cancel()
+
+
+    # try:
+    # loop.run_forever()
+    # except KeyboardInterrupt:
+    #     loop.stop()
+    #     loop.close()
+    # concurrent.futures.as_completed(tasks)
+
+
+class Segment():
+    def __init__(self, num: int, stream: pytube.Stream) -> None:
+        self.num: int = num
+        # Reference stream for any future URL updates
+        self.stream = stream
+        self.retries: int = 0
+        self.error = None
+
+    @property
+    def base_url(self) -> str:
+        return self.stream.url
+
+    # @property
+    def geturl(self) -> str:
+        return "{}&sq={}".format(self.base_url, self.num)
+
+    def __repr__(self) -> str:
+        return str(self.num)
+
+    def __add__(self, o):
+        return Segment(
+            num=self.num + o, 
+            stream=self.stream
+        )
+ 
+    # def __iadd__(self, o):
+    #     if isinstance(o, Segment):
+    #        self.num += o.num
+    #     else:  # assuming it's an int
+    #         self.num += o
+    #     return self
+
+    url = property(geturl)
+
+def write_to_file(logger, fsrc, fdst: Path, length: int = 0) -> bool:
+    """Copy data from file-like object fsrc to file-like object fdst.
+    If no bytes are read from fsrc, do not create fdst and return False.
+    Return True when file has been created and data has been written."""
+    # Localize variable access to minimize overhead.
+    if not length:
+        length = COPY_BUFSIZE
+    fsrc_read = fsrc.read
+
+    try:
+        buf = fsrc_read(length)
+    except Exception as e:
+        # FIXME handle these errors better, for now we just ignore and move on:
+        # ValueError: invalid literal for int() with base 16: b''
+        # http.client.IncompleteRead: IncompleteRead
+        logger.exception(e)
+        buf = None
+
+    if not buf:
+        return False
+    with open(fdst, 'wb') as out_file:
+        fdst_write = out_file.write
+        while buf:
+            fdst_write(buf)
+            buf = fsrc_read(length)
+    return True
 
 
 def remove_useless_keys(_dict: dict) -> None:
@@ -1026,38 +1590,91 @@ def setup_logger(
     return logger
 
 
-def get_first_segment(paths: Tuple) -> int:
+def collect_missing_segments(output_dir: Path, stream: pytube.Stream):
+    """Update stream objects properties in selected streams with output directory,
+    starting segment, and mising segments if any."""
+    stream_output_dir = output_dir / stream.dir_suffix
+    if stream_output_dir.exists():
+        stream.start_seg, stream.missing_segs = \
+            get_latest_valid_segment(stream_output_dir)
+    else:
+        makedirs(stream_output_dir, 0o766)
+
+
+def get_latest_valid_segment(path: Union[str, Path]
+) -> tuple[int, list[int]]:
     """
-    Create each path in paths. If one already existed, return the last
-    segment already downloaded, otherwise return 1.
-    :param paths: tuple of pathlib.Path
+    Return the latest segment number already downloaded, and a
+    list of missing segments (with inferior numbers) if any.
     """
-    # If one of the directories exists, assume we are resuming a previously
-    # failed download attempt.
-    dir_existed = False
-    for path in paths:
-        try:
-            makedirs(path, 0o766)
-        except FileExistsError:
-            dir_existed = True
+    # FIXME only read files that match our filename pattern
+    # in case foreign files are in there too
+    top_seg = 0
+    missing: list[int] = []
 
-    # The sequence number to start downloading from (acually starts at 0).
-    seg = 0
+    if isinstance(path, str):
+        path = Path(path)
+    if not path.exists():
+        return top_seg, missing
 
-    if dir_existed:
-        # Get the latest downloaded segment number,
-        # unless one directory holds an earlier segment than the other.
-        # video_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[0])])
-        # audio_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[1])])
-        # seg = min(video_last_segment, audio_last_segment)
-        seg = min([
-                max([int(f[:f.index('.')].split('_')[0])
-                for f in listdir(p)], default=1)
-                for p in paths
-            ])
+    def as_int(fname: str) -> int:
+        # This assumes file name format 00000001_audio+video.ts
+        return int(fname.split('_')[0])
 
-        # Step back one file just in case the latest segment got only partially
-        # downloaded (we want to overwrite it to avoid a corrupted segment)
-        if seg > 0:
-            seg -= 1
-    return seg
+    num_list = [as_int(f) for f in listdir(path)]
+    num_list.sort()
+
+    if not num_list:
+        return top_seg, missing
+
+    top_seg = num_list[-1]
+
+    if num_list and num_list[-1] != len(num_list):
+        def find_missing(lst):
+            return [x for x in range(0, lst[-1])
+                                    if x not in lst]
+
+        missing = find_missing(num_list)
+
+    # Step back one file just in case the latest segment got only partially
+    # downloaded (we want to overwrite it to avoid a corrupted segment)
+    if top_seg > 0:
+        top_seg -= 1
+    return top_seg, missing
+
+
+# def get_latest_segment(paths: Tuple) -> int:
+#     """
+#     Create each path in paths. If one already existed, return the last
+#     segment already downloaded, otherwise return 1.
+#     :param paths: tuple of pathlib.Path
+#     """
+#     # If one of the directories exists, assume we are resuming a previously
+#     # failed download attempt.
+#     dir_existed = False
+#     for path in paths:
+#         try:
+#             makedirs(path, 0o766)
+#         except FileExistsError:
+#             dir_existed = True
+
+#     # The sequence number to start downloading from (acually starts at 0).
+#     seg = 0
+
+#     if dir_existed:
+#         # Get the latest downloaded segment number,
+#         # unless one directory holds an earlier segment than the other.
+#         # video_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[0])])
+#         # audio_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[1])])
+#         # seg = min(video_last_segment, audio_last_segment)
+#         seg = min([
+#                 max([int(f[:f.index('.')].split('_')[0])
+#                 for f in listdir(p)], default=1)
+#                 for p in paths
+#             ])
+
+#         # Step back one file just in case the latest segment got only partially
+#         # downloaded (we want to overwrite it to avoid a corrupted segment)
+#         if seg > 0:
+#             seg -= 1
+#     return seg

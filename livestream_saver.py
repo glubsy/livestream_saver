@@ -1,17 +1,19 @@
-from os import sep, makedirs, getcwd
-from sys import argv
+from asyncio.protocols import SubprocessProtocol
+from os import sep, makedirs, getcwd, setsid
+from sys import argv, stderr, stdin
 import argparse
 import logging
 from pathlib import Path
 from configparser import ConfigParser
 import traceback
+import asyncio
+from urllib.request import url2pathname
 
 from livestream_saver import extract, util
-from livestream_saver.monitor import YoutubeChannel, wait_block
 from livestream_saver.download import YoutubeLiveBroadcast
 from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import get_channel_id
-from livestream_saver.request import YoutubeUrllibSession
+from livestream_saver.request import Session
 from livestream_saver.smtp import NotificationHandler
 
 logger = logging.getLogger('livestream_saver')
@@ -74,9 +76,9 @@ Either a full youtube URL, /channel/ID, or /c/name format.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookie file.'
     )
-    monitor_parser.add_argument('-f', '--itags', 
+    monitor_parser.add_argument('-f', '--itags',
         action='store', type=str,
-        default=argparse.SUPPRESS, 
+        default=argparse.SUPPRESS,
         help='Try getting these itags (separated by +), otherwise fall back to '
              'getting the best quality, up to optional max resolution if '
              'specified. Example: 134+140'
@@ -89,27 +91,27 @@ Either a full youtube URL, /channel/ID, or /c/name format.'
              'If not specified, will get the highest resolution available. '
              'Common values: 1080, 720, 480, 360, 240, 144.'
     )
-    monitor_parser.add_argument('--video-codec', 
+    monitor_parser.add_argument('--video-codec',
         action='store', type=str,
-        default=argparse.SUPPRESS, 
+        default=argparse.SUPPRESS,
         help='Filter available streams with this preferred video codec. '
               f'Default: {DEFAULT_VIDEO_CODEC}. Example: webm (for vp8/9).'
     )
     monitor_parser.add_argument('--audio-codec',
         action='store', type=str,
-        default=argparse.SUPPRESS, 
+        default=argparse.SUPPRESS,
         help='Filter available streams with this preferred audio codec. '
               f'Default: {DEFAULT_AUDIO_CODEC}. Example: webm (for opus/vorbis).'
     )
-    monitor_parser.add_argument('-o', '--output-dir', 
+    monitor_parser.add_argument('-o', '--output-dir',
         action='store', type=str,
-        default=argparse.SUPPRESS, 
+        default=argparse.SUPPRESS,
         help='Output directory where to save channel data. '
             f'(Default: {config.get("monitor", "output_dir")})'
     )
-    monitor_parser.add_argument('--channel-name', 
+    monitor_parser.add_argument('--channel-name',
         action='store', type=str,
-        default=argparse.SUPPRESS, 
+        default=argparse.SUPPRESS,
         help='User-defined name of the channel to monitor. Will fallback to \
 channel ID deduced from the URL otherwise.'
     )
@@ -160,14 +162,14 @@ channel ID deduced from the URL otherwise.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookie file.'
     )
-    download_parser.add_argument('-F', '--list-formats', 
+    download_parser.add_argument('-F', '--list-formats',
         action='store_true',
         default=argparse.SUPPRESS,
         help='List available formats for that stream, then exit.'
     )
-    download_parser.add_argument('-f', '--itags', 
+    download_parser.add_argument('-f', '--itags',
         action='store', type=str,
-        default=argparse.SUPPRESS, 
+        default=argparse.SUPPRESS,
         help='Try getting these itags (separated by +), otherwise fall back to '
              'getting the best quality, up to optional max resolution if '
              'specified. Example: 134+140'
@@ -180,15 +182,15 @@ channel ID deduced from the URL otherwise.'
              'If not specified, will get the highest resolution available. '
              'Common values: 1080, 720, 480, 360, 240, 144.'
     )
-    download_parser.add_argument('--video-codec', 
+    download_parser.add_argument('--video-codec',
         action='store', type=str,
-        default=argparse.SUPPRESS, 
+        default=argparse.SUPPRESS,
         help='Filter available streams with this preferred video codec. '
               f'Default: {DEFAULT_VIDEO_CODEC}. Example: webm (for vp8/9).'
     )
-    download_parser.add_argument('--audio-codec', 
+    download_parser.add_argument('--audio-codec',
         action='store', type=str,
-        default=argparse.SUPPRESS, 
+        default=argparse.SUPPRESS,
         help='Filter available streams with this preferred audio codec. '
               f'Default: {DEFAULT_AUDIO_CODEC}. Example: webm (for opus/vorbis).'
     )
@@ -267,7 +269,7 @@ def _get_target_params(config, args):
     """
     Deal with case where URL positional argument is not supplied by user, but
     could be supplied in config file in appropriate section.
-    Return tuple (URL, channel_name, scan_delay) 
+    Return tuple (URL, channel_name, scan_delay)
     taken from arguments + config.
     """
     URL = args.get("URL", None)
@@ -303,11 +305,12 @@ def _get_target_params(config, args):
 
 
 def monitor_mode(config, args):
+    from livestream_saver.monitor import YoutubeChannel, wait_block
     URL = args["URL"]
     channel_id = args["channel_id"]
     scan_delay = args["scan_delay"]
 
-    session = YoutubeUrllibSession(
+    session = Session(
         config.get("monitor", "cookie", vars=args, fallback=None),
         notifier=notif_h
     )
@@ -320,6 +323,7 @@ def monitor_mode(config, args):
 
     while True:
         live_videos = ch.get_live_videos()
+
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "Live videos found for channel "
@@ -338,9 +342,9 @@ def monitor_mode(config, args):
             live_broadcast = YoutubeLiveBroadcast(
                 url=f"https://www.youtube.com{target_live.get('url')}", # /watch?v=...
                 output_dir=sub_output_dir,
-                session=ch.session,
                 video_id=_id,
-                log_level=config.get("monitor", "log_level", vars=args)
+                log_level=config.get("monitor", "log_level", vars=args),
+                session=session
             )
         except ValueError as e:
             # Constructor may throw
@@ -416,7 +420,8 @@ def monitor_mode(config, args):
 
 
 def download_mode(config, args):
-    session = YoutubeUrllibSession(
+    global session
+    session = Session(
         config.get("download", "cookie", vars=args, fallback=None),
         notifier=notif_h
     )
@@ -425,9 +430,9 @@ def download_mode(config, args):
         live_broadcast = YoutubeLiveBroadcast(
             url=args.get("URL"),
             output_dir=args["output_dir"],
-            session=session,
             video_id=args["video_id"],
-            log_level=config.get("download", "log_level", vars=args)
+            log_level=config.get("download", "log_level", vars=args),
+            session=session
         )
     except ValueError as e:
         logger.critical(e)
@@ -454,7 +459,6 @@ def download_mode(config, args):
         )
     )
     logger.info(f"Selected streams: {live_broadcast.selected_streams}")
-    return 0
 
     live_broadcast.download(
         wait_delay=config.getfloat("download", "scan_delay", vars=args)
@@ -663,7 +667,7 @@ def main():
         notif_h.send_email(
             subject=f"{__file__.split(sep)[-1]} test email.",
             message_text="The current configuration works fine!\nYay.\n"
-                         "You will receive notifications if the program " 
+                         "You will receive notifications if the program "
                          "encounters an issue while doing its tasks."
         )
         print(
@@ -698,7 +702,7 @@ def main():
             attachments=[logfile_path]
         )
 
-    # We need to join here (or sleep long enough) otherwise any email still 
+    # We need to join here (or sleep long enough) otherwise any email still
     # in the queue will fail to get sent because we exited too soon!
     if not notif_h.disabled:
         notif_h.q.join()
@@ -709,3 +713,5 @@ def main():
 
 if __name__ == "__main__":
     exit(main())
+    # ret = asyncio.run(main())
+    # exit(ret)

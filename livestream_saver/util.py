@@ -2,13 +2,12 @@ import re
 from os import makedirs
 from platform import system
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 import logging
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
 from pytube.itags import ITAGS
-from pytube.streams import Stream
 
 
 # Youtube channel IDs are 24 characters
