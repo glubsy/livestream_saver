@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-from os import sep, path, makedirs, listdir
+from os import sep, path, makedirs, listdir, setsid
+from ssl import OP_NO_RENEGOTIATION
 from sys import stderr
 from platform import system
 import logging
@@ -11,6 +12,7 @@ from enum import Flag, auto
 from typing import Optional, Dict, List, Any
 from pathlib import Path
 import re
+from subprocess import Popen, DEVNULL
 from urllib.request import urlopen
 import urllib.error
 from http.client import IncompleteRead
@@ -71,7 +73,9 @@ class YoutubeLiveStream():
         session: YoutubeUrllibSession,
         video_id: Optional[str] = None,
         max_video_quality: Optional[str] = None,
-        log_level = logging.INFO) -> None:
+        hooks: dict = {},
+        log_level = logging.INFO
+    ) -> None:
 
         self.session = session
         self.url = url
@@ -86,6 +90,10 @@ class YoutubeLiveStream():
         self._embed_html: Optional[str] = None
 
         self._json: Optional[Dict] = {}
+
+        self.download_start_triggered = False
+        self.download_started_cmd: Optional[list] = \
+            hooks.get('download_started_hook')
 
         # NOTE if "www" is omitted, it might force a redirect on YT's side
         # (with &ucbcb=1) and force us to update cookies again. YT is very picky
@@ -119,7 +127,7 @@ class YoutubeLiveStream():
         self.error = None
 
         self.output_dir = output_dir
-        if not self.output_dir.exists:
+        if not self.output_dir.exists():
             util.create_output_dir(
                 output_dir=output_dir, video_id=None
             )
@@ -700,6 +708,10 @@ playability status is: {status} \
             self.update_download_urls()
             self.update_metadata()
 
+            if not self.download_start_triggered:
+                self.download_start_triggered = True
+                self.on('download_started')
+
             while True:
                 try:
                     self.do_download()
@@ -1117,6 +1129,30 @@ playability status is: {status} \
                 fdst_write(buf)
                 buf = fsrc_read(length)
         return True
+
+    def on(self, event: str):
+        if event == "download_started":
+            self.spawn_subprocess(self.download_started_cmd)
+
+    def spawn_subprocess(self, cmd: Optional[list]):
+        if not cmd:
+            return
+        for item in cmd:
+            if item == r"%VIDEO_URL%":
+                cmd[cmd.index(item)] = self.url
+        try:
+            # with open("subprocess_output.log", "wb") as outfile:
+            p = Popen(
+                cmd, 
+                preexec_fn=setsid, 
+                stdin=DEVNULL, # PIPE
+                stdout=DEVNULL, # outfile
+                stderr=DEVNULL # PIPE
+            )
+            self.logger.info(f"Spawned: {cmd} with PID={p.pid}")
+        except Exception as e:
+            self.logger.warning(f"Error spawning {cmd[0]}: {e}")
+            pass
 
 
 class Status(Flag):

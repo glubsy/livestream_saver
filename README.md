@@ -124,11 +124,23 @@ pip3 install -r requirements.txt
 ```
 One could also clone the corresponding repositories manually to get the latest updates.
 
-## Configuration
+# Configuration
 
-The template config file is provided as an example. Options can generally be overriden via command line arguments.
+The template config file is provided as an example. Options can generally be overriden via command line arguments (except hooks).
 
-### Notifications via e-mail
+
+## On-download started hook
+
+You can spawn a process of your choosing whenever we start downloading segments. This can be useful to spawn youtube-dl or yt-dlp in parallel for example.
+This can only be specified in the config file. Example:
+```
+download_started_hook = youtube-dl, --add-metadata, --embed-thumbnail, %VIDEO_URL%
+```
+Arguments are split on commas, %VIDEO_URL% will be replaced by the Youtube URL of the live stream being currently downloaded.
+
+Each section (`[channel_monitor]`, `[monitor]`, `[download]`) can have a different value. The `[DEFAULT]` section can be used as a fallback if none of them have such option specified.
+
+## Notifications via e-mail
 
 The e-mail options can be overriden via environment variables if you find it more secure.
 Login and password are not mandatory. That depends on your smtp server configuration.
@@ -144,7 +156,7 @@ GPLv3
 
 # Notes:
 
-This is beta software. It should work, but in case it doesn't, feel free to report issues. Or better yet, fix them yourself and submit a merge request. Keep in mind that these mega corporations love to break things.
+This is beta software. It should work, but in case it doesn't, feel free to report issues. Or better yet, fix them yourself and submit a merge request. Keep in mind that these mega corporations will often attempt to break our things.
 
 # TODO
 
@@ -153,3 +165,5 @@ This is beta software. It should work, but in case it doesn't, feel free to repo
 * Fetch segments in parallel to catch up faster.
 * Make sure age-restricted videos are not blocked (we rely on Pytube for this).
 * Monitor Twitch channels.
+* Make Docker container.
+* Make web interface.

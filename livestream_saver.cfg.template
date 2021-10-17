@@ -2,6 +2,7 @@
 log_level = DEBUG
 # Path to cookies that is commmon to all modes:
 cookie = 
+download_started_hook = 
 
 email_notifications = False
 smtp_server = 
@@ -14,11 +15,13 @@ from_email =
 [monitor]
 scan_delay = 15.5
 log_level = INFO
+download_started_hook = 
 
 [download]
 scan_delay = 2.5
 log_level = WARNING
 # cookie = /path/to/cookies.txt
+download_started_hook = 
 
 # [channel_monitor]
 # channel_name = Matsuro Meru
@@ -34,3 +37,12 @@ log_level = WARNING
 channel_name = Gawr Gura
 scan_delay = 20.0
 URL = https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g
+# Spawn a subprocess of your choosing (for this channel target only):
+download_started_hook = yt-dlp, 
+	--embed-thumbnail,
+	--fragment-retries, 50, 
+	-o, %(upload_date)s %(uploader)s %(title)s_[%(height)s]_%(id)s.%(ext)s,
+	-ciw, 
+	#-f, bestvideo+bestaudio, 
+	--add-metadata,
+	%VIDEO_URL%
