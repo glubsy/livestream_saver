@@ -12,7 +12,7 @@ from enum import Flag, auto
 from typing import Optional, Dict, List, Any
 from pathlib import Path
 import re
-from subprocess import Popen, DEVNULL
+from subprocess import Popen, DEVNULL, PIPE
 from urllib.request import urlopen
 import urllib.error
 from http.client import IncompleteRead
@@ -538,6 +538,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
             "publish_date": str(self.publish_date),
             "start_time": self.start_time,
             "download_date": date.fromtimestamp(time()).__str__(),
+            "download_time": datetime.now().strftime("%d%m%Y_%H-%M-%S"),
             "video_itag": self.video_itag,
             "audio_itag": self.audio_itag,
             "description": self.description,
@@ -1134,21 +1135,33 @@ playability status is: {status} \
         if event == "download_started":
             self.spawn_subprocess(self.download_started_cmd)
 
-    def spawn_subprocess(self, cmd: Optional[list]):
+    def spawn_subprocess(self, cmd: Optional[list], log:bool = True):
         if not cmd:
             return
         for item in cmd:
             if item == r"%VIDEO_URL%":
                 cmd[cmd.index(item)] = self.url
         try:
-            # with open("subprocess_output.log", "wb") as outfile:
-            p = Popen(
-                cmd, 
-                preexec_fn=setsid, 
-                stdin=DEVNULL, # PIPE
-                stdout=DEVNULL, # outfile
-                stderr=DEVNULL # PIPE
-            )
+            if log:
+                program_name = cmd[0].split(sep)[-1]
+                suffix = "_" + self.video_info.get('download_time', '') + ".log"
+                logname = self.output_dir / (program_name + suffix)
+                with open(logname, "wb") as outfile:
+                    p = Popen(
+                        cmd,
+                        preexec_fn=setsid,
+                        stdin=PIPE,
+                        stdout=outfile,
+                        stderr=PIPE
+                    )
+            else:
+                p = Popen(
+                    cmd,
+                    preexec_fn=setsid,
+                    stdin=DEVNULL,
+                    stdout=DEVNULL,
+                    stderr=DEVNULL
+                )
             self.logger.info(f"Spawned: {cmd} with PID={p.pid}")
         except Exception as e:
             self.logger.warning(f"Error spawning {cmd[0]}: {e}")
