@@ -134,11 +134,19 @@ The template config file is provided as an example. Options can generally be ove
 You can spawn a process of your choosing whenever we start downloading segments. This can be useful to spawn youtube-dl or yt-dlp in parallel for example.
 This can only be specified in the config file. Example:
 ```
-download_started_hook = youtube-dl, --add-metadata, --embed-thumbnail, %VIDEO_URL%
+download_started_hook = yt-dlp, --add-metadata, --embed-thumbnail, %VIDEO_URL%
 ```
 Arguments are split on commas, %VIDEO_URL% will be replaced by the Youtube URL of the live stream being currently downloaded.
 
 Each section (`[channel_monitor]`, `[monitor]`, `[download]`) can have a different value. The `[DEFAULT]` section can be used as a fallback if none of them have such option specified.
+The command can be disabled and its output logged with the following options (placed in the **same section** as the affected command):
+```
+# Disable spawning the command above (same as commenting the command out)
+download_started_hook_enabled = false
+
+# Log command's output (stdout + stderr)
+download_started_hook_logged = true
+```
 
 ## Notifications via e-mail
 
@@ -161,6 +169,7 @@ This is beta software. It should work, but in case it doesn't, feel free to repo
 # TODO
 
 * Better stream quality selection (webm, by fps, etc.).
+* Use other libs (yt-dlp, streamlink) as backends for downloading fragments.
 * Add proxy support.
 * Fetch segments in parallel to catch up faster.
 * Make sure age-restricted videos are not blocked (we rely on Pytube for this).

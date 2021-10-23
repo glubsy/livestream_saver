@@ -92,8 +92,7 @@ class YoutubeLiveStream():
         self._json: Optional[Dict] = {}
 
         self.download_start_triggered = False
-        self.download_started_cmd: Optional[list] = \
-            hooks.get('download_started_hook')
+        self.hooks = hooks
 
         # NOTE if "www" is omitted, it might force a redirect on YT's side
         # (with &ucbcb=1) and force us to update cookies again. YT is very picky
@@ -407,7 +406,6 @@ We assume a failed download attempt. Last segment available was {seg}.")
         :rtype: str
         """
         return self.player_response.get("videoDetails", {}).get("shortDescription")
-
 
 
     # # NOT USED
@@ -1132,40 +1130,8 @@ playability status is: {status} \
         return True
 
     def on(self, event: str):
-        if event == "download_started":
-            self.spawn_subprocess(self.download_started_cmd)
-
-    def spawn_subprocess(self, cmd: Optional[list], log:bool = True):
-        if not cmd:
-            return
-        for item in cmd:
-            if item == r"%VIDEO_URL%":
-                cmd[cmd.index(item)] = self.url
-        try:
-            if log:
-                program_name = cmd[0].split(sep)[-1]
-                suffix = "_" + self.video_info.get('download_time', '') + ".log"
-                logname = self.output_dir / (program_name + suffix)
-                with open(logname, "wb") as outfile:
-                    p = Popen(
-                        cmd,
-                        preexec_fn=setsid,
-                        stdin=PIPE,
-                        stdout=outfile,
-                        stderr=PIPE
-                    )
-            else:
-                p = Popen(
-                    cmd,
-                    preexec_fn=setsid,
-                    stdin=DEVNULL,
-                    stdout=DEVNULL,
-                    stderr=DEVNULL
-                )
-            self.logger.info(f"Spawned: {cmd} with PID={p.pid}")
-        except Exception as e:
-            self.logger.warning(f"Error spawning {cmd[0]}: {e}")
-            pass
+        if hook := self.hooks.get(event, None):
+            hook.spawn_subprocess(self)
 
 
 class Status(Flag):

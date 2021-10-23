@@ -14,6 +14,7 @@ from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import get_channel_id
 from livestream_saver.request import YoutubeUrllibSession
 from livestream_saver.smtp import NotificationHandler
+from livestream_saver.hooks import HookCommand
 
 logger = logging.getLogger('livestream_saver')
 logger.setLevel(logging.DEBUG)
@@ -225,23 +226,45 @@ def str_to_list(data: Optional[str]) -> Optional[list]:
         logger.exception(f"Invalid config string: {data}: {e}")
 
 
+def _get_hook_from_config(
+    config: ConfigParser,
+    hook_name: str,
+    section: str) -> Optional[HookCommand]:
+    # This tries to get from the DEFAULT section if not found
+    cmd = config.getlist(section, hook_name, fallback=None)
+    if not cmd:
+        return None
+    enabled = config.getboolean(section, hook_name + "_enabled", fallback=True)
+    if not enabled:
+        return None
+    return HookCommand(
+        cmd=cmd,
+        logged=config.getboolean(section, hook_name + "_logged", fallback=False)
+    )
+
+
 def _get_target_params(config: ConfigParser, args: dict) -> dict:
     """
     Deal with case where URL positional argument is not supplied by user, but
     could be supplied in config file in the appropriate section.
-    Used only in monitor mode currently.
+    Used only by monitor mode currently.
     """
     # TODO We could compare the URL supplied as argument with the
     # [channel monitor] URL value and automatically assign the corresponding
     # scan_delay if it's not already present in the CLI args.
 
-    # This tries to get from the DEFAULT section if not found
-    m_hook = config.getlist("monitor", "download_started_hook", fallback=None)
+    m_hook = _get_hook_from_config(
+        config=config, 
+        hook_name="download_started_hook", 
+        section="monitor"
+    )
     params = {
         "URL": args.get("URL", None),
         "channel_name": args.get("channel_name", None),
         "scan_delay": config.getfloat("monitor", "scan_delay", vars=args),
-        "download_started_hook": m_hook
+        "hooks": {
+            "download_started": m_hook
+        }
     }
 
     if params.get("URL") is not None:
@@ -261,12 +284,14 @@ def _get_target_params(config: ConfigParser, args: dict) -> dict:
             "channel_monitor", "scan_delay", vars=args,
             fallback=params['scan_delay']
         )
-        hook = config.getlist(
-            "channel_monitor", "download_started_hook", fallback=None
+        hook = _get_hook_from_config(
+            config=config,
+            hook_name="download_started_hook",
+            section="channel_monitor"
         )
         # Not found in channel_monitor section nor even in DEFAULT,
         # try the "monitor" section last, otherwise give up.
-        params["download_started_hook"] = hook if hook else m_hook
+        params["hooks"]["download_started"] = hook if hook else m_hook
 
     if params.get("URL") is None:
         raise Exception(
@@ -282,9 +307,6 @@ def monitor_mode(config, args):
     URL = args["URL"]
     channel_id = args["channel_id"]
     scan_delay = args["scan_delay"]
-    hooks = {
-        "download_started_hook": args.get("download_started_hook")
-    }
 
     session = YoutubeUrllibSession(
         config.get("monitor", "cookie", vars=args, fallback=None),
@@ -322,7 +344,7 @@ def monitor_mode(config, args):
                 max_video_quality=config.getint(
                     "monitor", "max_video_quality", vars=args, fallback=None
                 ),
-                hooks=hooks,
+                hooks=args["hooks"],
                 log_level=config.get("monitor", "log_level", vars=args)
             )
         except ValueError as e:
@@ -380,9 +402,6 @@ def monitor_mode(config, args):
 
 
 def download_mode(config, args):
-    hooks = {
-        "download_started_hook": args.get("download_started_hook")
-    }
     session = YoutubeUrllibSession(
         config.get("download", "cookie", vars=args, fallback=None),
         notifier=notif_h
@@ -396,7 +415,7 @@ def download_mode(config, args):
             max_video_quality=config.getint(
                 "download", "max_video_quality", vars=args, fallback=None
             ),
-            hooks=hooks,
+            hooks=args["hooks"],
             log_level=config.get("download", "log_level", vars=args)
         )
     except ValueError as e:
@@ -431,6 +450,7 @@ def merge_mode(config, args):
         logger.critical("Something failed. Please report the issue with logs.")
         return 1
     return 0
+
 
 def log_enabled(config, args, mode_str):
     """Sanitize log level input value, return False if disabled by user."""
@@ -548,7 +568,7 @@ def main():
         channel_name = params.get("channel_name")
         args["channel_name"] = channel_name
         args["scan_delay"] = params.get("scan_delay")
-        args["download_started_hook"] = params.get("download_started_hook")
+        args["hooks"] = params.get("hooks")
 
         channel_id = get_channel_id(args["URL"], "youtube")
         args["channel_id"] = channel_id
@@ -577,8 +597,12 @@ def main():
             )
         )
         URL = args.get("URL", "")
-        args["download_started_hook"] = \
-        config.getlist("download", "download_started_hook", fallback=None)
+        args["hooks"] = {}
+        args["hooks"]["download_started"] = _get_hook_from_config(
+            config=config,
+            hook_name="download_started_hook",
+            section=sub_cmd
+        )
 
         video_id = extract.get_video_id(url=URL)
         args["video_id"] = video_id

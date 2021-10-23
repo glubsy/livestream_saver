@@ -1,8 +1,8 @@
 [DEFAULT]
 log_level = DEBUG
+
 # Path to cookies that is commmon to all modes:
 cookie = 
-download_started_hook = 
 
 email_notifications = False
 smtp_server = 
@@ -12,32 +12,36 @@ smtp_password =
 to_email = 
 from_email =
 
+
 [monitor]
-scan_delay = 15.5
 log_level = INFO
+
+# Delay between scan retries in minutes
+scan_delay = 15.5
+
+# Spawn a subprocess of your choosing (for all channels monitored):
 download_started_hook = 
+
 
 [download]
-scan_delay = 2.5
 log_level = WARNING
+
+# If live has not started yet, delay retrying by this many minutes
+scan_delay = 2.5
+
+# Path to Netscape formatted cookie file
 # cookie = /path/to/cookies.txt
+
+# Spawn a subprocess of your choosing:
 download_started_hook = 
 
-# [channel_monitor]
-# channel_name = Matsuro Meru
-# scan_delay = 20.0
-# URL = https://www.youtube.com/channel/UCIJ6TGsTcBlYGUj-zbL60EQ
-
-# [channel_monitor]
-# channel_name = Kamiko Kana
-# scan_delay = 20.0
-# URL = https://www.youtube.com/c/kamikokana
 
 [channel_monitor]
 channel_name = Gawr Gura
 scan_delay = 20.0
 URL = https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g
-# Spawn a subprocess of your choosing (for this channel target only):
+
+# Spawn a subprocess of your choosing (for this target channel only):
 download_started_hook = yt-dlp, 
 	--embed-thumbnail,
 	--fragment-retries, 50, 
@@ -46,3 +50,21 @@ download_started_hook = yt-dlp,
 	#-f, bestvideo+bestaudio, 
 	--add-metadata,
 	%VIDEO_URL%
+
+# Disable spawning the command above (same as commenting the command out)
+download_started_hook_enabled = false
+
+# Log command's output (stdout + stderr)
+download_started_hook_logged = true
+
+
+# [channel_monitor]
+# channel_name = Matsuro Meru
+# scan_delay = 15.0
+# URL = https://www.youtube.com/channel/UCIJ6TGsTcBlYGUj-zbL60EQ
+
+
+# [channel_monitor]
+# channel_name = Kamiko Kana
+# scan_delay = 20.0
+# URL = https://www.youtube.com/c/kamikokana
