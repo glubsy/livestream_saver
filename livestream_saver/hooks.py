@@ -15,17 +15,18 @@ class HookCommand():
     def spawn_subprocess(self, stream: YoutubeLiveStream):
         if not self.cmd:
             return
-        for item in self.cmd:
+        cmd = self.cmd[:]
+        for item in cmd:
             if item == r"%VIDEO_URL%":
-                self.cmd[self.cmd.index(item)] = stream.url
+                cmd[cmd.index(item)] = stream.url
         try:
             if self.logged:
-                program_name = self.cmd[0].split(sep)[-1]
+                program_name = cmd[0].split(sep)[-1]
                 suffix = "_" + datetime.now().strftime(r"%Y%m%d_%H-%M-%S") + ".log"
                 logname = stream.output_dir / (program_name + suffix)
                 with open(logname, "wb") as outfile:
                     p = Popen(
-                        self.cmd,
+                        cmd,
                         preexec_fn=setsid,
                         stdin=PIPE,
                         stdout=outfile,
@@ -33,13 +34,13 @@ class HookCommand():
                     )
             else:
                 p = Popen(
-                    self.cmd,
+                    cmd,
                     preexec_fn=setsid,
                     stdin=DEVNULL,
                     stdout=DEVNULL,
                     stderr=DEVNULL
                 )
-            stream.logger.info(f"Spawned: {self.cmd} with PID={p.pid}")
+            stream.logger.info(f"Spawned: {cmd} with PID={p.pid}")
         except Exception as e:
-            stream.logger.warning(f"Error spawning {self.cmd[0]}: {e}")
+            stream.logger.warning(f"Error spawning {cmd[0]}: {e}")
             pass
