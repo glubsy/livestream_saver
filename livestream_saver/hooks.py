@@ -21,7 +21,7 @@ class HookCommand():
         try:
             if self.logged:
                 program_name = self.cmd[0].split(sep)[-1]
-                suffix = "_" + datetime.now().strftime("%d%m%Y_%H-%M-%S") + ".log"
+                suffix = "_" + datetime.now().strftime(r"%Y%m%d_%H-%M-%S") + ".log"
                 logname = stream.output_dir / (program_name + suffix)
                 with open(logname, "wb") as outfile:
                     p = Popen(
