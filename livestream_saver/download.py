@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-from os import sep, path, makedirs, listdir, setsid
-from ssl import OP_NO_RENEGOTIATION
+from os import sep, path, makedirs, listdir
 from sys import stderr
 from platform import system
 import logging
@@ -9,10 +8,9 @@ from time import time, sleep
 from json import dumps, dump, loads
 from contextlib import closing
 from enum import Flag, auto
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List
 from pathlib import Path
 import re
-from subprocess import Popen, DEVNULL, PIPE
 from urllib.request import urlopen
 import urllib.error
 from http.client import IncompleteRead
