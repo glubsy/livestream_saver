@@ -21,6 +21,7 @@ class YoutubeUrllibSession:
     def __init__(self, cookie_path=None, notifier=None):
         # Hack to only warn user once after first validity check
         self.user_supplied_cookies = 1 if cookie_path else 0
+        self.cookie_path = cookie_path
         self.cookie_jar = get_cookie(cookie_path)
         # TODO add proxies
         self.headers = {

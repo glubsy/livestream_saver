@@ -136,7 +136,10 @@ This can only be specified in the config file. Example:
 ```
 download_started_hook = yt-dlp, --add-metadata, --embed-thumbnail, %VIDEO_URL%
 ```
-Arguments are split on commas, %VIDEO_URL% will be replaced by the Youtube URL of the live stream being currently downloaded.
+Arguments are split on commas. 
+Placeholders will be replaced by the corresponding value:
+- `%VIDEO_URL%`: the URL of the live stream being currently downloaded
+- `%COOKIE_PATH%`: the path to the cookie file you have specified (in config, or CLI argument)
 
 Each section (`[channel_monitor]`, `[monitor]`, `[download]`) can have a different value. The `[DEFAULT]` section can be used as a fallback if none of them have such option specified.
 The command can be disabled and its output logged with the following options (placed in the **same section** as the affected command):
@@ -144,7 +147,7 @@ The command can be disabled and its output logged with the following options (pl
 # Disable spawning the command above (same as commenting the command out)
 download_started_hook_enabled = false
 
-# Log command's output (stdout + stderr)
+# Log command's output (both stdout & stderr)
 download_started_hook_logged = true
 ```
 

@@ -44,17 +44,17 @@ URL = https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g
 # Spawn a subprocess of your choosing (for this target channel only):
 download_started_hook = yt-dlp, 
 	--embed-thumbnail,
-	--fragment-retries, 50, 
+	--fragment-retries, 50,
 	-o, %(upload_date)s %(uploader)s %(title)s_[%(height)s]_%(id)s.%(ext)s,
-	-ciw, 
-	#-f, bestvideo+bestaudio, 
+	# -f, bestvideo+bestaudio,
+	# --cookies, %COOKIE_PATH%,
 	--add-metadata,
 	%VIDEO_URL%
 
 # Disable spawning the command above (same as commenting the command out)
 download_started_hook_enabled = false
 
-# Log command's output (stdout + stderr)
+# Log the command's output (both stdout & stderr)
 download_started_hook_logged = true
 
 
@@ -68,3 +68,15 @@ download_started_hook_logged = true
 # channel_name = Kamiko Kana
 # scan_delay = 20.0
 # URL = https://www.youtube.com/c/kamikokana
+
+
+# [channel_monitor]
+# channel_name = Prune
+# scan_delay = 25.0
+# URL = https://www.youtube.com/c/Prune73
+
+
+# [channel_monitor]
+# channel_name = Inukai Purin
+# scan_delay = 20.0
+# URL = https://www.youtube.com/channel/UCdrQWcX7XLDSUEh9SAxnyBg
