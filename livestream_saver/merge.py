@@ -4,7 +4,7 @@ from typing import Optional, Dict, List
 import subprocess
 from json import load
 from pathlib import Path
-from shutil import copyfileobj
+from shutil import copyfileobj, which
 import logging
 import re
 from imghdr import what
@@ -145,6 +145,9 @@ f"{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
             f"STDERR:\n{e.stderr}"
         )
         raise
+    except FileNotFoundError as e:
+        logger.error(f"Failed to run ffmpeg: {e}.")
+        raise
     finally:
         # Remove filelist.txt
         if list_file_path is not None:
@@ -156,6 +159,7 @@ f"{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
     #     or "Failed to add index entry" in cproc.stderr):
 
     props = probe(ffmpeg_output_filename)
+    # FIXME This assumes that segments are roughly 1 second in duration
     if len(seg_list) * 0.80 < props.get("duration", 0) > len(seg_list) * 20:
         logger.info(
             f"Abnormal duration of {ffmpeg_output_filename.name}: "
@@ -178,6 +182,10 @@ f"{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
 
 
 def probe(fpath: Path) -> Dict:
+    if not which('ffprobe'):
+        logger.warning("Could not find ffprobe in PATH.")
+        return {}
+
     probecmd = ['ffprobe', '-v', 'quiet', '-hide_banner',
                 '-show_streams', str(fpath)]
     try:
@@ -237,6 +245,13 @@ def merge(info: Dict, data_dir: Path,
         conhandler.setLevel(logging.DEBUG)
         conhandler.setFormatter(formatter)
         logger.addHandler(conhandler)
+
+    if not which("ffmpeg"):
+        logger.error(
+            "Could not find ffmpeg! Make sure it is installed and in your PATH."
+            " Aborting merge phase."
+        )
+        return None
 
     video_seg_dir = data_dir / "vid"
     audio_seg_dir = data_dir / "aud"

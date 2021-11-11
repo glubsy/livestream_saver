@@ -1,17 +1,17 @@
 * Download Youtube livestreams from the very beginning to the end.
 * Monitor a given channel for upcoming livestreams and download them automatically when they become active.
 
-Cookies (in Netscape format) are needed to access membership-only videos as well as age-restricted videos (if you sold your soul to Youtube and your account is "verified").
+Cookies (in Netscape format) are needed to access membership-only videos as well as age-restricted videos (which would also mean that you sold your soul to Youtube and your account is "verified").
 
-The example config file is a only a convenience to override the default values, but it is optional.
+The example config file `livestream_saver.cfg` is optional and is meant as a convenience to override the default values.
 
 
 # Monitoring a channel
 
-Monitor a given Youtube channel for any upcoming livestream by requesting the channel's *videos* and *community* tabs every few minutes. 
-It should automatically download a livestream as soon as it is detected in one of these requests.
+Monitor a given Youtube channel for any upcoming livestream by requesting the channel's *videos* and *community* tabs every few minutes or so. 
+It should automatically download a live stream as soon as one is listed as being active in any of said tabs.
 
-Basic usage: `python livestream_saver.py monitor --cookie /path/to/cookie.txt CHANNEL_URL`
+Basic usage example: `python livestream_saver.py monitor --cookie /path/to/cookie.txt CHANNEL_URL`
 
 ```
 > python3 livestream_saver.py monitor --help
@@ -47,7 +47,7 @@ optional arguments:
 
 Downloads an active Youtube livestream specified by its URL.
 
-Basic usage: `python livestream_saver.py download --cookie /path/to/cookie.txt VIDEO_STREAM_URL`
+Basic usage example: `python livestream_saver.py download --cookie /path/to/cookie.txt VIDEO_STREAM_URL`
 
 ```
 > python3 livestream_saver.py download --help
@@ -81,7 +81,7 @@ optional arguments:
 
 The *download* sub-command above should automatically merge the downloaded segments once the live stream has ended. If it failed for whatever reason, this sub-command can be invoked on the directory path to the downloaded segments. That directory should be named something like "stream_capture_{VIDEO_ID}".
 
-Basic usage: `python livestream_saver.py merge /path/to/stream_capture_{VIDEO_ID}` (Windows users should use `py livestream_saver.py`)
+Basic usage example: `python livestream_saver.py merge /path/to/stream_capture_{VIDEO_ID}` (Windows users should use `py livestream_saver.py`)
 
 ```
 > python3 livestream_saver.py merge --help
@@ -107,7 +107,7 @@ optional arguments:
 
 * python3.8
 * [pytube](https://github.com/pytube/pytube) 10.9.2
-* ffmpeg to concatenate segments and merge them into one file 
+* ffmpeg (and ffprobe) to concatenate segments and merge them into one file 
 * [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional) to convert webp thumbnail
 
 # Installation
