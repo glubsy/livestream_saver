@@ -57,6 +57,9 @@ download_started_hook_enabled = false
 # Log the command's output (both stdout & stderr)
 download_started_hook_logged = true
 
+# Skip download phase and only run the subprocess when a stream has started
+skip_download = false
+
 
 # [channel_monitor]
 # channel_name = Matsuro Meru

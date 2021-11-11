@@ -116,7 +116,13 @@ merging of streams has been successful. Only useful for troubleshooting.'
         action='store_true',
         default=argparse.SUPPRESS,
         help='Enables sending e-mail reports to administrator.'\
-            f' (Default: {config.get("download", "email_notifications")})'
+            f' (Default: {config.getboolean("monitor", "email_notifications")})'
+    )
+    monitor_parser.add_argument('--skip-download',
+        action='store_true',
+        default=argparse.SUPPRESS,
+        help='Skip the download phase (useful to run hook scripts instead).'\
+            f' (Default: {config.getboolean("monitor", "skip_download")})'
     )
 
     # Sub-command "download"
@@ -172,7 +178,13 @@ streams has been successful. Only useful for troubleshooting.'
         action='store_true',
         default=argparse.SUPPRESS,
         help='Enable sending e-mail reports to administrator.'\
-            f' (Default: {config.get("download", "email_notifications")})'
+            f' (Default: {config.getboolean("download", "email_notifications")})'
+    )
+    download_parser.add_argument('--skip-download',
+        action='store_true',
+        default=argparse.SUPPRESS,
+        help='Skip the download phase (useful to run hook scripts instead).'\
+            f' (Default: {config.getboolean("download", "skip_download")})'
     )
 
     # Sub-command "merge"
@@ -262,6 +274,7 @@ def _get_target_params(config: ConfigParser, args: dict) -> dict:
         "URL": args.get("URL", None),
         "channel_name": args.get("channel_name", None),
         "scan_delay": config.getfloat("monitor", "scan_delay", vars=args),
+        "skip_download": config.getboolean("monitor", "skip_download", vars=args),
         "hooks": {
             "download_started": m_hook
         }
@@ -282,7 +295,11 @@ def _get_target_params(config: ConfigParser, args: dict) -> dict:
         # Use the value from monitor section if missing
         params["scan_delay"] = config.getfloat(
             "channel_monitor", "scan_delay", vars=args,
-            fallback=params['scan_delay']
+            fallback=params["scan_delay"]
+        )
+        params["skip_download"] = config.getboolean(
+            "channel_monitor", "skip_download", vars=args, 
+            fallback=params["skip_download"]
         )
         hook = _get_hook_from_config(
             config=config,
@@ -345,6 +362,7 @@ def monitor_mode(config, args):
                     "monitor", "max_video_quality", vars=args, fallback=None
                 ),
                 hooks=args["hooks"],
+                skip_download=args.get("skip_download", False),
                 log_level=config.get("monitor", "log_level", vars=args)
             )
         except ValueError as e:
@@ -365,6 +383,15 @@ def monitor_mode(config, args):
                 f"Got error in stream download but continuing...\n {e}"
             )
             pass
+
+        if livestream.skip_download:
+            notif_h.send_email(
+                subject=(
+                    f"Skipped download of {ch.get_channel_name()} - "
+                    f"{livestream.title} {_id}"
+                ),
+                message_text=f"Hooks scheduled to run were: {args.get('hooks')}"
+            )
 
         if livestream.done:
             logger.info(f"Finished downloading {_id}.")
@@ -416,6 +443,9 @@ def download_mode(config, args):
                 "download", "max_video_quality", vars=args, fallback=None
             ),
             hooks=args["hooks"],
+            skip_download=config.getboolean(
+                "download", "skip_download", vars=args, fallback=False
+            ),
             log_level=config.get("download", "log_level", vars=args)
         )
     except ValueError as e:
@@ -503,6 +533,7 @@ def init_config():
         "delete_source": "False",
         "keep_concat": "False",
         "no_merge": "False",
+        "skip_download": "False",
 
         "email_notifications": "False",
         "smtp_server": "",
@@ -569,6 +600,7 @@ def main():
         args["channel_name"] = channel_name
         args["scan_delay"] = params.get("scan_delay")
         args["hooks"] = params.get("hooks")
+        args["skip_download"] = params.get("skip_download")
 
         channel_id = get_channel_id(args["URL"], "youtube")
         args["channel_id"] = channel_id

@@ -41,6 +41,7 @@ optional arguments:
                         Interval in minutes to scan for channel activity. (Default: 15.0)
   --email-notifications
                         Enables sending e-mail reports to administrator. (Default: False)
+  --skip-download       Skip the download phase (useful to run hook scripts instead). (Default: False)
 ```
 
 # Downloading a live stream
@@ -75,6 +76,7 @@ optional arguments:
                         Interval in minutes to scan for status update. (Default: 2.0)
   --email-notifications
                         Enable sending e-mail reports to administrator. (Default: False)
+  --skip-download       Skip the download phase (useful to run hook scripts instead). (Default: False)
 ```
 
 # Merging segments
@@ -126,7 +128,8 @@ One could also clone the corresponding repositories manually to get the latest u
 
 # Configuration
 
-The template config file is provided as an example. Options can generally be overriden via command line arguments (except hooks).
+The template config file `livestream_saver.cfg.template` is provided as an example. 
+Options can generally be overriden via command line arguments (except for hooks).
 
 
 ## On-download started hook
@@ -150,6 +153,13 @@ download_started_hook_enabled = false
 # Log command's output (both stdout & stderr)
 download_started_hook_logged = true
 ```
+You can also skip the downloading phase with the following option:
+```
+# Skip download phase and only run the subprocess when a stream has started
+skip_download = true
+```
+This is useful if you only want to run yt-dlp (or any other program) when livestream_saver has detected an active broadcast but you don't care about downloading with livestream_saver. This option in particular can be specified in **any** section, even on the command line with argument `--skip-download`.
+
 
 ## Notifications via e-mail
 

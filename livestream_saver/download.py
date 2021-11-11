@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from os import sep, path, makedirs, listdir
+from os import sep, path, makedirs, listdir, wait
 from sys import stderr
 from platform import system
 import logging
@@ -72,6 +72,7 @@ class YoutubeLiveStream():
         video_id: Optional[str] = None,
         max_video_quality: Optional[str] = None,
         hooks: dict = {},
+        skip_download = False,
         log_level = logging.INFO
     ) -> None:
 
@@ -91,6 +92,7 @@ class YoutubeLiveStream():
 
         self.download_start_triggered = False
         self.hooks = hooks
+        self.skip_download = skip_download
 
         # NOTE if "www" is omitted, it might force a redirect on YT's side
         # (with &ucbcb=1) and force us to update cookies again. YT is very picky
@@ -673,9 +675,14 @@ playability status is: {status} \
         self.logger.debug(f"Video base url: {self.video_base_url}")
         self.logger.debug(f"Audio base url: {self.audio_base_url}")
 
-    def download(self, wait_delay=2.0):
+    def download(self, wait_delay: float = 2.0):
         self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
         self.logger.info(f'Will start downloading from segment number {self.seg}.')
+
+        if self.skip_download:
+            # Longer delay in minutes between updates since we don't download
+            # we don't care about accuracy that much. Random value.
+            wait_delay *= 7.7
 
         attempt = 0
         while not self.done and not self.error:
@@ -702,12 +709,21 @@ playability status is: {status} \
                 self.logger.critical(f"{e}")
                 raise e
 
-            self.update_download_urls()
-            self.update_metadata()
+            if not self.skip_download:
+                self.update_download_urls()
+                self.update_metadata()
 
             if not self.download_start_triggered:
                 self.download_start_triggered = True
                 self.on('download_started')
+
+            if self.skip_download:
+                # We rely on the exception above to signal when the stream has ended
+                self.logger.debug(
+                    f"Not downloading. Waiting for {wait_delay} minutes..."
+                )
+                sleep(wait_delay)
+                continue
 
             while True:
                 try:
