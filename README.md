@@ -79,9 +79,9 @@ optional arguments:
 
 # Merging segments
 
-The *download* sub-command above should automatically merge the downloaded segments once the live stream has ended. If it failed for whatever reason, this sub-command can be invoked on the directory path to the downloaded segments. That directory should be named something like "segments_{VIDEO_ID}".
+The *download* sub-command above should automatically merge the downloaded segments once the live stream has ended. If it failed for whatever reason, this sub-command can be invoked on the directory path to the downloaded segments. That directory should be named something like "stream_capture_{VIDEO_ID}".
 
-Basic usage: `python livestream_saver.py merge /path/to/segments_{VIDEO_ID}` (Note to Windows users: use `py livestream_saver.py` instead)
+Basic usage: `python livestream_saver.py merge /path/to/stream_capture_{VIDEO_ID}` (Windows users should use `py livestream_saver.py`)
 
 ```
 > python3 livestream_saver.py merge --help
