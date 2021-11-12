@@ -1,6 +1,7 @@
 from time import sleep
 from random import uniform
 import logging
+from typing import Optional
 from livestream_saver import extract
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ class YoutubeChannel:
         return self._public_videos_html
 
     @property
-    def community_json(self):
+    def community_json(self) -> dict:
         if self._community_json:
             return self._community_json
 
@@ -137,15 +138,29 @@ class YoutubeChannel:
         """Returns list of dict with urls to videos attached to community posts.
         """
         self._community_json = self._community_videos_html = None # force update
-        community_json = self.community_json
-        self.session.is_logged_out(community_json)
+        
+        community_json = {}
+        try:
+            community_json = self.community_json
+            self.session.is_logged_out(community_json)
+        except Exception as e:
+            # TODO send email here?
+            logger.critical(f"Got an invalid community JSON: {e}")
+        
         tabs = get_tabs_from_json(community_json)
         return get_videos_from_tab(tabs, 'Community')
 
     def update_public_videos(self):
         """Returns list of videos from "videos" or "featured" tabs."""
         self._public_json = self._public_videos_html = None # force update
-        public_json = self.public_json
+        
+        public_json = {}
+        try:
+            public_json = self.public_json
+        except Exception as e:
+            # TODO send email here?
+            logger.critical(f"Got an invalid public JSON: {e}")
+        
         tabs = get_tabs_from_json(public_json)
         return get_videos_from_tab(tabs, 'Videos')
 

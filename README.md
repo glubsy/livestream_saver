@@ -1,17 +1,17 @@
 * Download Youtube livestreams from the very beginning to the end.
 * Monitor a given channel for upcoming livestreams and download them automatically when they become active.
 
-Cookies (in Netscape format) are needed to access membership-only videos as well as age-restricted videos (if you sold your soul to Youtube and your account is "verified").
+Cookies (in Netscape format) are needed to access membership-only videos as well as age-restricted videos (which would also mean that you sold your soul to Youtube and your account is "verified").
 
-The example config file is a only a convenience to override the default values, but it is optional.
+The example config file `livestream_saver.cfg` is optional and is meant as a convenience to override the default values.
 
 
 # Monitoring a channel
 
-Monitor a given Youtube channel for any upcoming livestream by requesting the channel's *videos* and *community* tabs every few minutes. 
-It should automatically download a livestream as soon as it is detected in one of these requests.
+Monitor a given Youtube channel for any upcoming livestream by requesting the channel's *videos* and *community* tabs every few minutes or so. 
+It should automatically download a live stream as soon as one is listed as being active in any of said tabs.
 
-Basic usage: `python livestream_saver.py monitor --cookie /path/to/cookie.txt CHANNEL_URL`
+Basic usage example: `python livestream_saver.py monitor --cookie /path/to/cookie.txt CHANNEL_URL`
 
 ```
 > python3 livestream_saver.py monitor --help
@@ -41,13 +41,14 @@ optional arguments:
                         Interval in minutes to scan for channel activity. (Default: 15.0)
   --email-notifications
                         Enables sending e-mail reports to administrator. (Default: False)
+  --skip-download       Skip the download phase (useful to run hook scripts instead). (Default: False)
 ```
 
 # Downloading a live stream
 
 Downloads an active Youtube livestream specified by its URL.
 
-Basic usage: `python livestream_saver.py download --cookie /path/to/cookie.txt VIDEO_STREAM_URL`
+Basic usage example: `python livestream_saver.py download --cookie /path/to/cookie.txt VIDEO_STREAM_URL`
 
 ```
 > python3 livestream_saver.py download --help
@@ -75,13 +76,14 @@ optional arguments:
                         Interval in minutes to scan for status update. (Default: 2.0)
   --email-notifications
                         Enable sending e-mail reports to administrator. (Default: False)
+  --skip-download       Skip the download phase (useful to run hook scripts instead). (Default: False)
 ```
 
 # Merging segments
 
-The *download* sub-command above should automatically merge the downloaded segments once the live stream has ended. If it failed for whatever reason, this sub-command can be invoked on the directory path to the downloaded segments. That directory should be named something like "segments_{VIDEO_ID}".
+The *download* sub-command above should automatically merge the downloaded segments once the live stream has ended. If it failed for whatever reason, this sub-command can be invoked on the directory path to the downloaded segments. That directory should be named something like "stream_capture_{VIDEO_ID}".
 
-Basic usage: `python livestream_saver.py merge /path/to/segments_{VIDEO_ID}` (Note to Windows users: use `py livestream_saver.py` instead)
+Basic usage example: `python livestream_saver.py merge /path/to/stream_capture_{VIDEO_ID}` (Windows users should use `py livestream_saver.py`)
 
 ```
 > python3 livestream_saver.py merge --help
@@ -107,7 +109,7 @@ optional arguments:
 
 * python3.8
 * [pytube](https://github.com/pytube/pytube)
-* ffmpeg to concatenate segments and merge them into one file 
+* ffmpeg (and ffprobe) to concatenate segments and merge them into one file 
 * [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional) to convert webp thumbnail
 
 # Installation
@@ -124,11 +126,42 @@ pip3 install -r requirements.txt
 ```
 One could also clone the corresponding repositories manually to get the latest updates.
 
-## Configuration
+# Configuration
 
-The template config file is provided as an example. Options can generally be overriden via command line arguments.
+The template config file `livestream_saver.cfg.template` is provided as an example. 
+Options can generally be overriden via command line arguments (except for hooks).
 
-### Notifications via e-mail
+
+## On-download started hook
+
+You can spawn a process of your choosing whenever we start downloading segments. This can be useful to spawn youtube-dl or yt-dlp in parallel for example.
+This can only be specified in the config file. Example:
+```
+download_started_hook = yt-dlp, --add-metadata, --embed-thumbnail, %VIDEO_URL%
+```
+Arguments are split on commas. 
+Placeholders will be replaced by the corresponding value:
+- `%VIDEO_URL%`: the URL of the live stream being currently downloaded
+- `%COOKIE_PATH%`: the path to the cookie file you have specified (in config, or CLI argument)
+
+Each section (`[channel_monitor]`, `[monitor]`, `[download]`) can have a different value. The `[DEFAULT]` section can be used as a fallback if none of them have such option specified.
+The command can be disabled and its output logged with the following options (placed in the **same section** as the affected command):
+```
+# Disable spawning the command above (same as commenting the command out)
+download_started_hook_enabled = false
+
+# Log command's output (both stdout & stderr)
+download_started_hook_logged = true
+```
+You can also skip the downloading phase with the following option:
+```
+# Skip download phase and only run the subprocess when a stream has started
+skip_download = true
+```
+This is useful if you only want to run yt-dlp (or any other program) when livestream_saver has detected an active broadcast but you don't care about downloading with livestream_saver. This option in particular can be specified in **any** section, even on the command line with argument `--skip-download`.
+
+
+## Notifications via e-mail
 
 The e-mail options can be overriden via environment variables if you find it more secure.
 Login and password are not mandatory. That depends on your smtp server configuration.
@@ -144,11 +177,12 @@ GPLv3
 
 # Notes:
 
-This is beta software. It should work, but in case it doesn't, feel free to report issues. Or better yet, fix them yourself and submit a merge request. Keep in mind that these mega corporations love to break our things out of spite.
+This is beta software. It should work, but in case it doesn't, feel free to report issues. Or better yet, fix them yourself and submit a merge request. Keep in mind that these mega corporations will often attempt to break our things.
 
 # TODO
 
 * Better stream quality selection (webm, by fps, etc.).
+* Use other libs (yt-dlp, streamlink) as backends for downloading fragments.
 * Add proxy support.
 * Fetch segments in parallel to catch up faster.
 * Make sure age-restricted videos are not blocked (we rely on Pytube for this).

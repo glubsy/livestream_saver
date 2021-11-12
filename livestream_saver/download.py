@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-from os import path, makedirs, listdir, setsid
-from random import uniform
+from os import sep, path, makedirs, listdir, wait
 from sys import stderr
 from platform import system
 import logging
@@ -196,7 +195,10 @@ class YoutubeLiveBroadcast():
         session: Session,
         video_id: Optional[str] = None,
         max_video_quality: Optional[str] = None,
-        log_level = logging.INFO) -> None:
+        hooks: dict = {},
+        skip_download = False,
+        log_level = logging.INFO
+    ) -> None:
 
         self.session: Session = session
         self.url = url
@@ -208,6 +210,10 @@ class YoutubeLiveBroadcast():
         self._json: Dict = {}
 
         self.ptyt = PytubeYoutube(url, session=session, parent=self)
+
+        self.download_start_triggered = False
+        self.hooks = hooks
+        self.skip_download = skip_download
 
         self.selected_streams: set[pytube.Stream] = set()
         self.video_stream = None
@@ -225,7 +231,7 @@ class YoutubeLiveBroadcast():
 
         # Create output dir first in order to store log in it
         self.output_dir = output_dir
-        if not self.output_dir.exists:
+        if not self.output_dir.exists():
             util.create_output_dir(
                 output_dir=output_dir, video_id=None
             )
@@ -714,6 +720,7 @@ class YoutubeLiveBroadcast():
             "video_streams": [],
             "audio_streams": [],
             "description": self.ptyt.description,
+            "download_time": datetime.now().strftime("%d%m%Y_%H-%M-%S"),
         }
         if self.scheduled_timestamp is not None:
             info["scheduled_time"] = datetime.utcfromtimestamp(
@@ -1038,6 +1045,11 @@ class YoutubeLiveBroadcast():
             )
         self.logger.info(f'Will start downloading from segment number {self.seg}.')
 
+        if self.skip_download:
+            # Longer delay in minutes between updates since we don't download
+            # we don't care about accuracy that much. Random value.
+            wait_delay *= 7.7
+
         # TODO get the current segment from the manifest, then start downloading
         # from that segment onward (like ytdl), but also download all the segments
         # from the start in parallel.
@@ -1071,8 +1083,21 @@ class YoutubeLiveBroadcast():
                 self.logger.critical(f"{e}")
                 raise e
 
-            self.update_download_urls()
-            self.update_metadata()
+            if not self.skip_download:
+                self.update_download_urls()
+                self.update_metadata()
+
+            if not self.download_start_triggered:
+                self.download_start_triggered = True
+                self.on('download_started')
+
+            if self.skip_download:
+                # We rely on the exception above to signal when the stream has ended
+                self.logger.debug(
+                    f"Not downloading. Waiting for {wait_delay} minutes..."
+                )
+                sleep(wait_delay)
+                continue
 
             # self.spawn_companion(self.url)
 
@@ -1237,37 +1262,6 @@ class YoutubeLiveBroadcast():
 
         print(clear_line + fullmsg, end='')
         self.logger.info(fullmsg)
-
-    def spawn_companion(self, url):
-        # TODO apply substitution for %URL, %outputdir, etc.
-        # TODO provide command in config file
-        if self.spawned_companion:
-            return
-        user_command = [
-            "/home/nupupun/INSTALL/yt-dlp/yt-dlp.sh", 
-            "--embed-thumbnail", 
-            "--fragment-retries", "50", 
-            "-o", '%(upload_date)s %(uploader)s %(title)s_[%(height)s]_%(id)s.%(ext)s',
-            '-ciw', 
-            #'-f', 'bestvideo+bestaudio', 
-            '--add-metadata', 
-            url
-        ]
-        try:
-            # with open("testoutput.txt", "wb") as outfile:
-            p = subprocess.Popen(
-                user_command, 
-                preexec_fn=setsid, 
-                stdin=subprocess.DEVNULL, # PIPE
-                stdout=subprocess.DEVNULL, # outfile
-                stderr=subprocess.DEVNULL # PIPE
-            )
-            print(f"Spawned {user_command[0]} pid {p.pid}")
-            self.spawned_companion = True
-        except Exception as e:
-            print(e)
-            pass
-
 
 
 async def worker_retries(
@@ -1520,6 +1514,10 @@ def write_to_file(logger, fsrc, fdst: Path, length: int = 0) -> bool:
             fdst_write(buf)
             buf = fsrc_read(length)
     return True
+
+    def on(self, event: str):
+        if hook := self.hooks.get(event, None):
+            hook.spawn_subprocess(self)
 
 
 def remove_useless_keys(_dict: dict) -> None:

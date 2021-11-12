@@ -4,8 +4,9 @@ from typing import Optional, Dict, List
 import subprocess
 from json import load
 from pathlib import Path
-from shutil import copyfileobj
+from shutil import copyfileobj, which
 import logging
+import re
 from imghdr import what
 
 from livestream_saver.util import sanitize_filename
@@ -13,13 +14,26 @@ from livestream_saver.util import sanitize_filename
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
+MAX_NAME_LEN = 255
+
+
+def get_hash_from_path(path: Path) -> str:
+    """Get the hash ID part from the directory name."""
+    if match := re.compile(r"stream_capture_(.*)$").match(path.name):
+        if _id := match.group(1):
+            return _id
+    return "UNKNOWN_ID"
+
+
 def get_metadata_info(path: Path):
     try:
-        with open(path / "metadata.json", 'r') as fp:
+        with open(path / "metadata.json", 'r', encoding='utf-8') as fp:
             return load(fp)
     except Exception as e:
-        logger.exception(f"Exception while trying to load metadata.json: {e}")
-        return {}
+        logger.error(f"Exception while trying to load metadata.json: {e}.")
+        return {
+            "id": get_hash_from_path(path)
+        }
 
 
 def concat(datatype: str, video_id: str, seg_list: list,
@@ -133,6 +147,9 @@ f"{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
             f"STDERR:\n{e.stderr}"
         )
         raise
+    except FileNotFoundError as e:
+        logger.error(f"Failed to run ffmpeg: {e}.")
+        raise
     finally:
         # Remove filelist.txt
         if list_file_path is not None:
@@ -144,6 +161,7 @@ f"{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
     #     or "Failed to add index entry" in cproc.stderr):
 
     props = probe(ffmpeg_output_filename)
+    # FIXME This assumes that segments are roughly 1 second in duration
     if len(seg_list) * 0.80 < props.get("duration", 0) > len(seg_list) * 20:
         logger.info(
             f"Abnormal duration of {ffmpeg_output_filename.name}: "
@@ -166,10 +184,18 @@ f"{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
 
 
 def probe(fpath: Path) -> Dict:
+    if not which('ffprobe'):
+        logger.warning("Could not find ffprobe in PATH.")
+        return {}
+
     probecmd = ['ffprobe', '-v', 'quiet', '-hide_banner',
                 '-show_streams', str(fpath)]
-    probeproc = subprocess.run(probecmd, capture_output=True, text=True)
-    logger.debug(f"{probeproc.args} stderr output:\n{probeproc.stdout}")
+    try:
+        probeproc = subprocess.run(probecmd, capture_output=True, text=True)
+        logger.debug(f"{probeproc.args} stderr output:\n{probeproc.stdout}")
+    except FileNotFoundError as e:
+        logger.error(f"Failed to use ffprobe: {e}.")
+        return {}
 
     values = {}
     for line in probeproc.stdout.split("\n"):
@@ -204,7 +230,7 @@ def merge(info: Dict, data_dir: Path,
     # Reuse the logging handlers from the download module if possible
     # to centralize logs pertaining to stream video handling
     global logger
-    logger = logging.getLogger("download" + "." + info['id'])
+    logger = logging.getLogger("download" + "." + info.get('id', "_"))
     if not logger.hasHandlers():
         logger.setLevel(logging.DEBUG)
         # File output
@@ -221,6 +247,13 @@ def merge(info: Dict, data_dir: Path,
         conhandler.setLevel(logging.DEBUG)
         conhandler.setFormatter(formatter)
         logger.addHandler(conhandler)
+
+    if not which("ffmpeg"):
+        logger.error(
+            "Could not find ffmpeg! Make sure it is installed and in your PATH."
+            " Aborting merge phase."
+        )
+        return None
 
     video_seg_dir = data_dir / "vid"
     audio_seg_dir = data_dir / "aud"
@@ -247,13 +280,13 @@ def merge(info: Dict, data_dir: Path,
 
     ffmpeg_output_path_video = concat(
         datatype=vid_props.get("codec_name", "video"),
-        video_id=info['id'],
+        video_id=info.get("id", "UNKNOWN_ID"),
         seg_list=video_files,
         output_dir=data_dir
     )
     ffmpeg_output_path_audio = concat(
         datatype=aud_props.get("codec_name", "audio"),
-        video_id=info['id'],
+        video_id=info.get("id", "UNKNOWN_ID"),
         seg_list=audio_files,
         output_dir=data_dir
     )
@@ -268,12 +301,16 @@ def merge(info: Dict, data_dir: Path,
     # if vid_props.get("codec_name") == "vp9":
     #     ext = "mkv"
 
-    final_output_name = sanitize_filename(
-        f"{info.get('author')}_"
-        f"[{info.get('download_date')}]_{info.get('title')}_"
-        f"[{info.get('video_resolution')}]_{info.get('id')}"
-        f".{ext}"
-    )
+    if len(info.keys()) <= 1:
+        # Failed to load metadata.json
+        final_output_name = info.get('id', 'UNKNOWN_ID') + f".{ext}"
+    else:
+        final_output_name = sanitize_filename(
+            f"{info.get('author')}_"
+            f"[{info.get('download_date')}]_{info.get('title')}_"
+            f"[{info.get('video_resolution')}]_{info.get('id')}"
+            f".{ext}"
+        )
 
     final_output_file = output_dir / final_output_name
 

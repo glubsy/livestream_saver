@@ -7,14 +7,15 @@ from pathlib import Path
 from configparser import ConfigParser
 import traceback
 import asyncio
-from urllib.request import url2pathname
-
+from json import loads
+from typing import Optional
 from livestream_saver import extract, util
 from livestream_saver.download import YoutubeLiveBroadcast
 from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import get_channel_id
 from livestream_saver.request import Session
 from livestream_saver.smtp import NotificationHandler
+from livestream_saver.hooks import HookCommand
 
 logger = logging.getLogger('livestream_saver')
 logger.setLevel(logging.DEBUG)
@@ -143,7 +144,13 @@ channel ID deduced from the URL otherwise.'
         action='store_true',
         default=argparse.SUPPRESS,
         help='Enables sending e-mail reports to administrator.'\
-            f' (Default: {config.get("download", "email_notifications")})'
+            f' (Default: {config.getboolean("monitor", "email_notifications")})'
+    )
+    monitor_parser.add_argument('--skip-download',
+        action='store_true',
+        default=argparse.SUPPRESS,
+        help='Skip the download phase (useful to run hook scripts instead).'\
+            f' (Default: {config.getboolean("monitor", "skip_download")})'
     )
 
     # Sub-command "download"
@@ -224,7 +231,13 @@ streams has been successful. Only useful for troubleshooting.'
         action='store_true',
         default=argparse.SUPPRESS,
         help='Enable sending e-mail reports to administrator.'\
-            f' (Default: {config.get("download", "email_notifications")})'
+            f' (Default: {config.getboolean("download", "email_notifications")})'
+    )
+    download_parser.add_argument('--skip-download',
+        action='store_true',
+        default=argparse.SUPPRESS,
+        help='Skip the download phase (useful to run hook scripts instead).'\
+            f' (Default: {config.getboolean("download", "skip_download")})'
     )
 
     # Sub-command "merge"
@@ -265,43 +278,99 @@ streams has been successful. This is only useful for debugging.'
     return vars(parser.parse_args())
 
 
-def _get_target_params(config, args):
+# FIXME Obsolete
+def str_to_list(data: Optional[str]) -> Optional[list]:
+    """Parse a string formatted as a JSON list into a Python list."""
+    if not data:
+        return None
+    print(f"Config string to list: \"{data}\"")
+    try:
+        print(f"getting data: {loads(data)}")
+        return loads(data)
+    except Exception as e:
+        logger.exception(f"Invalid config string: {data}: {e}")
+
+
+def _get_hook_from_config(
+    config: ConfigParser,
+    hook_name: str,
+    section: str) -> Optional[HookCommand]:
+    # This tries to get from the DEFAULT section if not found
+    cmd = config.getlist(section, hook_name, fallback=None)
+    if not cmd:
+        return None
+    enabled = config.getboolean(section, hook_name + "_enabled", fallback=True)
+    if not enabled:
+        return None
+    return HookCommand(
+        cmd=cmd,
+        logged=config.getboolean(section, hook_name + "_logged", fallback=False)
+    )
+
+
+def _get_target_params(config: ConfigParser, args: dict) -> dict:
     """
     Deal with case where URL positional argument is not supplied by user, but
-    could be supplied in config file in appropriate section.
-    Return tuple (URL, channel_name, scan_delay)
-    taken from arguments + config.
+    could be supplied in config file in the appropriate section.
+    Used only by monitor mode currently.
     """
-    URL = args.get("URL", None)
-    rv = (None, None, config.getfloat("monitor", "scan_delay"))
+    # TODO We could compare the URL supplied as argument with the
+    # [channel monitor] URL value and automatically assign the corresponding
+    # scan_delay if it's not already present in the CLI args.
 
-    if URL is not None:
-        # We could also compare URL with [channel monitor] URL value and assign
-        # the corresponding scan_delay if it's not present in the CLI args?
-        rv = (
-            URL,
-            args.get("channel_name"),
-            config.getfloat("monitor", "scan_delay", vars=args)
-        )
-        return rv
+    m_hook = _get_hook_from_config(
+        config=config, 
+        hook_name="download_started_hook", 
+        section="monitor"
+    )
+    params = {
+        "URL": args.get("URL", None),
+        "channel_name": args.get("channel_name", None),
+        "scan_delay": config.getfloat("monitor", "scan_delay", vars=args),
+        "skip_download": config.getboolean("monitor", "skip_download", vars=args),
+        "hooks": {
+            "download_started": m_hook
+        }
+    }
 
+    if params.get("URL") is not None:
+        # Explicit argument, we can ignore the channel_monitor section
+        return params
+
+    # A section should override default values
     if config.has_section("channel_monitor"):
-        rv = (
-            config.get("channel_monitor", "URL", fallback=None),
-            config.get(
-                "channel_monitor", "channel_name", vars=args, fallback=None
-            ),
-            config.getfloat("channel_monitor", "scan_delay", vars=args)
+        params["URL"] = config.get(
+            "channel_monitor", "URL", fallback=None
         )
+        params["channel_name"] = config.get(
+            "channel_monitor", "channel_name", vars=args, fallback=None
+        )
+        # Use the value from monitor section if missing
+        params["scan_delay"] = config.getfloat(
+            "channel_monitor", "scan_delay", vars=args,
+            fallback=params["scan_delay"]
+        )
+        params["skip_download"] = config.getboolean(
+            "channel_monitor", "skip_download", vars=args, 
+            fallback=params["skip_download"]
+        )
+        hook = _get_hook_from_config(
+            config=config,
+            hook_name="download_started_hook",
+            section="channel_monitor"
+        )
+        # Not found in channel_monitor section nor even in DEFAULT,
+        # try the "monitor" section last, otherwise give up.
+        params["hooks"]["download_started"] = hook if hook else m_hook
 
-    if rv[0] is None:
+    if params.get("URL") is None:
         raise Exception(
             "No URL specified, neither command-line argument nor in"
             " a [channel_monitor] section of the config file."
             " Config file path was:"
             f" \"{config.get('DEFAULT', 'conf_file', vars=args)}\""
         )
-    return rv
+    return params
 
 
 def monitor_mode(config, args):
@@ -343,8 +412,13 @@ def monitor_mode(config, args):
                 url=f"https://www.youtube.com{target_live.get('url')}", # /watch?v=...
                 output_dir=sub_output_dir,
                 video_id=_id,
-                log_level=config.get("monitor", "log_level", vars=args),
-                session=session
+                session=session,
+                max_video_quality=config.getint(
+                    "monitor", "max_video_quality", vars=args, fallback=None
+                ),
+                hooks=args["hooks"],
+                skip_download=args.get("skip_download", False),
+                log_level=config.get("monitor", "log_level", vars=args)
             )
         except ValueError as e:
             # Constructor may throw
@@ -384,7 +458,16 @@ def monitor_mode(config, args):
             )
             pass
 
-        if live_broadcast.done:
+        if livestream.skip_download:
+            notif_h.send_email(
+                subject=(
+                    f"Skipped download of {ch.get_channel_name()} - "
+                    f"{livestream.title} {_id}"
+                ),
+                message_text=f"Hooks scheduled to run were: {args.get('hooks')}"
+            )
+
+        if livestream.done:
             logger.info(f"Finished downloading {_id}.")
             notif_h.send_email(
                 subject=f"Finished downloading {ch.get_channel_name()} - \
@@ -431,8 +514,15 @@ def download_mode(config, args):
             url=args.get("URL"),
             output_dir=args["output_dir"],
             video_id=args["video_id"],
-            log_level=config.get("download", "log_level", vars=args),
-            session=session
+            max_video_quality=config.getint(
+                "download", "max_video_quality", vars=args, fallback=None
+            ),
+            hooks=args["hooks"],
+            skip_download=config.getboolean(
+                "download", "skip_download", vars=args, fallback=False
+            ),
+            session=session,
+            log_level=config.get("download", "log_level", vars=args)
         )
     except ValueError as e:
         logger.critical(e)
@@ -491,6 +581,7 @@ def merge_mode(config, args):
         return 1
     return 0
 
+
 def log_enabled(config, args, mode_str):
     """Sanitize log level input value, return False if disabled by user."""
     if level := config.get(mode_str, "log_level", vars=args):
@@ -542,6 +633,7 @@ def init_config():
         "delete_source": "False",
         "keep_concat": "False",
         "no_merge": "False",
+        "skip_download": "False",
 
         "email_notifications": "False",
         "list_formats": "False",
@@ -551,9 +643,15 @@ def init_config():
         "from_email": "",
     }
 
+    def parse_list(data):
+        if not data:
+            return None
+        return [i.strip() for i in data.split(',')]
+
     config = ConfigParser(
         CONFIG_DEFAULTS,
-        # interpolation=None
+        interpolation=None,
+        converters={'list': parse_list}
     )
     # Set defaults for each section
     config.add_section("monitor")
@@ -586,10 +684,7 @@ def parse_config(config, args):
 
 def main():
     config = init_config()
-
     args = parse_args(config)
-    # print(f"parse_args() -> {args}")
-
     config = parse_config(config, args)
     # print(f"parse_config() -> {[opt for sect in config.sections() for opt in config.options(sect)]}")
 
@@ -604,12 +699,15 @@ def main():
 
     logfile_path = Path("")
     if sub_cmd == "monitor":
-        URL, channel_name, scan_delay = _get_target_params(config, args)
-        args["URL"] = URL
+        params = _get_target_params(config, args)
+        args["URL"] = params.get("URL")
+        channel_name = params.get("channel_name")
         args["channel_name"] = channel_name
-        args["scan_delay"] = scan_delay
+        args["scan_delay"] = params.get("scan_delay")
+        args["hooks"] = params.get("hooks")
+        args["skip_download"] = params.get("skip_download")
 
-        channel_id = get_channel_id(URL, "youtube")
+        channel_id = get_channel_id(args["URL"], "youtube")
         args["channel_id"] = channel_id
 
         # We need to setup output dir before instanciating downloads
@@ -636,6 +734,13 @@ def main():
             )
         )
         URL = args.get("URL", "")
+        args["hooks"] = {}
+        args["hooks"]["download_started"] = _get_hook_from_config(
+            config=config,
+            hook_name="download_started_hook",
+            section=sub_cmd
+        )
+
         video_id = extract.get_video_id(url=URL)
         args["video_id"] = video_id
         output_dir = util.create_output_dir(

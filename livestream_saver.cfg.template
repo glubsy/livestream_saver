@@ -1,5 +1,6 @@
 [DEFAULT]
 log_level = DEBUG
+
 # Path to cookies that is commmon to all modes:
 cookie = 
 
@@ -11,27 +12,74 @@ smtp_password =
 to_email = 
 from_email =
 
+
 [monitor]
-scan_delay = 15.5
 log_level = INFO
 
+# Delay between scan retries in minutes
+scan_delay = 15.5
+
+# Spawn a subprocess of your choosing (for all channels monitored):
+download_started_hook = 
+
+
 [download]
-scan_delay = 2.5
 log_level = WARNING
+
+# If live has not started yet, delay retrying by this many minutes
+scan_delay = 2.5
+
+# Path to Netscape formatted cookie file
 # cookie = /path/to/cookies.txt
 
-# NOTE: for now, you can only have ONE active (uncommented) channel_monitor active!
+# Spawn a subprocess of your choosing:
+download_started_hook = 
+
+
+[channel_monitor]
+channel_name = Gawr Gura
+scan_delay = 20.0
+URL = https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g
+
+# Spawn a subprocess of your choosing (for this target channel only):
+download_started_hook = yt-dlp, 
+	--embed-thumbnail,
+	--fragment-retries, 50,
+	-o, %(upload_date)s %(uploader)s %(title)s_[%(height)s]_%(id)s.%(ext)s,
+	# -f, bestvideo+bestaudio,
+	# --cookies, %COOKIE_PATH%,
+	--add-metadata,
+	%VIDEO_URL%
+
+# Disable spawning the command above (same as commenting the command out)
+download_started_hook_enabled = false
+
+# Log the command's output (both stdout & stderr)
+download_started_hook_logged = true
+
+# Skip download phase and only run the subprocess when a stream has started
+skip_download = false
+
+
 # [channel_monitor]
 # channel_name = Matsuro Meru
-# scan_delay = 20.0
+# scan_delay = 15.0
 # URL = https://www.youtube.com/channel/UCIJ6TGsTcBlYGUj-zbL60EQ
+
 
 # [channel_monitor]
 # channel_name = Kamiko Kana
 # scan_delay = 20.0
 # URL = https://www.youtube.com/c/kamikokana
 
-[channel_monitor]
-channel_name = Gawr Gura
-scan_delay = 20.0
-URL = https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g
+
+# [channel_monitor]
+# channel_name = Prune
+# scan_delay = 25.0
+# URL = https://www.youtube.com/c/Prune73
+
+
+# [channel_monitor]
+# channel_name = Inukai Purin
+# scan_delay = 20.0
+# URL = https://www.youtube.com/channel/UCdrQWcX7XLDSUEh9SAxnyBg
