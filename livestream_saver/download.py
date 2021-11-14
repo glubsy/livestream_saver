@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from os import sep, path, makedirs, listdir, wait
+from os import sep, path, makedirs, listdir
 from sys import stderr
 from platform import system
 import logging
