@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any
 from subprocess import Popen, DEVNULL
 from datetime import datetime
 
-from livestream_saver.download import YoutubeLiveStream
+from livestream_saver.download import YoutubeLiveBroadcast
 
 
 class HookCommand():
@@ -33,7 +33,7 @@ class HookCommand():
             )
 
 
-    def spawn_subprocess(self, stream: YoutubeLiveStream):
+    def spawn_subprocess(self, stream: YoutubeLiveBroadcast):
         if not self.cmd:
             return
         # Make a copy to avoid using stale data

@@ -54,3 +54,6 @@ class EmptySegmentException(Exception):
 
 class ForbiddenSegmentException(Exception):
     pass
+
+class FailedSegmentDownload(Exception):
+    pass

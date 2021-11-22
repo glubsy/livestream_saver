@@ -314,6 +314,7 @@ def merge(info: Dict, data_dir: Path,
 
     final_output_file = output_dir / final_output_name
 
+    ffmpeg_error = False
     try_thumb = True
     while True:
         ffmpeg_command = [
@@ -339,6 +340,8 @@ def merge(info: Dict, data_dir: Path,
                 encoding="utf-8"
             )
             logger.debug(f"{cproc.args} stderr output:\n{cproc.stderr}")
+            if "Non-monotonous DTS in output stream" in cproc.stderr:
+                ffmpeg_error = True
         except subprocess.CalledProcessError as e:
             logger.debug(
                 f"{e.cmd} return code {e.returncode}. STDERR:\n{e.stderr}"
@@ -359,6 +362,8 @@ def merge(info: Dict, data_dir: Path,
                     )
                     final_output_file.unlink()
                 continue
+            if "Non-monotonous DTS in output stream" in e.stderr:
+                ffmpeg_error = True
 
         if not final_output_file.exists():
             logger.critical(
@@ -385,7 +390,16 @@ def merge(info: Dict, data_dir: Path,
         ffmpeg_output_path_audio.unlink()
         ffmpeg_output_path_video.unlink()
 
-    if delete_source:
+    if len(missing_audio) > 0 or len(missing_video) > 0:
+        logger.warning(
+            "There were some missing segments, skipping deletion of source files."
+        )
+    elif ffmpeg_error:
+        logger.warning(
+            "There seem to have been errors while processing with ffmpeg."
+            " Skipping deletion of source files."
+        )
+    elif delete_source:
         logger.info("Deleting source segments in {} and {}...".format(
             video_seg_dir, audio_seg_dir)
         )

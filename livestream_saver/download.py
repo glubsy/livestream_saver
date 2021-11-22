@@ -1,15 +1,17 @@
 #!/usr/bin/env python
-from os import sep, path, makedirs, listdir, wait
+from configparser import MAX_INTERPOLATION_DEPTH
+from itertools import takewhile
+from os import name, sep, path, makedirs, listdir
 from sys import stderr
 from platform import system
 import logging
 from datetime import date, datetime
 from time import time, sleep
-from json import dumps, dump, loads
+from json import dumps, dump
 from contextlib import closing
 from enum import Flag, auto
 import asyncio
-from typing import Optional, Dict, Tuple, Union, List
+from typing import Awaitable, Optional, Dict, Tuple, Union, List, Set
 from types import MethodType
 from pathlib import Path
 from queue import LifoQueue
@@ -18,7 +20,6 @@ import re
 import urllib.request
 import urllib.error
 from http.client import IncompleteRead
-import subprocess
 # import concurrent.futures
 
 import pytube
@@ -30,8 +31,9 @@ import pytube.exceptions
 from livestream_saver import exceptions
 from livestream_saver import extract
 from livestream_saver import util
+from livestream_saver.constants import *
 # import livestream_saver
-from livestream_saver.request import Session
+from livestream_saver.request import ASession as Session
 
 SYSTEM = system()
 ISPOSIX = SYSTEM == 'Linux' or SYSTEM == 'Darwin'
@@ -80,6 +82,7 @@ class PytubeYoutube(YouTube):
         try:
             self._watch_html = self.session.make_request(url=self.watch_url)
         except Exception as e:
+            logging.debug(f"Error getting the watch_html: {e}")
             self._watch_html = None
 
         return self._watch_html
@@ -194,7 +197,7 @@ class YoutubeLiveBroadcast():
         output_dir: Path,
         session: Session,
         video_id: Optional[str] = None,
-        max_video_quality: Optional[str] = None,
+        filter_args: Dict = {},
         hooks: dict = {},
         skip_download = False,
         log_level = logging.INFO
@@ -203,29 +206,25 @@ class YoutubeLiveBroadcast():
         self.session: Session = session
         self.url = url
         self.wanted_itags: Optional[Tuple] = None
-        self.max_video_quality: Optional[str] = max_video_quality
+        self.filter_args = filter_args
         self.video_id = video_id if video_id is not None \
                                  else extract.get_video_id(url)
-
         self._json: Dict = {}
-
         self.ptyt = PytubeYoutube(url, session=session, parent=self)
-
         self.download_start_triggered = False
         self.hooks = hooks
         self.skip_download = skip_download
-
         self.selected_streams: set[pytube.Stream] = set()
         self.video_stream = None
         self.video_itag = None
         self.audio_stream = None
         self.audio_itag = None
-
         self._scheduled_timestamp = None
         self._start_time: Optional[str] = None
-
         self.seg = 0
         self._status = Status.OFFLINE
+        self._has_started = False
+        self._has_ended = False
         self.done = False
         self.error = None
 
@@ -239,9 +238,8 @@ class YoutubeLiveBroadcast():
         # global logger
         self.logger = setup_logger(self.output_dir, log_level, self.video_id)
 
-        self.video_outpath = self.output_dir / 'vid'
-        self.audio_outpath = self.output_dir / 'aud'
-        self.spawned_companion: bool = False
+        # self.video_outpath = self.output_dir / 'vid'
+        # self.audio_outpath = self.output_dir / 'aud'
 
     @property
     def streams(self) -> pytube.StreamQuery:
@@ -250,6 +248,8 @@ class YoutubeLiveBroadcast():
     def print_available_streams(self, logger: logging.Logger = None) -> None:
         if logger is None:
             logger = self.logger
+        if len(self.streams) == 0:
+            raise Exception("No stream available.")
         for s in self.streams:
             logger.info(
                 "Available {}".format(s.__repr__().replace(' ', '\t'))
@@ -260,14 +260,15 @@ class YoutubeLiveBroadcast():
         vcodec: str = "mp4",
         acodec: str = "mp4",
         itags: Optional[str] = None,
-        maxq: Optional[str] = None) -> None:
-        """Sets selected_streams property to a set of streams selected from
+        maxq: Optional[str] = None
+    ) -> None:
+        """Sets the selected_streams property to a Set of streams selected from
         user supplied parameters (itags, or max quality threshold)."""
         self.logger.debug(f"Filtering streams: itag {itags}, maxq {maxq}")
 
         submitted_itags = util.split_by_plus(itags)
 
-        selected_streams = set()
+        selected_streams: Set[pytube.Stream] = set()
         # If an itag is supposed to provide a video track, we assume
         # the user wants a video track. Same goes for audio.
         wants_video = wants_audio = True
@@ -349,9 +350,11 @@ class YoutubeLiveBroadcast():
             raise Exception(f"No stream assigned to {self.video_id} object!")
         else:
             # We emulate an initializator because no idea how to subclass
-            # pytube.Stream unless with a monkeypatch
+            # pytube.Stream other than with a monkeypatch
             # TODO: see https://stackoverflow.com/questions/100003/what-are-metaclasses-in-python?rq=1
             for stream in self.selected_streams:
+                stream.parent = self
+                stream.logger = self.logger
                 stream.missing_segs = []
                 stream.start_seg = 0
                 stream.current_seg = 0
@@ -380,14 +383,13 @@ class YoutubeLiveBroadcast():
         q = LifoQueue(maxsize=5)
         self.logger.debug(f"Filtering {tracktype} streams by type: \"{codec}\"")
         streams = self.streams.filter(
-            subtype=codec,
-            type=tracktype
+            subtype=codec, type=tracktype
         )
 
         if len(streams) == 0:
             self.logger.debug(
                 f"No {tracktype} streams for type: \"{codec}\". "
-                "Falling back to removing selection criterium."
+                "Falling back to filtering without any criterium."
             )
             streams = self.streams.filter(type=tracktype)
 
@@ -416,7 +418,7 @@ class YoutubeLiveBroadcast():
             query = q.get()
             # Filter anything above our maximum desired resolution
             query = query.filter(custom_filter_functions=custom_filters) \
-                            .order_by(criteria).desc()
+                .order_by(criteria).desc()
             selected_stream = query.first()
             if q.empty():
                 break
@@ -426,7 +428,7 @@ class YoutubeLiveBroadcast():
                 f"Could not get a specified {tracktype} stream! "
             )
             selected_stream = self.streams.filter(type=tracktype) \
-                        .order_by(criteria).desc().first()
+                .order_by(criteria).desc().first()
             self.logger.critical(
                 f"Falling back to best quality available: {selected_stream}"
             )
@@ -499,7 +501,11 @@ class YoutubeLiveBroadcast():
         return (s for s in self.streams if s.includes_audio_track())
 
     # was is_live()
-    def live_status(self, update=False) -> None:
+    def live_status(self, force_update=False) -> None:
+        if force_update:
+            self.ptyt._watch_html = None
+            self._json = {}
+
         if not self.json:
             return
 
@@ -681,7 +687,7 @@ class YoutubeLiveBroadcast():
     def download_thumbnail(self) -> None:
         # TODO write more thumbnail files in case the first one somehow
         # got updated, by renaming, then placing in place.
-        thumbnail_path = self.output_dir / ('thumbnail_' + self.video_id)  
+        thumbnail_path = self.output_dir / ('thumbnail_' + self.video_id)
         if self.ptyt.thumbnail_url and not path.exists(thumbnail_path):
             with closing(urllib.request.urlopen(self.ptyt.thumbnail_url)) as in_stream:
                 write_to_file(self.logger, in_stream, thumbnail_path)
@@ -739,6 +745,7 @@ class YoutubeLiveBroadcast():
             info["audio_streams"].append(s_info)
         return info
 
+    # Obsolete?
     def update_status(self):
         self.logger.debug("update_status()...")
         # force update
@@ -825,7 +832,8 @@ class YoutubeLiveBroadcast():
     # This probably won't work with the DASH video stream, so we'll have
     # to download the progressive (video+audio) track only.
     def update_download_urls(self):
-
+        video_stream = self.video_streams[0]
+        audio_stream = self.audio_streams[0]
         self.logger.info(f"Selected Video {video_stream}")
         self.logger.info(f"Selected Audio {audio_stream}")
 
@@ -858,11 +866,19 @@ class YoutubeLiveBroadcast():
         return 10
 
     def download(self, wait_delay: float = 2.0):
+        """High level entry point to download selected streams separately.
+        Can be called from synchronous code.
+        """
+        self.filter_streams(**self.filter_args)
+        self.logger.info(f"Selected streams: {self.selected_streams}")
+
         # In case we forgot to fetch them first, get the default
         if not self.selected_streams:
             self.logger.warning(
                 "Missing selected streams, getting best available by default.")
             self.filter_streams()
+            if not self.selected_streams:
+                raise Exception("No stream found")
 
         current_seg = self.get_currently_broadcast_segment()
 
@@ -870,22 +886,33 @@ class YoutubeLiveBroadcast():
             collect_missing_segments(self.output_dir, stream)
             stream.current_seg = current_seg
 
-        asyncio.run(self.async_download())
-        # loop = asyncio.get_event_loop()
-        # dltask = loop.create_task(self.async_download())
-        # try:
-        #     loop.run_until_complete(dltask)
-        # except KeyboardInterrupt:
-        #     loop.stop()
-        # finally:
-        #     loop.close()
+        # DEBUG if not using a loop already:
+        # asyncio.run(self.async_download())
+
+        loop = asyncio.get_event_loop()
+        dltask = loop.create_task(self.async_download())
+        try:
+            loop.run_until_complete(dltask)
+        except KeyboardInterrupt:
+            loop.stop()
+        finally:
+            # Clean up async generators
+            loop.run_until_complete(loop.shutdown_asyncgens())
 
     async def async_download(self):
+        """Run the download threads."""
         loop = asyncio.get_running_loop()
-        stream_ended_event = asyncio.Event()
+        # Used to signal offline state detection to both stream downloads
+        offline_event = asyncio.Event()
+
+        for stream in self.selected_streams:
+            stream.offline_event = offline_event
+            sub_dir: Path = self.output_dir / ("f" + str(stream.itag))
+            sub_dir.mkdir(exist_ok=True)
+            stream.sub_dir = sub_dir
 
         tasks = [
-            loop.create_task(stream.async_download(loop, stream_ended_event)) 
+            loop.create_task(stream.async_download(loop))
             for stream in self.selected_streams
         ]
         try:
@@ -905,7 +932,7 @@ class YoutubeLiveBroadcast():
         print(f"Results: {results}")
 
         # loop.run_forever()
-        # try:  
+        # try:
         #     result = await aw
         # except KeyboardInterrupt:
         #     loop.stop()
@@ -951,7 +978,7 @@ class YoutubeLiveBroadcast():
         # missingqs = []
 
         # for stream in self.selected_streams:
-            
+
         #     missingq = asyncio.Queue()
         #     for miss in stream.missing_segs:
         #         missingq.put_nowait(miss)
@@ -1001,7 +1028,7 @@ class YoutubeLiveBroadcast():
         #     num_idx += 1
 
         # Missing segments always done first, because usually closer to beginning
-        # Then from 
+        # Then from
 
         # task1 = loop.create_task(long_task(url="http://127.0.0.1:9999/133/", name="①", loop=loop))
         # task2 = loop.create_task(long_task(url="http://127.0.0.1:9999/140/", name="②", loop=loop))
@@ -1014,7 +1041,7 @@ class YoutubeLiveBroadcast():
         # loop.run_until_complete(task5)
         # loop.run_until_complete(task6)
         # tasks = asyncio.gather(task1, task2, task3, task4, task5, task6, loop=loop)
-       
+
         # for q in missingqs:
         #     _ = q.join()
 
@@ -1027,15 +1054,28 @@ class YoutubeLiveBroadcast():
         # loop.run_until_complete(ftasks)
 
 
-        # TODO If  finished or fatal exception (not live?), end everything? or 
+        # TODO If finished or fatal exception (not live?), end everything? or
         # try to still finish (missing segs) download anyway while we know it's over
 
 
         # loop.run_until_complete(tasks)
 
 
+    def on(self, event: str):
+        if hook := self.hooks.get(event, None):
+            hook.spawn_subprocess(self)
+
+    def has_started(self) -> bool:
+        self.status()
+        if self._status & Status.OFFLINE:
+            self._has_started = True
+        return self._has_started
+
+    def has_ended(self) -> bool:
+        return self._has_started and self._has_ended
+
     # Obsolete
-    def download_old(self, wait_delay: float = 2.0):
+    def download_sync(self, wait_delay: float = 2.0):
         self.seg = get_latest_segment((self.video_outpath, self.audio_outpath))
 
         if self.seg > 0:
@@ -1054,7 +1094,6 @@ class YoutubeLiveBroadcast():
         # from that segment onward (like ytdl), but also download all the segments
         # from the start in parallel.
 
-        attempt = 0
         need_status_update = True
         while not self.done and not self.error:
             try:
@@ -1102,6 +1141,7 @@ class YoutubeLiveBroadcast():
             # self.spawn_companion(self.url)
 
             while True:
+                attempt = 0
                 try:
                     self.download_segments()
                 except (exceptions.EmptySegmentException,
@@ -1110,9 +1150,7 @@ class YoutubeLiveBroadcast():
                         ValueError) as e:
                     self.logger.info(e)
                     # Force a status update
-                    self.ptyt._watch_html = None
-                    self._json = {}
-                    self.live_status()
+                    self.live_status(force_update=True)
                     if Status.LIVE | Status.VIEWED_LIVE in self._status:
 
                         if attempt >= 15:
@@ -1269,182 +1307,211 @@ async def worker_retries(
     name: str,
     queue,
     loop: asyncio.AbstractEventLoop,
+    events: dict[str, asyncio.Event]
 ) -> None:
-    while True:
+    # The retry task should never throw and exception to trigger a status update.
+    # It should as as a simple consumer thread for the queue.
+    offline_event = events["offline"]
+    forbidden_event = events["forbidden"]
+    while not (offline_event.is_set() and forbidden_event.is_set()):
         seg = await queue.get()
         print(f"Got from queue {name} : {seg}. {queue}")
-        # DEBUG only
-        # url = seg.base_url
-        # newurl = url + f"{seg.num:0{10}}" + ("_a.ts" if "f140" in url else "_v.ts")
         try:
-            res = await loop.run_in_executor(None, simulate_req, seg.url, name)
+            res = await loop.run_in_executor(
+                None, seg.download_sync, name, 3.0, 3
+            ) # res = await seg.download_async(name)
+        except exceptions.ForbiddenSegmentException:
+            # TODO determine who can set the forbidden event?
+            print("Forbidden in retry, setting forbidden event!")
+            forbidden_event.set()
+            raise
+        except (IncompleteRead, ValueError) as e:
+            # We treat this as a signal that the stream may have ended
+            stream.logger.exception(e)
+            forbidden_event.set()
+        except IOError as e:
+            stream.logger.exception(e)
+            raise
         except Exception as e:
-            # TODO count errors and attach to Segment
-            # TODO use PriorityQueue to push back segments with higher number of errors to the back of the queue
+            # TODO count number of errors and attach that to Segment
+            # TODO use PriorityQueue to push back segments with higher number
+            # of errors to the back of the queue
             print(f"Exception in retry: {seg}: {e}")
-            pass
+            print("Giving up after 1 try (DEBUG)!")
+            forbidden_event.set()
+            # TODO raise forbidden error after 5 tries?
 
-        # TODO
-        # with closing(res) as in_stream:
-        #     headers = in_stream.headers
-        #     status = in_stream.status
-        #     if not write_to_file(self.logger, in_stream, audio_segment_filename):
-        #         if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
-        #             raise exceptions.EmptySegmentException(\
-        #                 f"Segment {self.seg} (audio) is empty, stream might have ended...")
-        #         self.logger.warning(f"Waiting for {wait_sec} seconds before retrying...")
-        #         sleep(wait_sec)
         queue.task_done()
-
-
-async def worker(
-    stream: pytube.Stream,
-    start: int,
-    upto: int,
-    name: str,
-    queue,
-    loop: asyncio.AbstractEventLoop,
-) -> None:
-    # upto = 10 if "vid" in url else 20
-    # if not loop:
-    #     loop = asyncio.get_event_loop()
-    seg = Segment(start, stream)
-    while True:
-        # newurl = stream.url + f"{seg.num:0{10}}" + ("_a.ts" if "f140" in seg.url else "_v.ts")
-        newurl = seg.url
-        # fut = asyncio.Future()
-        try:
-            fut = await loop.run_in_executor(None, simulate_req, newurl, name)
-        except Exception as e:
-            # fut.set_exception(e)
-            # DEBUG
-            if "404" in str(e):
-                break
-            print(f"{name} Error getting {seg}: {e}. Putting to queue.")
-            await queue.put(seg)
-            # queue.put_nowait(seg)
-        # print(f"Read data from: {newurl}")
-        # print(await asyncio.sleep(uniform(0.5, 5.5), result=f"{datetime.now()} read {seg}"))
-        
-        # Create a new object here, otherwise the change will affect the item placed in the queue!
-        seg += 1
-        if upto > 0 and seg.num >= upto:
-            print(f"{name} Reached upto {upto}.")
-            break
-        # DEBUG simulate end of stream -> 403 error
-        if seg.num > 20:
-            print(f"{name} Reached end of stream...")
-            break
-            
-    # loop.stop()
-    print(f"{name} has finished.")
-    # await queue.join()
-    return
-
-
-def simulate_req(url, name):
-    print(f"{datetime.now()} {url} ↘ {name}")
-    res = urllib.request.urlopen(url).read()
-    # DEBUG simulate slower download speed and thus blocking longer
-    # sleep(1 if "vid" in url else 4)
-    print(f"{datetime.now()} {url} ☻ {name}")
-    return res
-
-
-# Just to test blocking and see if it's still concurrent (worse but works too)
-async def long_task(loop, url, name):
-    f = await loop.run_in_executor(None, coro_block_req, url, name)
-    # print(f"Read data from: {newurl}")
-    # print(await asyncio.sleep(uniform(0.5, 5.5), result=f"{datetime.now()} read {seg}"))
-    return
-
-def coro_block_req(url, name):
-    seg = 0
-    # max = 10 if "vid" in url else 20
-    max = 10
-    while seg <= max:
-        # sleep(uniform(0.5, 3))
-        newurl = url + f"{seg:0{10}}" + ("_a.ts" if "f140" in url else "_v.ts")
-        print(f"{datetime.now()} {newurl} ↘ {name}")
-        res = urllib.request.urlopen(newurl).read()
-        # sleep(uniform(0.5, 3))
-        print(f"{datetime.now()} {newurl} ☻ {name}")
-        seg += 1
+    print("RETRY loop is done!")
 
 
 # pytube.Stream
-async def async_download(self, loop, stream_ended_event):
-    fnums = [f"{self.itag} ①", f"{self.itag} ②", f"{self.itag} ③",]
+async def async_download(
+    self: pytube.Stream,
+    loop: asyncio.AbstractEventLoop,
+    ):
+    basecolor = BLUE if self.type == "video" else YELLOW
+    fnums = [
+        f"{basecolor}{self.itag}{ENDC} {BROWN}①{ENDC}",
+        f"{basecolor}{self.itag}{ENDC} {CYAN}②{ENDC}",
+        f"{basecolor}{self.itag}{ENDC} {PURPLE}③{ENDC}",
+    ]
+
+    # Keep track of missing segments
+    missingq = asyncio.Queue()
+    self.missingq = missingq
+    for miss in self.missing_segs:
+        missingq.put_nowait(Segment(miss, self))
+    # Clear missing_segs as it is now an unused list of ints
+    del self.missing_segs
+
+    # Signals when the server refuses all further requests. We need one per stream.
+    self.forbidden_event = asyncio.Event()
+    events = {
+        "forbidden": self.forbidden_event,
+        "offline": self.offline_event
+    }
+
     num_idx = 0
     tasks = []
-
-    missingq = asyncio.Queue()
-
-    for miss in self.missing_segs:
-        # FIXME missing_segs is now left as an unused list of ints
-        missingq.put_nowait(Segment(miss, self))
-    print(f"Queue for stream {fnums[num_idx]} : {missingq}")
-
+    self.parent.logger.debug(f"Queue for stream {fnums[num_idx]} : {missingq}")
 
     # Missing segments, and will keep adding more as needed (due to errors)
-    retry_task = asyncio.create_task(
+    retry_name = fnums[num_idx]
+    retry_task = loop.create_task(
         worker_retries(
             stream=self,
-            name=fnums[num_idx],
+            name=retry_name,
             queue=missingq,
-            loop=loop
+            loop=loop,
+            events=events
         ),
-        name=f"Retries {self.itag}"
+        name=retry_name
     )
-    # tasks.append(retry_task)
     num_idx += 1
 
     # Catching up from the most recent segment we've got on disk
-    if self.current_seg >= 10:
-        task = asyncio.ensure_future(
-            worker(
-                stream=self,
-                start=self.start_seg,
-                upto=self.current_seg,
-                name=fnums[num_idx],
-                queue=missingq,
-                loop=loop
-            )
-        )
-        tasks.append(task)
-        num_idx += 1
-
-    # Start from the currently broadcast segment
-    task = asyncio.ensure_future(
-        worker(
+    dl_h_catchup = None
+    if self.start_seg < self.current_seg and self.current_seg >= 10:
+        dl_h_catchup = DownloadHandler(
             stream=self,
-            start=self.current_seg,
-            upto=-1,
+            start_seg=self.start_seg,
+            upto_seg=self.current_seg,
             name=fnums[num_idx],
             queue=missingq,
-            loop=loop
+            loop=loop,
+            events=events
         )
-    )
-    tasks.append(task)
+        tasks.append(loop.create_task(dl_h_catchup.worker(), name=dl_h_catchup.name))
+    dl_h_catchup_name = fnums[num_idx]
     num_idx += 1
 
-    # ftasks = asyncio.gather(*tasks, loop=loop, return_exceptions=True)
-    # loop = asyncio.get_event_loop()
-    done, pending = await asyncio.wait(
-        tasks, return_when=asyncio.FIRST_EXCEPTION)
+    # Start from the currently broadcast segment
+    dl_h = DownloadHandler(
+        stream=self,
+        start_seg=self.current_seg,
+        upto_seg=-1,
+        name=fnums[num_idx],
+        queue=missingq,
+        loop=loop,
+        events=events
+    )
+    tasks.append(loop.create_task(dl_h.worker(), name=dl_h.name))
+    num_idx += 1
 
-    print(f"Joining retry task {retry_task}... queue {missingq}")
-    await missingq.join()
-    print(f"Joined retry task {retry_task} queue {missingq}")
-    retry_task.cancel()
-    print(f"Canceled retry task done {retry_task}.")
+    # try:
+    #     fl = await asyncio.gather(
+    #         retry_task, *tasks, return_exceptions=False)
+    # except Exception as e:
+    #     print(f"raised {e}")
+
+    while True:
+        await asyncio.sleep(1)
+        print("slept 1")
+        try:
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_EXCEPTION)
+            print(f"Tasks returned! {BLUE}Done: {done}{ENDC} {BROWN}Pending: {pending}{ENDC}")
+            got_exception = False
+            tasks = []
+            for task in done:
+                if task.exception():
+                    got_exception = True
+                    print(f"{RED}Exception in done task:{ENDC} {task.exception()}")
+                    # DEBUG
+                    if "END" in str(task.exception()):
+                        print(f"Exception signals end of stream - {PURPLE}Updating status...{ENDC}")
+                        status = self.parent.status(update=True)
+                        print(f"{YELLOW}status is {status}{ENDC}")
+                        if status & Status.OFFLINE:
+                            print("FAKE Status is offline. Setting offline event.")
+                            self.offline_event.set()
+                            # We should keep trying to get queued segments just in case we can still get them
+                            # await missingq.join()
+                    else:
+                        break
+                    # Recreate the tasks because exceptions are not fatal
+                    if task.get_name() == dl_h.name:
+                        tasks.append(loop.create_task(dl_h.worker(), name=dl_h.name))
+                    elif task.get_name() == dl_h_catchup_name and dl_h_catchup is not None:
+                        tasks.append(loop.create_task(dl_h_catchup.worker(), name=dl_h_catchup_name))
+
+            if not got_exception:
+                print(f"{RED}No exception anymore, {self.itag} is done!{ENDC}")
+                break
+
+            for task in pending:
+                print(f"Adding back pending task {task}")
+                tasks.append(task)
+
+            if len(tasks) == 0:
+                print("No more tasks active. Breaking")
+                break
+
+            # if dl_h_catchup is not None:
+            #     tasks.append(loop.create_task(dl_h_catchup.worker(), name=dl_h_catchup.name))
+            # tasks.append(loop.create_task(dl_h.worker(), name=dl_h.name))
+            print(f"{GREEN}Resuming tasks {tasks}{ENDC}")
+
+            # exceptions = []
+            # for d in done:
+            #     if d.exception():
+            #         exceptions.append(d.exception())
+            # for p in pending:
+            #     if p.exception():
+            #         exceptions.append(p.exception())
+
+            # if not exceptions:
+            #     print("No exception found. Stopping loop.")
+            #     break
+            # print(f"Got exception: {exceptions}. Continuing...")
+            # future_list.cancel()
+            # await asyncio.sleep(1)
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_EXCEPTION)
+        except Exception as e:
+            print(f"{RED}Exception catch! {str(e)}{ENDC}")
+            if "END" in str(e):
+                print(f"Exception signals end of stream - {PURPLE}Update status?{ENDC}")
+                self.offline_event.set()
+                await missingq.join()
+
+
+    # print(f"Joining retry task's missing queue {missingq} for {self.itag}")
+    if retry_task.done():
+        if retry_task.exception():
+            print(f"Exception in {retry_task}")
+            retry_task.cancel()
+    else:
+        await missingq.join()
+        print(f"Joined retry task queue {missingq} for {self.itag}")
+        retry_task.cancel()
+        print(f"Canceled retry task done {retry_task} for {self.itag}")
 
     for pending_task in pending:
         pending_task.cancel()
-    
-    for d in done:
-        d.cancel()
 
+    await asyncio.gather(retry_task, *tasks, return_exceptions=True)
 
     # try:
     # loop.run_forever()
@@ -1452,6 +1519,7 @@ async def async_download(self, loop, stream_ended_event):
     #     loop.stop()
     #     loop.close()
     # concurrent.futures.as_completed(tasks)
+    return f"{self.itag} is done downloading"
 
 
 class Segment():
@@ -1475,10 +1543,10 @@ class Segment():
 
     def __add__(self, o):
         return Segment(
-            num=self.num + o, 
+            num=self.num + o,
             stream=self.stream
         )
- 
+
     # def __iadd__(self, o):
     #     if isinstance(o, Segment):
     #        self.num += o.num
@@ -1486,7 +1554,168 @@ class Segment():
     #         self.num += o
     #     return self
 
+    @property
+    def filename(self):
+        return self.stream.sub_dir / f'{self.num:0{10}}.ts'
+
+    def download_sync(self, name, wait_sec: float = 3.0, max_attempt: int = 3):
+        print(f"{datetime.now()} {self.geturl()} ↘ {name}")
+
+        attempt = 0
+        while True:
+            try:
+                with closing(urllib.request.urlopen(self.geturl())) as in_stream:
+                    if not self.write_to_file_sync(in_stream):
+                        if in_stream.status == 204 \
+                        and in_stream.headers.get('X-Segment-Lmt', "0") == "0":
+                            raise exceptions.EmptySegmentException(
+                                f"Segment {self} is empty (itag "
+                                f"{self.stream.itag}, {self.stream.subtype}) "
+                                "stream might have ended...")
+                        break
+                print(f"{datetime.now()} {self.geturl()} ☻ {name}")
+                return
+            except urllib.error.URLError as e:
+                self.stream.logger.critical(f'{type(e)}: {e} for seg {self.num} {self.stream.itag}')
+                # FIXME use a regex here or make all lower case?
+                if 'Forbidden'.lower() in str(e.reason).lower():
+                    # Usually this means the stream has ended and parts
+                    # are now unavailable. The status should be error 403.
+                    raise exceptions.ForbiddenSegmentException(e.reason)
+                if attempt >= max_attempt:
+                    raise
+                attempt += 1
+                self.stream.logger.critical(
+                    f"Waiting for {wait_sec} seconds before retrying... "
+                    f"(attempt {attempt}/{max_attempt})")
+                sleep(wait_sec)
+                continue
+            except (IncompleteRead, ValueError) as e:
+                # We treat this as a signal that the stream may have ended
+                self.stream.logger.exception(e)
+                raise
+            except IOError as e:
+                self.stream.logger.exception(e)
+                raise
+        raise exceptions.FailedSegmentDownload(
+            f"Failed to write segment {self} "
+            f"(itag {self.stream.itag}, {self.stream.subtype})"
+        )
+
+    async def download_async(self, name):
+        # TODO finish implement this to actually download+write async
+        with closing(urllib.request.urlopen(self.geturl())) as in_stream:
+            if not await self.write_to_file_async(in_stream):
+                return
+
+    async def write_to_file_async(self, data):
+        length = COPY_BUFSIZE
+        fsrc_read = data.read
+        try:
+            buf = await fsrc_read(length)
+        except Exception as e:
+            # FIXME handle these errors better, for now we just ignore and move on:
+            # ValueError: invalid literal for int() with base 16: b''
+            # http.client.IncompleteRead: IncompleteRead
+            self.stream.logger.exception(e)
+            buf = None
+
+        if not buf:
+            return False
+        # FIXME move this in global namespace
+        import aiofiles
+        async with aiofiles.open(self.filename, 'wb') as out_file:
+            fdst_write = out_file.write
+            while buf:
+                await fdst_write(buf)
+                buf = fsrc_read(length)
+        return True
+
+    def write_to_file_sync(self, data):
+        length = COPY_BUFSIZE
+        fsrc_read = data.read
+        try:
+            buf = fsrc_read(length)
+        except Exception as e:
+            # FIXME handle these errors better, for now we just ignore and move on:
+            # ValueError: invalid literal for int() with base 16: b''
+            # http.client.IncompleteRead: IncompleteRead
+            self.stream.logger.exception(e)
+            buf = None
+
+        if not buf:
+            return False
+        with open(self.filename, 'wb') as out_file:
+            fdst_write = out_file.write
+            while buf:
+                fdst_write(buf)
+                buf = fsrc_read(length)
+        return True
+
     url = property(geturl)
+
+
+class DownloadHandler():
+    """Keep track of downloaded segments and errors."""
+    def __init__(
+        self, stream: pytube.Stream,
+        start_seg: int, upto_seg: int,
+        name: str, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop,
+        events: dict[str, asyncio.Event]) -> None:
+        self.stream = stream
+        self.start_seg = start_seg
+        self.upto_seg = upto_seg
+        self.name = name
+        self.queue = queue
+        self.loop = loop
+        self.offline_event = events["offline"]
+        self.forbidden_event = events["forbidden"]
+        self.current_seg = 0
+
+    async def worker(self):
+        seg = Segment(self.start_seg, self.stream)
+        self.stream.logger.warning(f"Worker {self.name} downloading segment {seg.num}...")
+        name = self.name
+        upto_seg = self.upto_seg
+        stream = self.stream
+        queue = self.queue
+        loop = self.loop
+        offline_event = self.offline_event
+        forbidden_event = self.forbidden_event
+        while not (forbidden_event.is_set() and offline_event.is_set()):
+            try:
+                fut = await loop.run_in_executor(
+                    None, seg.download_sync, name, 3.0, 1
+                ) # await seg.download_async(name)
+            except exceptions.ForbiddenSegmentException:
+                print(
+                    f"{RED}DEBUG ouch forbidden {seg.num} {stream.itag}?"
+                    f"Failing immediately!{ENDC}")
+                forbidden_event.set()
+                raise
+            except Exception as e:
+                # fut.set_exception(e)
+                # DEBUG
+                if "404" in str(e):
+                    break
+                stream.logger.debug(
+                    f"{name} Error getting {seg}: {e}. Putting to queue."
+                )
+                # Place this segment number into queue to retry later
+                await queue.put(seg) # queue.put_nowait(seg)
+
+            # This should create a new object here, otherwise this change will
+            # affect the item already placed in the queue.
+            seg += 1
+            # Update in case we need to resume from this segment later after throwing
+            self.start_seg = seg.num
+            if upto_seg > 0 and seg.num >= upto_seg:
+                stream.logger.debug(f"{name} Reached upto_seg {upto_seg}.")
+                break
+        stream.logger.debug(f"{name} has finished.")
+        # await queue.join()
+        return
+
 
 def write_to_file(logger, fsrc, fdst: Path, length: int = 0) -> bool:
     """Copy data from file-like object fsrc to file-like object fdst.
@@ -1514,10 +1743,6 @@ def write_to_file(logger, fsrc, fdst: Path, length: int = 0) -> bool:
             fdst_write(buf)
             buf = fsrc_read(length)
     return True
-
-    def on(self, event: str):
-        if hook := self.hooks.get(event, None):
-            hook.spawn_subprocess(self)
 
 
 def remove_useless_keys(_dict: dict) -> None:
@@ -1589,8 +1814,8 @@ def setup_logger(
 
 
 def collect_missing_segments(output_dir: Path, stream: pytube.Stream):
-    """Update stream objects properties in selected streams with output directory,
-    starting segment, and mising segments if any."""
+    """Update stream objects properties in selected streams with output
+    directory, starting segment, and mising segments if any."""
     stream_output_dir = output_dir / stream.dir_suffix
     if stream_output_dir.exists():
         stream.start_seg, stream.missing_segs = \

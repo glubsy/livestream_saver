@@ -1,6 +1,5 @@
-from asyncio.protocols import SubprocessProtocol
-from os import sep, makedirs, getcwd, setsid
-from sys import argv, stderr, stdin
+from os import sep, makedirs, getcwd
+from sys import argv
 import argparse
 import logging
 from pathlib import Path
@@ -10,10 +9,11 @@ import asyncio
 from json import loads
 from typing import Optional
 from livestream_saver import extract, util
-from livestream_saver.download import YoutubeLiveBroadcast
+import livestream_saver
+from livestream_saver.download import YoutubeLiveBroadcast, Status
 from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import get_channel_id
-from livestream_saver.request import Session
+from livestream_saver.request import ASession as Session
 from livestream_saver.smtp import NotificationHandler
 from livestream_saver.hooks import HookCommand
 
@@ -22,8 +22,8 @@ logger.setLevel(logging.DEBUG)
 
 notif_h = NotificationHandler()
 
-DEFAULT_VIDEO_CODEC = "mp4" # or webm
-DEFAULT_AUDIO_CODEC = "mp4" # or webm
+DEFAULT_VIDEO_CODEC = "mp4" # mp4 or webm container
+DEFAULT_AUDIO_CODEC = "mp4" # mp4 or webm container
 
 
 def parse_args(config):
@@ -378,11 +378,31 @@ def monitor_mode(config, args):
     URL = args["URL"]
     channel_id = args["channel_id"]
     scan_delay = args["scan_delay"]
+    filter_args = {
+        "vcodec": config.get(
+            "monitor", "video-codec", vars=args, fallback=DEFAULT_VIDEO_CODEC
+        ),
+        "acodec": config.get(
+            "monitor", "audio-codec", vars=args, fallback=DEFAULT_AUDIO_CODEC
+        ),
+        "itags": config.get(
+            "monitor", "itags", vars=args, fallback=None
+        ),
+        "maxq": config.get(
+            "monitor", "max_video_resolution", vars=args, fallback=None
+        )
+    }
 
     session = Session(
-        config.get("monitor", "cookie", vars=args, fallback=None),
+        cookie_path=config.get("monitor", "cookie", vars=args, fallback=None),
         notifier=notif_h
     )
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+    loop.run_until_complete(session.initialize_consent())
+    loop.run_until_complete(loop.shutdown_asyncgens())
 
     URL = util.sanitize_channel_url(URL)
 
@@ -413,9 +433,7 @@ def monitor_mode(config, args):
                 output_dir=sub_output_dir,
                 video_id=_id,
                 session=session,
-                max_video_quality=config.getint(
-                    "monitor", "max_video_quality", vars=args, fallback=None
-                ),
+                filter_args=filter_args,
                 hooks=args["hooks"],
                 skip_download=args.get("skip_download", False),
                 log_level=config.get("monitor", "log_level", vars=args)
@@ -430,23 +448,17 @@ def monitor_mode(config, args):
             f"Found live: {_id} title: {target_live.get('title')}. "
         )
 
-        # This should log to stream log file
-        live_broadcast.print_available_streams()
+        # This should probably be logged in each stream log's file
+        if len(live_broadcast.streams) == 0:
+            logger.critical("No stream found!")
+            wait_block(min_minutes=scan_delay, variance=3.5)
+        else:
+            for s in live_broadcast.streams:
+                logger.info(
+                    "Available {}".format(s.__repr__().replace(' ', '\t'))
+                )
 
-        live_broadcast.filter_streams(
-            vcodec=config.get(
-                "monitor", "video-codec", vars=args, fallback=DEFAULT_VIDEO_CODEC
-            ),
-            acodec=config.get(
-                "monitor", "audio-codec", vars=args, fallback=DEFAULT_AUDIO_CODEC
-            ),
-            itags=config.get(
-                "monitor", "itags", vars=args, fallback=None
-            ),
-            maxq=config.get(
-                "monitor", "max_video_resolution", vars=args, fallback=None
-            )
-        )
+
         logger.info(f"Selected streams: {live_broadcast.selected_streams}")
 
         try:
@@ -458,16 +470,16 @@ def monitor_mode(config, args):
             )
             pass
 
-        if livestream.skip_download:
+        if live_broadcast.skip_download:
             notif_h.send_email(
                 subject=(
                     f"Skipped download of {ch.get_channel_name()} - "
-                    f"{livestream.title} {_id}"
+                    f"{live_broadcast.title} {_id}"
                 ),
                 message_text=f"Hooks scheduled to run were: {args.get('hooks')}"
             )
 
-        if livestream.done:
+        if live_broadcast.done:
             logger.info(f"Finished downloading {_id}.")
             notif_h.send_email(
                 subject=f"Finished downloading {ch.get_channel_name()} - \
@@ -503,20 +515,38 @@ def monitor_mode(config, args):
 
 
 def download_mode(config, args):
-    global session
+    filter_args = {
+        "vcodec": config.get(
+            "download", "video_codec", vars=args, fallback=DEFAULT_VIDEO_CODEC
+        ),
+        "acodec": config.get(
+            "download", "audio_codec", vars=args, fallback=DEFAULT_AUDIO_CODEC
+        ),
+        "itags": config.get(
+            "download", "itags", vars=args, fallback=None
+        ),
+        "maxq": config.get(
+            "download", "max_video_resolution", vars=args, fallback=None
+        )
+    }
+
     session = Session(
-        config.get("download", "cookie", vars=args, fallback=None),
+        cookie_path=config.get("download", "cookie", vars=args, fallback=None),
         notifier=notif_h
     )
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+    loop.run_until_complete(session.initialize_consent())
+    loop.run_until_complete(loop.shutdown_asyncgens())
 
     try:
         live_broadcast = YoutubeLiveBroadcast(
             url=args.get("URL"),
             output_dir=args["output_dir"],
             video_id=args["video_id"],
-            max_video_quality=config.getint(
-                "download", "max_video_quality", vars=args, fallback=None
-            ),
+            filter_args=filter_args,
             hooks=args["hooks"],
             skip_download=config.getboolean(
                 "download", "skip_download", vars=args, fallback=False
@@ -528,31 +558,36 @@ def download_mode(config, args):
         logger.critical(e)
         return 1
 
-    live_broadcast.print_available_streams(logger=logger)
+    live_broadcast.status(update=True)
+    # TODO
+    live_broadcast.has_started()
 
-    # FIXME avoid creating directories in this case
+    if len(live_broadcast.streams) == 0:
+        # FIXME handle more cases
+        logger.critical(
+            "No stream found! "
+            f"Broadcast is offline" if live_broadcast.status(update=True) & Status.OFFLINE
+            else " Broadcast not available."
+        )
+        return 0
+        
+    # FIXME put this in download, once status is LIVE
+    for s in live_broadcast.streams:
+        logger.info("Available {}".format(s.__repr__().replace(' ', '\t')))
+
+    # Avoid creating directories if we only request the available streams
     if config.getboolean("download", "list_formats", vars=args, fallback=False):
         return 0
 
-    live_broadcast.filter_streams(
-        vcodec=config.get(
-            "download", "video_codec", vars=args, fallback=DEFAULT_VIDEO_CODEC
-        ),
-        acodec=config.get(
-            "download", "audio_codec", vars=args, fallback=DEFAULT_AUDIO_CODEC
-        ),
-        itags=config.get(
-            "download", "itags", vars=args, fallback=None
-        ),
-        maxq=config.get(
-            "download", "max_video_resolution", vars=args, fallback=None
+    # FIXME
+    # while live_broadcast.status() != LIVE:
+    try:
+        live_broadcast.download(
+            wait_delay=config.getfloat("download", "scan_delay", vars=args)
         )
-    )
-    logger.info(f"Selected streams: {live_broadcast.selected_streams}")
-
-    live_broadcast.download(
-        wait_delay=config.getfloat("download", "scan_delay", vars=args)
-    )
+    except:
+        # TODO
+        pass
 
     if live_broadcast.done and not config.getboolean("download", "no_merge", vars=args):
         logger.info("Merging segments...")
@@ -565,7 +600,7 @@ def download_mode(config, args):
     return 0
 
 
-def merge_mode(config, args):
+async def merge_mode(config, args):
     data_path = Path(args["PATH"]).resolve()
     info = get_metadata_info(data_path)
     written_file = merge(

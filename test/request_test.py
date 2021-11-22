@@ -9,7 +9,6 @@ from livestream_saver.constants import *
 from livestream_saver import extract
 from livestream_saver.monitor import get_tabs_from_json, get_videos_from_tab
 
-
 # log = logging.getLogger(__name__)
 log = logging.getLogger()
 log.setLevel(logging.DEBUG)
@@ -39,40 +38,33 @@ async def test_load_cookies(session_cjar):
     s = session_cjar.session
 
     assert s.cookie_jar._cookie_path == \
-        Path("~/Cookies/firefox_cookies.pickle").expanduser()
+        Path(PICKLE_PATH).expanduser()
 
-    log.debug("c in s.cookie_jar:")
+    log.debug("Cookies in in aiosession.cookie_jar:")
     for c in s.cookie_jar:
         log.debug(c)
-    # FIXME Something might be off here...
-    # assert len(session.session.cookie_jar) == len(session.meta_cookie_jar)
-    # session.meta_cookie_jar.clear()
-    # assert len(session.meta_cookie_jar) == 0
-    # for c in session.session.cookie_jar:
-    # import pprint
-    # pp = pprint.PrettyPrinter(indent=4, compact=True, depth=150, width=500)
-    # pp.pprint(session.session.cookie_jar._cookies)
-    # print(f"_cookies in a_cookie_jar: {session.session.cookie_jar._cookies}")
-    
-
-
-    # s.cookie_jar.save()
 
     await session_cjar.initialize_consent()
 
+    log.debug("After initialize consent, cookies are now:")
     for c in s.cookie_jar:
         # if "CONSENT" in str(c):
-        log.debug(f"{OKGREEN}From cookie jar:{ENDC} {c}{OKBLUE} type {type(c)}{ENDC}")
+        log.debug(
+            f"{OKGREEN}{type(c)}{ENDC} {c}"
+        )
 
     # for c in session.meta_cookie_jar:
     #     print(c)
 
     # DEBUG WORKS
-    html = await session_cjar.make_request("https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g/community")
+    html = await session_cjar.make_request(
+        "https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g/community"
+    )
     json = extract.str_as_json(extract.initial_player_response(html))
     tabs = get_tabs_from_json(json)
     videos = get_videos_from_tab(tabs, 'Community')
     print(f"videos: {videos}")
+    # FIXME this is stupid and will not work on all channels...
     assert len(videos) > 0
 
     session_cjar.session.cookie_jar.save()
@@ -83,36 +75,31 @@ async def test_load_cookies(session_cjar):
 async def test_no_preloaded_cookies(session_empty_cjar):
     s = session_empty_cjar.session
 
-    log.debug("c in s.cookie_jar:")
+    log.debug("Cookies in in aiosession.cookie_jar:")
     for c in s.cookie_jar:
         log.debug(c)
-    # assert len(session.session.cookie_jar) == len(session.meta_cookie_jar)
-    # session.meta_cookie_jar.clear()
-    # assert len(session.meta_cookie_jar) == 0
-    # for c in session.session.cookie_jar:
-    # import pprint
-    # pp = pprint.PrettyPrinter(indent=4, compact=True, depth=150, width=500)
-    # pp.pprint(session.session.cookie_jar._cookies)
-    # print(f"_cookies in a_cookie_jar: {session.session.cookie_jar._cookies}")
-
-    # s.cookie_jar.save()
 
     await session_empty_cjar.initialize_consent()
 
+    log.debug("After initialize consent, cookies are now:")
     for c in s.cookie_jar:
         # if "CONSENT" in str(c):
-        log.debug(f"{OKGREEN}Cookie in cookie jar:{ENDC} {c} {OKBLUE}type {type(c)}{ENDC}")
+        log.debug(
+            f"{OKGREEN}{type(c)}{ENDC} {c}"
+        )
 
     # for c in session.meta_cookie_jar:
     #     print(c)
 
     # DEBUG WORKS
-    html = await session_empty_cjar.make_request("https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g/community")
+    html = await session_empty_cjar.make_request(
+        "https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g/community"
+    )
     json = extract.str_as_json(extract.initial_player_response(html))
     tabs = get_tabs_from_json(json)
     videos = get_videos_from_tab(tabs, 'Community')
     print(f"videos: {videos}")
+    # FIXME this is stupid and will not work on all channels...
     assert len(videos) > 0
 
     session_empty_cjar.session.cookie_jar.save()
-    assert Path(PICKLE_PATH).expanduser().exists()

@@ -9,6 +9,7 @@ from typing import Optional, Union
 import logging
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
+import asyncio
 
 from urllib.request import Request, urlopen #, build_opener, HTTPCookieProcessor, HTTPHandler
 
@@ -37,16 +38,17 @@ def monkeypatch_cookielib():
     C.load('foo=bar; bar=Low; baz; Priority=High')
     # Cookie should not be discarded completely because of unknown attributes 
     # such as "baz", and the "Priority" attribute should be retained.
-    if C['bar'].output() == 'Set-Cookie: bar=Low; Priority=High':
-        # Patch has been merged upstream, nothing to fix.
-        logger.debug("NOT patching cookie lib bug 45358.")
-        return
+    if morsel := C.get('bar'):
+        if morsel.output() == 'Set-Cookie: bar=Low; Priority=High':
+            # Patch has been merged upstream, nothing to fix.
+            logger.debug("NOT patching cookie lib bug 45358.")
+            return
     del C
 
-    logger.warning(f"Patching cookie lib bug 45358...")
+    logger.info(f"Patching cookie lib bug 45358...")
 
     def __parse_string(self, str, patt=httpcookies._CookiePattern):
-        logging.debug(f"{WARNING}__parse_string({str}){ENDC}")
+        # logging.debug(f"{WARNING}__parse_string({str}){ENDC}")
         i = 0                 # Our starting point
         n = len(str)          # Length of string
         parsed_items = []     # Parsed (type, key, value) triples
@@ -66,7 +68,7 @@ def monkeypatch_cookielib():
                 break
 
             key, value = match.group("key"), match.group("val")
-            logging.debug(f"matched key={key} value={value}")
+            # logging.debug(f"__parse_string - matched key={key} value={value}")
             i = match.end(0)
             if key[0] == "$":
                 if not morsel_seen:
@@ -98,7 +100,7 @@ def monkeypatch_cookielib():
         # The cookie string is valid, apply it.
         M = None         # current morsel
         for tp, key, value in parsed_items:
-            logging.debug(f"Parsed_items: tp={tp}, key={key}, value={value}")
+            # logging.debug(f"__parse_string - Parsed_items: tp={tp}, key={key}, value={value}")
             if tp == TYPE_ATTRIBUTE:
                 assert M is not None
                 M[key] = value
@@ -109,19 +111,18 @@ def monkeypatch_cookielib():
                 M = self[key]
 
     # For debugging purposes only
-    from functools import wraps
-    def prefix_function(function, prefunction):
-        @wraps(function)
-        def run(*args, **kwargs):
-            prefunction(*args, **kwargs)
-            return function(*args, **kwargs)
-        return run
-
-    httpcookies.BaseCookie.load = prefix_function(
-        httpcookies.BaseCookie.load, 
-        lambda self, rawdata: logging.debug(
-            f"Current cookies: {self}\nNow Loading: \"{rawdata}\"")
-    )
+    # from functools import wraps
+    # def prefix_function(function, prefunction):
+    #     @wraps(function)
+    #     def run(*args, **kwargs):
+    #         prefunction(*args, **kwargs)
+    #         return function(*args, **kwargs)
+    #     return run
+    # httpcookies.BaseCookie.load = prefix_function(
+    #     httpcookies.BaseCookie.load, 
+    #     lambda self, rawdata: logging.debug(
+    #         f"Current cookies: {self}\nNow Loading: \"{rawdata}\"")
+    # )
 
     # Monkey patch: __parse_string being a dunder method, name mangling is in 
     # effet, see output of dir(http.cookies.BaseCookie) for example
@@ -140,10 +141,12 @@ monkeypatch_cookielib()
 
 
 class CookieJar(aiocookiejar.CookieJar):
+    """Async cookiejar used for async requests."""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._cookies_updated_callback = None
         self._cookie_path: Optional[Path] = None  # path to pickle dump on disk
+        # Meta cookie jar can be a MozillaCookieJar to ease loading/saving
         # self.meta_cookie_jar = meta_cookie_jar
         # self.update_cookies(meta_cookie_jar._cookies)
 
@@ -157,21 +160,24 @@ class CookieJar(aiocookiejar.CookieJar):
 
     def save(self) -> None:
         if self._cookie_path is not None:
+            # Serialize and write as a pickle
             return super().save(self._cookie_path)
     
+    # Obsolete: only if a meta cookie jar is used
     # def save(self, file_path: Optional[PathLike] = None) -> None:
     #     if not file_path:
     #         file_path = Path()
     #     if not self.meta_cookie_jar.filename:
     #         file_path = Path(file_path)
     #         return super().save(file_path)
-
     #     self.meta_cookie_jar.save()
 
 
-def load_cookies_from_file(jar: CookieJar, cookie_path) -> Optional[Path]:
+def load_cookies_from_file(
+    jar: CookieJar, 
+    cookie_path: Optional[PathLike]) -> Optional[Path]:
     """Load cookies and return the path where to save pickled cookies."""
-    pickled_cookie_path = Path() / "livestream_saver_cookies.pickle"
+    pickled_cookie_path = Path() / "livestream_saver_cookies.pickle"  # cwd
     if not cookie_path:
         return pickled_cookie_path
     if not isinstance(cookie_path, Path):
@@ -183,7 +189,8 @@ def load_cookies_from_file(jar: CookieJar, cookie_path) -> Optional[Path]:
     if not cookie_path.exists():
         return pickled_cookie_path
     
-    # We use this jar to load our files safely, maybe we could do it ourselves
+    # We use this jar's methods to load our files safely, 
+    # but maybe we could do it ourselves in the future
     netscape_cookie_jar: Union[
         httpcookiejar.MozillaCookieJar, CompatMozillaCookieJar
     ] = get_netscape_cookie_jar(cookie_path)
@@ -224,10 +231,10 @@ def load_from_jar(from_jar, to_jar):
             d["version"] = c.version
         return d
 
-    logger.debug(f"Loading cookies from cookiejar: {from_jar.filename}")
+    logger.debug(f"Loading cookies from cookiejar path: {from_jar.filename}")
     _cookies = {}
     for c in from_jar:
-        logger.debug(f"Loaded from_jar cookie: {c.__repr__()} {OKBLUE}type {type(c)}{ENDC}")
+        # logger.debug(f"load_from_jar {OKBLUE}{type(c)}{ENDC} {c.__repr__()}")
         m = httpcookies.Morsel()
         m.set(c.name, c.value, c.value)
         m.update(
@@ -246,13 +253,13 @@ class ASession:
             'user-agent': get_system_ua(), # TODO could use fake-useragent package here for an up-to-date string
             'accept-language': 'en-US,en' # ensure messages in english from the API
         }
-    
+        self.cookie_path = cookie_path
         aiojar = CookieJar()
         if cookie_path is not None:
             aiojar._cookie_path = load_cookies_from_file(aiojar, cookie_path)
         self.aiojar = aiojar
         
-        logger.debug(f"AIOJAR init len={len(aiojar)}")
+        # logger.debug(f"AIOJAR init len={len(aiojar)}")
         # aiojar.set_cookies_updated_callback(...)
         self.session = ClientSession(
             cookie_jar=aiojar,
@@ -272,21 +279,26 @@ class ASession:
 
 
     async def initialize_consent(self):
-        logger.info("Initializing consent...")
+        logger.info(f"{WARNING}Initializing consent...{ENDC}")
         async with self.session.get('https://www.youtube.com') as response:
             
-            logger.debug(f"{WARNING}HEADERS:{ENDC}")
+            logger.debug(f"{WARNING}Response Headers:{ENDC}")
             for hdr in response.headers.getall(SET_COOKIE, ()):
                 logger.debug(hdr)
-            logger.debug(f"{WARNING}COOKIES:{ENDC}")
+            logger.debug(f"{WARNING}Response Cookies:{ENDC}")
             for _, morsel in response.cookies.items():
                 logger.debug(morsel.output())
+            
+            # TODO get the current API keys in case they have been changed
+            # in order to query the innertube API directly.
 
             _cookies = self.session.cookie_jar.filter_cookies(
                 URL('https://www.youtube.com')
             )
-            logger.debug(f"{OKBLUE}filter_cookies after request{ENDC}:\n"
-                 f"{_cookies}\ntype={type(_cookies)}")
+            logger.debug(
+                f"{OKBLUE}After request, filtered cookies "
+                f"{type(_cookies)} are{ENDC}:\n{_cookies}"
+            )
 
             if _cookies.get('__Secure-3PSID'):
                 return
@@ -325,18 +337,21 @@ class ASession:
             # if logger.isEnabledFor(logging.DEBUG):
             #     logger.debug(f"Setting consent cookie: {cookie}")
 
-            for k, c in self.session.cookie_jar._cookies.items():
-                print(f"native cjar items() k={k}, v={c} (type {type(c)})")
-                for key, morsel in c.items():
+            # New and simpler way of overwriting the consent cookie:
+            for _, c in self.session.cookie_jar._cookies.items():
+                for _, morsel in c.items():
                     if "CONSENT" in morsel.key and "youtube" in morsel["domain"]:
-                        c.load({"CONSENT": 'YES+cb.20210328-17-p0.en+F+%s' % consent_id})
-
-
+                        c.load(
+                            {
+                                "CONSENT": 'YES+cb.20210328-17-p0.en+F+%s' % consent_id
+                            }
+                        )
+                # Obsolete? This accomplishes the same as above
                 # for key, morsel in c.items():
                 #     print(f"Cookie in session cjar: {type(morsel)} {morsel}")
                 #     if "CONSENT" in morsel.key:
                 #         print(f"found consent in key {morsel.key}, value value {morsel.value}")
-                #         morsel._value = "CONSEEEEEENT"
+                #         morsel._value = "TEST_CONSENT"
                 #         c[key] = morsel.copy()
                 #         print(f"updated: {morsel.items()}, value {morsel.value}")
 
@@ -357,9 +372,52 @@ class ASession:
             # if self.aiojar.filename:
             #     self.aiojar.save(ignore_expires=True)
         
-    async def make_request(self, url):
+    async def make_request_async(self, url):
+        print(f"Resquest async: {url}")
         async with self.session.get(url) as response:
+            print(f"Response status: {response.status}")
             return await response.text()
+    
+    # async def make_request_async_cb(self, url, future):
+    #     print(f"running resquest async cb: {url}")
+    #     async with self.session.get(url) as response:
+    #         print(f"Got response status {response.status}")
+    #         future.set_result(await response.text())
+    
+    def make_request(self, url):
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(self.make_request_async(url))
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        
+        # result = self.make_request_async(url)
+        # fut = asyncio.Future()
+        # task = loop.create_task(self.make_request_async_cb(url, fut))
+        # result = asyncio.wait(fut)
+        # while not fut.done():
+        #     try:
+        #         # result = loop.run_until_complete(self.make_request_async(url))
+        #         result = fut.result()
+        #         print(f"result {result}")
+        #         break
+        #     except InvalidStateError as e:
+        #         print(f"invalid state.. {e}")
+        #         time.sleep(1)
+        #         continue
+        #     except KeyboardInterrupt:
+        #         task.cancel()
+        #         break
+        # # finally:
+        # #     loop.close()
+        # result = fut.result()
+        logging.debug(f"{WARNING}Request result:{ENDC} {result[:150]}")
+        return result
+
+    def is_logged_out(self, json_data):
+        # TODO
+        return False
 
 
 class Session:
@@ -687,8 +745,8 @@ def _warn_unhandled_exception():
     warnings.warn("http.cookiejar bug!\n%s" % msg, stacklevel=2)
 
 
-def get_netscape_cookie_jar(cookie_path: Union[str, PathLike, None]
-    ) -> Union[httpcookiejar.MozillaCookieJar, CompatMozillaCookieJar]:
+def get_netscape_cookie_jar(
+    cookie_path: Union[str, PathLike, None]) -> Union[httpcookiejar.MozillaCookieJar, CompatMozillaCookieJar]:
     """Necessary for urllib.request."""
 
     # Before Python 3.10, these cookies are ignored which breaks our credentials
@@ -737,8 +795,10 @@ def get_netscape_cookie_jar(cookie_path: Union[str, PathLike, None]
         cj.load(new_cp_str if new_cp.exists() else str(cp),
                 ignore_expires=True, ignore_discard=True)
     except Exception as e:
-        logger.error(f"Failed to load cookie file {cookie_path}: {e}. \
-Defaulting to empty cookie.")
+        logger.error(
+            f"Failed to load cookie file {cookie_path}: {e}."
+            " Defaulting to empty cookie."
+        )
 
     # Avoid overwriting the cookie, only write to a new one.
     cj.filename = new_cp_str
