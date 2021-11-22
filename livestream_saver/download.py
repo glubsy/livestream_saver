@@ -15,9 +15,9 @@ from urllib.request import urlopen
 import urllib.error
 from http.client import IncompleteRead
 
-import pytube
 import pytube.cipher
 # from pytube import Youtube
+import pytube
 
 from livestream_saver import exceptions
 from livestream_saver import extract
@@ -48,12 +48,12 @@ def get_throttling_function_name(js: str) -> str:
         # In above case, `Dea` is the relevant function name
         r'a\.[A-Z]&&\(b=a\.get\("n"\)\)&&\(b=([^(]+)\(b\)',
     ]
-    print('Finding throttling function name')
+    # print('Finding throttling function name')
     for pattern in function_patterns:
         regex = re.compile(pattern)
         function_match = regex.search(js)
         if function_match:
-            print("finished regex search, matched: %s", pattern)
+            # print("finished regex search, matched: %s", pattern)
             return function_match.group(1)
 
 
@@ -61,6 +61,44 @@ def get_throttling_function_name(js: str) -> str:
         caller="get_throttling_function_name", pattern="multiple"
     )
 pytube.cipher.get_throttling_function_name = get_throttling_function_name
+
+
+# Another temporary backport to fix https://github.com/pytube/pytube/issues/1163
+def throttling_array_split(js_array):
+    results = []
+    curr_substring = js_array[1:]
+
+    comma_regex = re.compile(r",")
+    func_regex = re.compile(r"function\([^)]*\)")
+
+    while len(curr_substring) > 0:
+        if curr_substring.startswith('function') and func_regex.search(curr_substring) is not None:
+            # Handle functions separately. These can contain commas
+            match = func_regex.search(curr_substring)
+
+            match_start, match_end = match.span()
+
+            function_text = pytube.parser.find_object_from_startpoint(curr_substring, match.span()[1])
+            full_function_def = curr_substring[:match_end + len(function_text)]
+            results.append(full_function_def)
+            curr_substring = curr_substring[len(full_function_def) + 1:]
+        else:
+            match = comma_regex.search(curr_substring)
+
+            # Try-catch to capture end of array
+            try:
+                match_start, match_end = match.span()
+            except AttributeError:
+                match_start = len(curr_substring) - 1
+                match_end = match_start + 1
+
+
+            curr_el = curr_substring[:match_start]
+            results.append(curr_el)
+            curr_substring = curr_substring[match_end:]
+
+    return results
+pytube.cipher.throttling_array_split = throttling_array_split
 
 
 class YoutubeLiveStream():
