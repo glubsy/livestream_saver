@@ -541,8 +541,11 @@ We assume a failed download attempt. Last segment available was {seg}.")
         #  got updated.
         thumbnail_path = self.output_dir / 'thumbnail'
         if self.thumbnail_url and not path.exists(thumbnail_path):
-            with closing(urlopen(self.thumbnail_url)) as in_stream:
-                self.write_to_file(in_stream, thumbnail_path)
+            try:
+                with closing(urlopen(self.thumbnail_url)) as in_stream:
+                    self.write_to_file(in_stream, thumbnail_path)
+            except Exception as e:
+                self.logger.warning(f"Error writing thumbnails: {e}")
 
     def update_metadata(self):
         if self.video_itag:
