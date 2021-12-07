@@ -262,7 +262,9 @@ def merge(info: Dict, data_dir: Path,
     if not video_files and not audio_files:
         return None
 
+    segment_number_mismatch = False
     if len(video_files) != len(audio_files):
+        segment_number_mismatch = True
         logger.warning("Number of audio and video segments do not match.")
 
     print_missing_segments(video_files, "_video")
@@ -380,11 +382,14 @@ def merge(info: Dict, data_dir: Path,
         ffmpeg_output_path_video.unlink()
 
     if delete_source:
-        logger.info("Deleting source segments in {} and {}...".format(
-            video_seg_dir, audio_seg_dir)
-        )
-        rmtree(video_seg_dir)
-        rmtree(audio_seg_dir)
+        if not segment_number_mismatch:
+            logger.warning("Not deleting source segments because some are missing.")
+        else:
+            logger.info("Deleting source segments in {} and {}...".format(
+                video_seg_dir, audio_seg_dir)
+            )
+            rmtree(video_seg_dir)
+            rmtree(audio_seg_dir)
 
     return final_output_file
 
