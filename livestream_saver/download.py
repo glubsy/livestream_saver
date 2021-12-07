@@ -792,9 +792,9 @@ playability status is: {status} \
 
                         self.logger.warning(
                             "It seems the stream has not really ended. "
-                            f"Retrying in 10 secs... (attempt {attempt}/15)")
+                            f"Retrying in 5 secs... (attempt {attempt}/15)")
                         attempt += 1
-                        sleep(10)
+                        sleep(5)
                         try:
                             self.update_download_urls()
                         except Exception as e:
@@ -817,7 +817,7 @@ playability status is: {status} \
         if not self.video_base_url or not self.audio_base_url:
             raise Exception("Missing video or audio base url!")
 
-        wait_sec = 60
+        wait_sec = 3
         attempt = 0
         while True:
             try:
@@ -880,12 +880,12 @@ playability status is: {status} \
                     # Usually this means the stream has ended and parts
                     # are now unavailable.
                     raise exceptions.ForbiddenSegmentException(e.reason)
-                if attempt >= 30:
+                if attempt >= 20:
                     raise e
                 attempt += 1
                 self.logger.warning(
                     f"Waiting for {wait_sec} seconds before retrying... "
-                    f"(attempt {attempt}/30)")
+                    f"(attempt {attempt}/20)")
                 sleep(wait_sec)
                 continue
             except (IncompleteRead, ValueError) as e:
