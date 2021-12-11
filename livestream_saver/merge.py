@@ -262,11 +262,38 @@ def merge(info: Dict, data_dir: Path,
     if not video_files and not audio_files:
         return None
 
+    def to_int(seg_list: list[Path]) -> list[int]:
+        # remove the "_audio/_video" part
+        return [int(i.stem[:-6]) for i in seg_list]
+
     segment_number_mismatch = False
     if len(video_files) != len(audio_files):
         segment_number_mismatch = True
-        logger.warning("Number of audio and video segments do not match.")
 
+        video_as_int = to_int(video_files)
+        audio_as_int = to_int(audio_files)
+        seg_list_as_ints = video_as_int + audio_as_int
+
+        affected_segs = [
+            i for i in seg_list_as_ints 
+            if i not in video_as_int or i not in audio_as_int
+        ]
+        missing_audio_ints = [i for i in video_as_int if i not in audio_as_int]
+        missing_video_ints = [i for i in audio_as_int if i not in video_as_int]
+        logger.warning(
+            "Number of audio and video segments do not match: "
+            f"{len(video_files)} video segments, {len(audio_files)} audio segments."
+            f" Affected segments: {affected_segs}. "
+            f" Missing video segments: {missing_video_ints}."
+            f" Missing audio segments: {missing_audio_ints}"
+        )
+        del video_as_int
+        del audio_as_int
+        del seg_list_as_ints
+        del missing_audio_ints
+        del missing_video_ints
+
+    # FIXME this is now redundant with the above checks
     print_missing_segments(video_files, "_video")
     print_missing_segments(audio_files, "_audio")
 
@@ -382,7 +409,7 @@ def merge(info: Dict, data_dir: Path,
         ffmpeg_output_path_video.unlink()
 
     if delete_source:
-        if not segment_number_mismatch:
+        if segment_number_mismatch:
             logger.warning("Not deleting source segments because some are missing.")
         else:
             logger.info("Deleting source segments in {} and {}...".format(
