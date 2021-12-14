@@ -8,7 +8,7 @@ from configparser import ConfigParser, ExtendedInterpolation
 import traceback
 import re
 from shlex import split
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
 from livestream_saver import extract, util
 import livestream_saver
 from livestream_saver.monitor import YoutubeChannel, wait_block
@@ -24,7 +24,7 @@ logger.setLevel(logging.DEBUG)
 
 notif_h = NotificationHandler()
 
-def parse_args(config) -> dict[str, Any]:
+def parse_args(config) -> Dict[str, Any]:
     """
     Return a dict view of the argparse.Namespace.
     """
@@ -290,7 +290,7 @@ def _get_hook_from_config(
     return hook
 
 
-def get_hooks_for_section(section: str, config: ConfigParser) -> dict:
+def get_hooks_for_section(section: str, config: ConfigParser) -> Dict:
     cmds = {}
     for hook_name in event_props:
         try:
@@ -325,9 +325,9 @@ def _get_regex_from_config(
 
 def _get_target_params(
     config: ConfigParser,
-    args: dict,
+    args: Dict,
     sub_cmd: str,
-    override: Optional[str]) -> dict:
+    override: Optional[str]) -> Dict:
     """
     Deal with case where URL positional argument is not supplied by the user,
     but could be supplied in config file in the appropriate section.
@@ -665,7 +665,7 @@ def init_config() -> ConfigParser:
         "from_email": "",
     }
 
-    def parse_as_list(data: str) -> Optional[list[str]]:
+    def parse_as_list(data: str) -> Optional[List[str]]:
         """Split a string into a valid shell command as a list of string."""
         # if not data:
         #     return None

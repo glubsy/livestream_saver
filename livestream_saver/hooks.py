@@ -1,7 +1,7 @@
 import os
 import re
 import logging
-from typing import Iterable, Optional, Dict, Any
+from typing import Iterable, Optional, Dict, Any, List
 from subprocess import Popen, DEVNULL
 from datetime import datetime
 
@@ -10,13 +10,13 @@ from datetime import datetime
 class HookCommand():
     def __init__(
     self, 
-    cmd: Optional[list], 
+    cmd: Optional[List], 
     logged: bool,
     event_name: str,
     allow_regex: Optional[re.Pattern] = None,
     block_regex: Optional[re.Pattern] = None
     ) -> None:
-        self.cmd : Optional[list] = cmd
+        self.cmd : Optional[List] = cmd
         self.logged = logged
         self.enabled = True
         self.call_only_once = True
@@ -44,7 +44,7 @@ class HookCommand():
                 }
             )
 
-    def spawn_subprocess(self, args: dict):
+    def spawn_subprocess(self, args: Dict):
         """args are supposed to be prepared in advance by the caller."""
         # The HookCommand is a singleton, be careful when reusing it!
         if not self.enabled or not self.cmd:
@@ -64,7 +64,7 @@ class HookCommand():
             )
             return
 
-        def replace_placeholders(cmd: list) -> list:
+        def replace_placeholders(cmd: List) -> List:
             new = []
             patched = False
             for item in cmd:

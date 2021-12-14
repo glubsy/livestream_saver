@@ -58,6 +58,7 @@ on_upcoming_detected_enabled = false
 on_upcoming_detected_logged = false
 # These regexes only apply to the condition on which to spawn the command.
 on_upcoming_detected_allow_regex =
+# For example, do not download KSON's "video" used solely for its chat room
 on_upcoming_detected_block_regex = ".*FREE CHATTING SPACE.*"
 
 # This should trigger only for non-live videos (VOD).

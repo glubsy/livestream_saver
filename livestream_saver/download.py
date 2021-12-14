@@ -110,9 +110,9 @@ class YoutubeLiveStream():
         session: YoutubeUrllibSession,
         video_id: Optional[str] = None,
         max_video_quality: Optional[str] = None,
-        hooks: dict = {},
+        hooks: Dict = {},
         skip_download = False,
-        filters: dict[str, re.Pattern] = {},
+        filters: Dict[str, re.Pattern] = {},
         log_level = logging.INFO
     ) -> None:
 

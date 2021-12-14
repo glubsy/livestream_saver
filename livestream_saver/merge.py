@@ -34,7 +34,7 @@ def get_metadata_info(path: Path):
         }
 
 
-def concat(datatype: str, video_id: str, seg_list: list,
+def concat(datatype: str, video_id: str, seg_list: List,
            output_dir: Path, method: int = 0) -> Optional[Path]:
     """
     Concatenate segments.
@@ -262,7 +262,7 @@ def merge(info: Dict, data_dir: Path,
     if not video_files and not audio_files:
         return None
 
-    def to_int(seg_list: list[Path]) -> list[int]:
+    def to_int(seg_list: List[Path]) -> List[int]:
         # remove the "_audio/_video" part
         return [int(i.stem[:-6]) for i in seg_list]
 

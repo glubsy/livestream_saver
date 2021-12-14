@@ -2,7 +2,7 @@ from pathlib import Path
 from time import sleep
 from random import uniform
 import logging
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
 from livestream_saver import extract
 
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ class YoutubeChannel:
         return self._upcoming_videos_html
 
     @property
-    def community_json(self) -> dict:
+    def community_json(self) -> Dict:
         if self._community_json:
             return self._community_json
 
@@ -169,8 +169,8 @@ class YoutubeChannel:
         return self._public_videos
 
     @property
-    def upcoming_videos(self) -> list[dict]:
-        upcoming_videos: list[dict] = self.update_upcoming_videos()
+    def upcoming_videos(self) -> List[Dict]:
+        upcoming_videos: List[Dict] = self.update_upcoming_videos()
 
         if self._upcoming_videos is None:
             # Log only the very first time
@@ -227,11 +227,11 @@ class YoutubeChannel:
                 hook.spawn_subprocess(args)
 
     @staticmethod
-    def get_description_metadata(json: dict) -> Optional[str]:
+    def get_description_metadata(json: Dict) -> Optional[str]:
         return json.get('videoDetails', {})\
                    .get("shortDescription")
 
-    def get_video_metadata(self, videoId: Optional[str]) -> Optional[dict]:
+    def get_video_metadata(self, videoId: Optional[str]) -> Optional[Dict]:
         """Fetch more details about a particular video ID."""
         if not videoId:
             return None
@@ -256,7 +256,7 @@ class YoutubeChannel:
         if len(self._hooked_videos) >= 40:
             self._hooked_videos.pop(0)
 
-    def filter_videos(self, filter_type: str = 'isLiveNow') -> list:
+    def filter_videos(self, filter_type: str = 'isLiveNow') -> List:
         """Returns a list of videos that are live, from all channel tabs combined.
         Usually there is only one live video active at a time.
         """
@@ -270,7 +270,7 @@ class YoutubeChannel:
         return live_videos
 
     def update_community_videos(self):
-        """Returns list of dict with urls to videos attached to community posts.
+        """Returns list of Dict with urls to videos attached to community posts.
         """
         self._community_json = self._community_videos_html = None # force update
 
@@ -337,7 +337,7 @@ class YoutubeChannel:
         # NOTE "/live" virtual tab is a redirect to the current live broadcast
 
 
-def get_videos_from_tab(tabs, tabtype) -> list[dict]:
+def get_videos_from_tab(tabs, tabtype) -> List[Dict]:
     """
     Returns videos attached to posts in available "tab" section in JSON response.
     tabtype is either "Videos" "Community", "Home" etc.
@@ -376,7 +376,7 @@ def get_videos_from_tab(tabs, tabtype) -> list[dict]:
     return videos
 
 
-def get_video_from_post(attachment: dict) -> dict[str, Any]:
+def get_video_from_post(attachment: Dict) -> Dict[str, Any]:
     if not attachment:
         return {}
     video_post = {}
@@ -453,7 +453,7 @@ def wait_block(min_minutes=15.0, variance=3.5):
     sleep(wait_time_sec)
 
 
-def format_list_output(vid_list: list[dict]) -> str:
+def format_list_output(vid_list: List[Dict]) -> str:
     strs = []
     for vid in vid_list:
         strs.append(
