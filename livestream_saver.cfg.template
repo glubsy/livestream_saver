@@ -17,6 +17,7 @@ from_email =
 [common]
 # These variables can be re-used in other sections. This section does nothing else.
 # Reference these variables from other sections as ${common:variable}.
+
 # Only trigger download if this regex matches in video title + description
 allow_regex = ".*archiv.*|.*karaoke.*"
 # Do not trigger download if this regex matches in video title + description
@@ -39,6 +40,7 @@ ytdlp_command = yt-dlp
 
 [monitor]
 # These values are only loaded in Monitor mode.
+
 log_level = INFO
 # Delay between scan retries in minutes
 scan_delay = 15.5
@@ -51,18 +53,16 @@ allow_regex = ''
 block_regex = ""
 
 # This triggers when an upcoming video is listed in the channel page.
-# It can be a live videos, or a VOD (due to a Youtube bug listing both sometimes)
-# Note that downloading VODs is not yet implemented. 
 on_upcoming_detected = ${common:ytdlp_command}
-on_upcoming_detected_enabled = true
+on_upcoming_detected_enabled = false
 on_upcoming_detected_logged = false
 # These regexes only apply to the condition on which to spawn the command.
 on_upcoming_detected_allow_regex =
-on_upcoming_detected_block_regex = 
+on_upcoming_detected_block_regex = ".*FREE CHATTING SPACE.*"
 
 # This should trigger only for non-live videos (VOD).
 on_video_detected = ${common:ytdlp_command}
-on_video_detected_enabled = true
+on_video_detected_enabled = false
 on_video_detected_logged = true
 # These regexes only apply to the condition on which to spawn the command.
 on_video_detected_allow_regex = ${common:allow_regex}
@@ -102,6 +102,7 @@ on_merge_done_logged = false
 
 [download]
 # These values are only loaded in Download mode.
+
 log_level = WARNING
 # If live has not started yet, delay retrying by this many minutes.
 scan_delay = 2.5
@@ -166,7 +167,7 @@ URL = https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g
 
 # Spawn a subprocess of your choosing (for this target channel only):
 on_upcoming_detected = $(common:ytdlp_command)
-on_upcoming_detected_enabled = true
+on_upcoming_detected_enabled = false
 on_upcoming_detected_logged = true
 on_upcoming_detected_allow_regex = ".*archiv.*|.*karaoke.*|.*sing.*"
 on_upcoming_detected_block_regex =
