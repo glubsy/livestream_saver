@@ -182,7 +182,9 @@ class YoutubeChannel:
             )
             for vid in upcoming_videos:
                 # These checks are important to avoid the youtube bug that
-                # return VOD here as well.
+                # return VODs if there is no upcoming video at all.
+                # FIXME perhaps API calls might help solve this, otherwise we
+                # could keep track of public videoIds and ignore them. 
                 if vid.get('upcoming') and vid.get('isLive'):
                     self.trigger_hook('on_upcoming_detected', vid)
         else:

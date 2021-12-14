@@ -370,11 +370,11 @@ def _get_target_params(
     for section in config.sections():
         if not section.startswith("monitor"):
             continue
-        # We need at least one space
+        # We need at least one space between monitor and the channel name
         if len(section) <= len("monitor "):
             continue
         if override is None or override == section[len("monitor "):]:
-            logger.debug(f"Using custom monitor section \"{section}\".")
+            logger.info(f"Using custom monitor section \"{section}\".")
             params["URL"] = config.get(
                 section, "URL", fallback=None
             )
