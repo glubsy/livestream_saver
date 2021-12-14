@@ -23,6 +23,7 @@ from livestream_saver import exceptions
 from livestream_saver import extract
 from livestream_saver import util
 from livestream_saver.request import YoutubeUrllibSession
+from livestream_saver.hooks import is_wanted_based_on_metadata
 
 SYSTEM = system()
 ISPOSIX = SYSTEM == 'Linux' or SYSTEM == 'Darwin'
@@ -111,6 +112,7 @@ class YoutubeLiveStream():
         max_video_quality: Optional[str] = None,
         hooks: dict = {},
         skip_download = False,
+        filters: dict[str, re.Pattern] = {},
         log_level = logging.INFO
     ) -> None:
 
@@ -128,7 +130,6 @@ class YoutubeLiveStream():
 
         self._json: Optional[Dict] = {}
 
-        self.download_start_triggered = False
         self.hooks = hooks
         self.skip_download = skip_download
 
@@ -179,6 +180,9 @@ class YoutubeLiveStream():
 
         self.video_outpath = self.output_dir / 'vid'
         self.audio_outpath = self.output_dir / 'aud'
+
+        self.allow_regex: Optional[re.Pattern] = filters.get("allow_regex")
+        self.block_regex: Optional[re.Pattern] = filters.get("block_regex")
 
     def setup_logger(self, output_path, log_level):
         if isinstance(log_level, str):
@@ -716,14 +720,29 @@ playability status is: {status} \
         self.logger.debug(f"Video base url: {self.video_base_url}")
         self.logger.debug(f"Audio base url: {self.audio_base_url}")
 
-    def download(self, wait_delay: float = 2.0):
+    def download(self, wait_delay: float = 1.0):
         self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
         self.logger.info(f'Will start downloading from segment number {self.seg}.')
+
+        # Disable download if regex submitted by user and they match
+        self.logger.debug(
+            f"Checking metadata items {(self.title, self.description)} against"
+            f" {self.allow_regex} and {self.block_regex}\n")
+        if not is_wanted_based_on_metadata(
+            (self.title, self.description), 
+            self.allow_regex, self.block_regex
+        ):
+            self.skip_download = True
+            self.logger.warning(
+                f"Skipping download of {self.video_id} {self.title} "
+                "because a regex filter matched.")
 
         if self.skip_download:
             # Longer delay in minutes between updates since we don't download
             # we don't care about accuracy that much. Random value.
-            wait_delay *= 7.7
+            wait_delay *= 14.7
+
+        self.on("on_download_initiated")
 
         attempt = 0
         while not self.done and not self.error:
@@ -754,14 +773,13 @@ playability status is: {status} \
                 self.update_download_urls()
                 self.update_metadata()
 
-            if not self.download_start_triggered:
-                self.download_start_triggered = True
-                self.on('download_started')
+            self.on('on_download_started')
 
             if self.skip_download:
                 # We rely on the exception above to signal when the stream has ended
                 self.logger.debug(
-                    f"Not downloading. Waiting for {wait_delay} minutes..."
+                    f"Not downloading because \"skip-download\" option is active."
+                    f" Waiting for {wait_delay} minutes..."
                 )
                 sleep(wait_delay)
                 continue
@@ -810,6 +828,7 @@ playability status is: {status} \
                     break
         if self.done:
             self.logger.info(f"Finished downloading {self.video_id}.")
+            self.on("on_download_ended")
         if self.error:
             self.logger.critical(f"Some kind of error occured during download? {self.error}")
 
@@ -1186,7 +1205,15 @@ playability status is: {status} \
 
     def on(self, event: str):
         if hook := self.hooks.get(event, None):
-            hook.spawn_subprocess(self)
+            args = {
+                "url": self.url,
+                "cookie_path": self.session.cookie_path,
+                "logger": self.logger,
+                "output_dir": self.output_dir,
+                "title": self.title,
+                "description": self.description
+            }
+            hook.spawn_subprocess(args)
 
 
 class Status(Flag):

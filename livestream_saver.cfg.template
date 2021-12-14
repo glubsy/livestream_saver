@@ -1,9 +1,10 @@
 [DEFAULT]
+# If these keys are not specified in other sections, 
+# these will be used as a fallback.
 log_level = DEBUG
-
-# Path to cookies that is commmon to all modes:
+# Path to cookies that is commmon to all modes if not overriden by sections:
 cookie = 
-
+# E-mail notification parameters (using ENV is better)
 email_notifications = False
 smtp_server = 
 smtp_port = 25
@@ -13,73 +14,166 @@ to_email =
 from_email =
 
 
-[monitor]
-log_level = INFO
+[common]
+# These variables can be re-used in other sections. This section does nothing else.
+# Reference these variables from other sections as ${common:variable}.
+# Only trigger download if this regex matches in video title + description
+allow_regex = ".*archiv.*|.*karaoke.*"
+# Do not trigger download if this regex matches in video title + description
+block_regex = ""
+# This is just an example of yt-dlp (limiting video height to 240p)
+# Note that "--cookies %COOKIE_PATH%" will be smartly removed if the value was 
+# not provided from the config file nor from the command line as argument. 
+ytdlp_command = yt-dlp
+	-v
+	--embed-thumbnail
+	--fragment-retries 50
+	-o '%(upload_date)s %(uploader)s %(title)s_[%(height)s]_%(id)s.%(ext)s'
+	-f 'bestvideo+bestaudio'
+	-S "+res:240,res:360"
+	--add-metadata
+	--cookies %COOKIE_PATH%
+	--wait-for-video 5
+	%VIDEO_URL%
 
+
+[monitor]
+# These values are only loaded in Monitor mode.
+log_level = INFO
 # Delay between scan retries in minutes
 scan_delay = 15.5
+# Path to Netscape formatted cookie file.
+# cookie = /path/to/cookies.txt
 
-# Spawn a subprocess of your choosing (for all channels monitored):
-download_started_hook = 
+# Only trigger download if this regex matches video title.
+allow_regex = ''
+# Do not trigger download if this regex matches video title (not very useful).
+block_regex = ""
+
+# This triggers when an upcoming video is listed in the channel page.
+# It can be a live videos, or a VOD (due to a Youtube bug listing both sometimes)
+# Note that downloading VODs is not yet implemented. 
+on_upcoming_detected = ${common:ytdlp_command}
+on_upcoming_detected_enabled = true
+on_upcoming_detected_logged = false
+# These regexes only apply to the condition on which to spawn the command.
+# These are matched against title only for now.
+on_upcoming_detected_allow_regex =
+on_upcoming_detected_block_regex = 
+
+# This should trigger only for non-live videos (VOD).
+on_video_detected = ${common:ytdlp_command}
+on_video_detected_enabled = true
+on_video_detected_logged = true
+# These regexes only apply to the condition on which to spawn the command.
+# These are matched against title only for now.
+on_video_detected_allow_regex = ${common:allow_regex}
+on_video_detected_block_regex = 
+
+# This triggers when a download is pending and waiting for a livestream to start.
+on_download_initiated = ${common:ytdlp_command}
+on_download_initiated_enabled = true
+on_download_initiated_logged = true
+# These regexes only apply to the condition on which to spawn the command.
+# These are matched against both title + description.
+on_download_initiated_allow_regex = ${monitor:allow_regex}
+on_download_initiated_block_regex = ${monitor:block_regex}
+
+# This triggers when the download has actually started on an active livestream.
+on_download_started = 
+on_download_started_enabled = false
+on_download_started_logged = false
+# These regexes only apply to the condition on which to spawn the command.
+# These are matched against both title + description.
+on_download_started_allow_regex = ${common:allow_regex}
+on_download_started_block_regex = ${common:block_regex}
+
+# This triggers when we consider a livestream to be finished.
+on_download_ended = 
+on_download_ended_enabled = false
+on_download_ended_logged = false
+
+# This triggers when the merge is done (successfully or not).
+on_merge_done = 
+on_merge_done_enabled = false
+on_merge_done_logged = false
+
+# This can be used in any section to skip downloading.
+# skip_download = True
 
 
 [download]
+# These values are only loaded in Download mode.
 log_level = WARNING
-
-# If live has not started yet, delay retrying by this many minutes
+# If live has not started yet, delay retrying by this many minutes.
 scan_delay = 2.5
-
-# Path to Netscape formatted cookie file
+# Path to Netscape formatted cookie file.
 # cookie = /path/to/cookies.txt
 
-# Spawn a subprocess of your choosing:
-download_started_hook = 
+# This triggers when a download is pending and waiting for a livestream to start.
+on_download_initiated =
+on_download_initiated_enabled = false
+on_download_initiated_logged = false
+on_download_initiated_allow_regex = ${common:allow_regex}
+on_download_initiated_block_regex = ${common:block_regex}
+
+# This triggers when the download has actually started on an active livestream.
+on_download_started =
+on_download_started_enabled = false
+on_download_started_logged = false
+on_download_started_allow_regex = ${common:allow_regex}
+on_download_started_block_regex = ${common:block_regex}
+
+# This triggers when we consider a livestream to be finished.
+on_download_ended =
+on_download_ended_enabled = false
+on_download_ended_logged = false
+
+# This triggers when the merge is done (successfully or not).
+on_merge_done =
+on_merge_done_enabled = false
+on_merge_done_logged = false
 
 
-[channel_monitor]
+[monitor Meru]
+# These values only apply to monitor mode.
+channel_name = Matsuro Meru
+scan_delay = 20.0
+URL = https://www.youtube.com/channel/UCIJ6TGsTcBlYGUj-zbL60EQ
+
+
+[monitor Prune]
+channel_name = Prune
+scan_delay = 25.0
+URL = https://www.youtube.com/c/Prune73
+
+
+[monitor Purin]
+channel_name = Inukai Purin
+scan_delay = 20.0
+URL = https://www.youtube.com/channel/UCdrQWcX7XLDSUEh9SAxnyBg
+
+
+[monitor Kana]
+channel_name = Kamiko Kana
+scan_delay = 20.0
+URL = https://www.youtube.com/c/kamikokana
+
+
+[monitor Gura]
+# These values only apply to monitor mode.
 channel_name = Gawr Gura
 scan_delay = 20.0
 URL = https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g
 
 # Spawn a subprocess of your choosing (for this target channel only):
-download_started_hook = yt-dlp, 
-	--embed-thumbnail,
-	--fragment-retries, 50,
-	-o, %(upload_date)s %(uploader)s %(title)s_[%(height)s]_%(id)s.%(ext)s,
-	# -f, bestvideo+bestaudio,
-	# --cookies, %COOKIE_PATH%,
-	--add-metadata,
-	%VIDEO_URL%
+on_upcoming_detected = $(common:ytdlp_command)
+on_upcoming_detected_enabled = true
+on_upcoming_detected_logged = true
+on_upcoming_detected_allow_regex = ".*archiv.*|.*karaoke.*|.*sing.*"
+on_upcoming_detected_block_regex =
 
-# Disable spawning the command above (same as commenting the command out)
-download_started_hook_enabled = false
-
-# Log the command's output (both stdout & stderr)
-download_started_hook_logged = true
-
-# Skip download phase and only run the subprocess when a stream has started
-skip_download = false
-
-
-# [channel_monitor]
-# channel_name = Matsuro Meru
-# scan_delay = 15.0
-# URL = https://www.youtube.com/channel/UCIJ6TGsTcBlYGUj-zbL60EQ
-
-
-# [channel_monitor]
-# channel_name = Kamiko Kana
-# scan_delay = 20.0
-# URL = https://www.youtube.com/c/kamikokana
-
-
-# [channel_monitor]
-# channel_name = Prune
-# scan_delay = 25.0
-# URL = https://www.youtube.com/c/Prune73
-
-
-# [channel_monitor]
-# channel_name = Inukai Purin
-# scan_delay = 20.0
-# URL = https://www.youtube.com/channel/UCdrQWcX7XLDSUEh9SAxnyBg
+# Using "" as value will remove any value set in the "monitor" section above.
+# This is useful to override the value for a specific channel only.
+allow_regex = ".*archiv.*|.*karaoke.*|.*sing.*"
+block_regex = ""

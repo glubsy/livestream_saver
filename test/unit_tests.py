@@ -1,5 +1,8 @@
 import pytest
+import unittest
+import re
 from livestream_saver.merge import sanitize_filename
+from livestream_saver.hooks import is_wanted_based_on_metadata
 
 # Run with pytest -vv -s --maxfail=10 test/unit_tests.py
 
@@ -19,3 +22,28 @@ def test_sanitize_filename():
         assert len(res) <= 255
         for char in illegal_windows_chars:
             assert char not in res
+
+
+class test_regex_in_config(unittest.TestCase):
+    # TODO test various cases where a section override regex values in config
+
+    def test_is_wanted_based_on_metadata(self):
+        title = "serious business title アーカイブなし"
+        desc = "non-archived video description"
+        allowed = re.compile(".*archive.*|.*アーカイブ.*", re.I|re.M)
+        blocked = re.compile(".*serious.*", re.I|re.M)
+
+        assert is_wanted_based_on_metadata(
+            (title, desc), allowed, blocked) is False
+
+        assert is_wanted_based_on_metadata(
+            (title, desc), allowed, None) is True
+
+        assert is_wanted_based_on_metadata(
+            (title, desc), None, None) is True
+
+        assert is_wanted_based_on_metadata(
+            (title, desc), None, blocked) is False
+
+        assert is_wanted_based_on_metadata(
+            (title, desc), blocked, blocked) is False

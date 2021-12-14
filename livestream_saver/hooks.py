@@ -1,16 +1,28 @@
 import os
-from typing import Optional, Dict, Any
+import re
+import logging
+from typing import Iterable, Optional, Dict, Any
 from subprocess import Popen, DEVNULL
 from datetime import datetime
 
-from livestream_saver.download import YoutubeLiveStream
-
+# logger = logging.getLogger("livestream_saver")
 
 class HookCommand():
-    def __init__(self, cmd, logged) -> None:
+    def __init__(
+    self, 
+    cmd: Optional[list], 
+    logged: bool,
+    event_name: str,
+    allow_regex: Optional[re.Pattern] = None,
+    block_regex: Optional[re.Pattern] = None
+    ) -> None:
         self.cmd : Optional[list] = cmd
         self.logged = logged
-        # self.enabled = True
+        self.enabled = True
+        self.call_only_once = True
+        self.allow_regex = allow_regex
+        self.block_regex = block_regex
+        self.event_name: str = event_name
 
         self._kwargs: Dict[Any, Any] = {
             "stdin": DEVNULL,
@@ -32,24 +44,72 @@ class HookCommand():
                 }
             )
 
-
-    def spawn_subprocess(self, stream: YoutubeLiveStream):
-        if not self.cmd:
+    def spawn_subprocess(self, args: dict):
+        """args are supposed to be prepared in advance by the caller."""
+        # The HookCommand is a singleton, be careful when reusing it!
+        if not self.enabled or not self.cmd:
             return
-        # Make a copy to avoid using stale data
-        cmd = self.cmd[:]
-        # Replace placeholders with actual values
-        for item in cmd:
-            if item == r"%VIDEO_URL%":
-                cmd[cmd.index(item)] = stream.url
-            if item == r"%COOKIE_PATH%":
-                cmd[cmd.index(item)] = stream.session.cookie_path
+        if self.enabled and self.call_only_once:
+            self.enabled = False
+        
+        logger = args.get("logger", logging.getLogger("livestream_saver"))
+        
+        data = (args.get("title"), args.get("description"))
+        if not is_wanted_based_on_metadata(
+            data, self.allow_regex, self.block_regex):
+            logger.warning(
+                f"Skipping command spawning for event {self.event_name} because"
+                " one video metadata elements do not satisfy filter regexes: "
+                f"allowed regex: {self.allow_regex}, blocking regex: {self.block_regex}."
+            )
+            return
+
+        def replace_placeholders(cmd: list) -> list:
+            new = []
+            patched = False
+            for item in cmd:
+                if item == r"%VIDEO_URL%":
+                    if url := args.get('url', None):
+                        # cmd[cmd.index(item)] = url
+                        new.append(url)
+                        continue
+                    else:
+                        logger.warning(
+                            f"No URL found in video {args}. Skipping command {self.cmd}.")
+                        raise Exception
+                if item == r"%COOKIE_PATH%":
+                    # if parent.session.cookie_path is not None:
+                    if cookie_path := args.get("cookie_path", None):
+                        # cmd[cmd.index(item)] = cookie_path
+                        new.append(cookie_path)
+                    elif cmd[cmd.index(item) - 1] == "--cookies":
+                        logger.warning(
+                            "Detected --cookies argument in custom (yt-dlp?) command"
+                            " but missing cookie-path option. Removing and continuing...")
+                        # Previous entry should be "--cookies" in new list too
+                        new.pop()
+                        patched = True
+                        continue
+                    else:
+                        logger.warning(
+                            f"No cookie path submitted. Skipping command {self.cmd}.")
+                        raise Exception
+                new.append(item)
+            if patched:
+                logger.warning(f"{self.event_name} command after replacement: {new}.")
+            return new
+
+        # Make a copy to avoid reusing stale data
+        try:
+            cmd = replace_placeholders(self.cmd[:])
+        except Exception:
+            return
 
         try:
             if self.logged:
                 program_name = cmd[0].split(os.sep)[-1]
                 suffix = "_" + datetime.now().strftime(r"%Y%m%d_%H-%M-%S") + ".log"
-                logname = stream.output_dir / (program_name + suffix)
+                logname = args.get("output_dir", os.getcwd()) / (program_name + suffix)
                 log_handle = open(logname, 'a')
                 self._kwargs["stdout"] = log_handle
                 self._kwargs["stderr"] = log_handle
@@ -58,7 +118,36 @@ class HookCommand():
                 cmd,
                 **self._kwargs
             )
-            stream.logger.info(f"Spawned: {p.args} with PID={p.pid}")
+            logger.info(f"Spawned: {p.args} with PID={p.pid}")
         except Exception as e:
-            stream.logger.warning(f"Error spawning {cmd[0]}: {e}")
+            logger.warning(f"Error spawning {cmd}: {e}")
             pass
+
+
+def is_wanted_based_on_metadata(
+    data: Iterable[Optional[str]], 
+    allow_re: re.Pattern = None,
+    block_re: re.Pattern = None
+    ) -> bool:
+    """Test each RE against each item in data (title, description...)"""
+    if allow_re is None and block_re is None:
+        return True
+    wanted = True
+    blocked = False
+
+    if allow_re is not None:
+        wanted = False
+    if block_re is not None:
+        blocked = True
+
+    for item in data:
+        if not item:
+            continue
+        if allow_re and allow_re.search(item):
+            wanted = True
+        if block_re and block_re.search(item):
+            blocked = True
+    
+    if blocked:
+        return False
+    return wanted
