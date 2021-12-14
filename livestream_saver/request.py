@@ -2,6 +2,7 @@ import logging
 # from sys import version_info
 # from platform import python_version_tuple
 import re
+import json
 from random import randint
 from urllib.request import Request, urlopen #, build_opener, HTTPCookieProcessor, HTTPHandler
 import http.cookiejar
@@ -108,6 +109,46 @@ class YoutubeUrllibSession:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Request {req.full_url}")
             logger.debug(f"Request headers: {req.header_items()}")
+
+        return self.get_html(req)
+
+    def make_api_request(self, video_id):
+        """Make an innertube API call."""
+        # Try to circumvent throttling with this workaround for now since
+        # pytube is either broken or simply not up to date
+        # as per https://code.videolan.org/videolan/vlc/-/issues/26174#note_286445
+        headers = self.headers.copy()
+        headers.update(
+            {
+                'Content-Type': 'application/json',
+                'Origin': 'https://www.youtube.com',
+                'X-YouTube-Client-Name': '3',
+                'X-YouTube-Client-Version': '16.20',
+                # 'Accept': 'text/plain'
+            }
+        )
+        data = {
+            "context": {
+                "client": {
+                    "clientName": "ANDROID",
+                    "clientVersion": "16.20",
+                    "hl": "en"
+                }
+            },
+            "videoId": video_id,
+        }
+
+        req = Request(
+            "https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+            headers=headers,
+            data=json.dumps(data).encode(),
+            method="POST"
+        )
+        self.cookie_jar.add_cookie_header(req)
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"POST Request {req.full_url}")
+            logger.debug(f"POST Request headers: {req.header_items()}")
 
         return self.get_html(req)
 

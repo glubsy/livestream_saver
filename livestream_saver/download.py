@@ -316,7 +316,9 @@ We assume a failed download attempt. Last segment available was {seg}.")
         if self._json:
             return self._json
         try:
-            json_string = extract.initial_player_response(self.watch_html)
+            # json_string = extract.initial_player_response(self.watch_html)
+            # API request with ANDROID client gives us a pre-signed URL
+            json_string = self.session.make_api_request(self.video_id)
             self._json = extract.str_as_json(json_string)
             self.session.is_logged_out(self._json)
 

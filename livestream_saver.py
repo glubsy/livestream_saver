@@ -444,7 +444,8 @@ def monitor_mode(config, args):
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
                     "Live videos found for channel "
-                    f"\"{ch.get_channel_name()}\": {live_videos}"
+                    f"\"{ch.get_channel_name()}\": "
+                    f"{live_videos if len(live_videos) else None}"
                 )
         except Exception as e:
             # Handle urllib.error.URLError <urlopen error [Errno -3] Temporary failure in name resolution>

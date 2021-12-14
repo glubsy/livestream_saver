@@ -45,9 +45,9 @@ scan_delay = 15.5
 # Path to Netscape formatted cookie file.
 # cookie = /path/to/cookies.txt
 
-# Only trigger download if this regex matches video title.
+# Only trigger download if this regex matches video title + description.
 allow_regex = ''
-# Do not trigger download if this regex matches video title (not very useful).
+# Do not trigger download if this regex matches video title + description (not very useful).
 block_regex = ""
 
 # This triggers when an upcoming video is listed in the channel page.
@@ -57,7 +57,6 @@ on_upcoming_detected = ${common:ytdlp_command}
 on_upcoming_detected_enabled = true
 on_upcoming_detected_logged = false
 # These regexes only apply to the condition on which to spawn the command.
-# These are matched against title only for now.
 on_upcoming_detected_allow_regex =
 on_upcoming_detected_block_regex = 
 
@@ -66,7 +65,6 @@ on_video_detected = ${common:ytdlp_command}
 on_video_detected_enabled = true
 on_video_detected_logged = true
 # These regexes only apply to the condition on which to spawn the command.
-# These are matched against title only for now.
 on_video_detected_allow_regex = ${common:allow_regex}
 on_video_detected_block_regex = 
 

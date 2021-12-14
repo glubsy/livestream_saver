@@ -181,6 +181,8 @@ class YoutubeChannel:
                 )
             )
             for vid in upcoming_videos:
+                # These checks are important to avoid the youtube bug that
+                # return VOD here as well.
                 if vid.get('upcoming') and vid.get('isLive'):
                     self.trigger_hook('on_upcoming_detected', vid)
         else:
@@ -195,6 +197,8 @@ class YoutubeChannel:
                     )
                 )
                 for vid in new_upcoming_videos:
+                    # These checks are important to avoid the youtube bug that
+                    # return VOD here as well.
                     if vid.get('upcoming') and vid.get('isLive'):
                         self.trigger_hook('on_upcoming_detected', vid)
         self._upcoming_videos = upcoming_videos
@@ -204,7 +208,12 @@ class YoutubeChannel:
         if hook := self.hooks.get(hook_name, None):
             if not self.is_hooked_video(vid.get("videoId", None)):
                 url = vid.get("url")
-                # TODO get description by making an v1 API call on the videoID
+                # Make an API request to fetch the description
+                description = vid.get("description")
+                if not description:
+                    if metadata := self.get_video_metadata(vid.get("videoId")):
+                        vid["description"] = self.get_description_metadata(metadata)
+
                 args = {
                     "url": f"https://www.youtube.com{url}" if url is not None else None,
                     "cookie_path": self.session.cookie_path,
@@ -214,6 +223,22 @@ class YoutubeChannel:
                     "description": vid.get("description")
                 }
                 hook.spawn_subprocess(args)
+
+    @staticmethod
+    def get_description_metadata(json: dict) -> Optional[str]:
+        return json.get('videoDetails', {})\
+                   .get("shortDescription")
+
+    def get_video_metadata(self, videoId: Optional[str]) -> Optional[dict]:
+        """Fetch more details about a particular video ID."""
+        if not videoId:
+            return None
+        try:
+            json_string = self.session.make_api_request(videoId)
+            return extract.str_as_json(json_string)
+        except Exception as e:
+            logger.warning(f"Error fetching metadata for video {videoId}: {e}")
+            return None
 
     def is_hooked_video(self, videoId: Optional[str]):
         """Keep track of the last few videos for which we have triggered a hook
@@ -231,7 +256,7 @@ class YoutubeChannel:
 
     def filter_videos(self, filter_type: str = 'isLiveNow') -> list:
         """Returns a list of videos that are live, from all channel tabs combined.
-        Usually there is only one live video active at a time. 
+        Usually there is only one live video active at a time.
         """
         live_videos = []
         for vid in self.community_videos:
@@ -365,7 +390,7 @@ def get_video_from_post(attachment: dict) -> dict[str, Any]:
         # we can safely assume it is "upcoming"
         video_post['upcoming'] = True
         video_post['startTime'] = eventData.get('startTime')
-    
+
     # Attempt to attach "live" and "upcoming" status from the response
     for _item in attachment.get('thumbnailOverlays', []):
         if status_renderer := _item.get('thumbnailOverlayTimeStatusRenderer', {}):

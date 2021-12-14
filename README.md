@@ -156,7 +156,7 @@ on_download_initiated_enabled = false
 # Log command's output (both stdout & stderr)
 on_download_initiated_logged = true
 
-# The command will only spawn if these expressions match against the video title + description (Note: only title in monitor mode for now):
+# The command will only spawn if these expressions match against the video title + description:
 on_download_initiated_allow_regex = ".*archiv.*|.*sing.*"
 
 # The command will not spawn if these expressions match (honestly, this is not that useful, so don't use it): 
