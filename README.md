@@ -16,7 +16,7 @@ Basic usage example: `python livestream_saver.py monitor --cookie /path/to/cooki
 ```
 > python3 livestream_saver.py monitor --help
 
-usage: livestream_saver.py monitor [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONF_FILE] [--cookie COOKIE_PATH] [-q MAX_VIDEO_QUALITY] [-o OUTPUT_DIR] [--channel-name CHANNEL_NAME] [-d] [-n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] [YOUTUBE_CHANNEL_URL]
+usage: livestream_saver.py monitor [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONFIG_FILE] [--cookie COOKIE_PATH] [-q MAX_VIDEO_QUALITY] [-o OUTPUT_DIR] [--channel-name CHANNEL_NAME] [-s SECTION] [-d] [-n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] [--skip-download] [YOUTUBE_CHANNEL_URL]
 
 positional arguments:
   YOUTUBE_CHANNEL_URL   The Youtube channel to monitor for live streams. Either a full youtube URL, /channel/ID, or /c/name format. (default: None)
@@ -25,15 +25,17 @@ optional arguments:
   -h, --help            show this help message and exit
   --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
                         Log level. (Default: INFO)
-  -c CONF_FILE, --conf-file CONF_FILE
-                        Path to config file to use. (Default: $(pwd)/livestream_saver.cfg))
+  -c CONFIG_FILE, --config-file CONFIG_FILE
+                        Path to config file to use. (Default: ~/.config/livestream_saver/livestream_saver.cfg)
   --cookie COOKIE_PATH  Path to Netscape formatted cookie file.
   -q MAX_VIDEO_QUALITY, --max-video-quality MAX_VIDEO_QUALITY
                         Use best available video resolution up to this height in pixels. Example: "360" for maximum height 360p. Get the highest available resolution by default.
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
-                        Output directory where to save channel data. (Default: $(pwd))
+                        Output directory where to save channel data. (Default: CWD)
   --channel-name CHANNEL_NAME
                         User-defined name of the channel to monitor. Will fallback to channel ID deduced from the URL otherwise.
+  -s SECTION, --section SECTION
+                        Override values from the section [monitor NAME] found in config file. If none is specified, will load the first section in config with that name pattern. (default: None)
   -d, --delete-source   Delete source segment files once the final merging of them has been done. (default: False)
   -n, --no-merge        Do not merge segments after live streams has ended. (default: False)
   -k, --keep-concat     Keep concatenated intermediary files even if merging of streams has been successful. Only useful for troubleshooting. (default: False)
@@ -53,7 +55,7 @@ Basic usage example: `python livestream_saver.py download --cookie /path/to/cook
 ```
 > python3 livestream_saver.py download --help
 
-usage: livestream_saver.py download [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONF_FILE] [--cookie COOKIE_PATH] [-q MAX_VIDEO_QUALITY] [-o OUTPUT_DIR] [-d | -n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] YOUTUBE_VIDEO_URL
+usage: livestream_saver.py download [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONFIG_FILE] [--cookie COOKIE_PATH] [-q MAX_VIDEO_QUALITY] [-o OUTPUT_DIR] [-d | -n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] [--skip-download] YOUTUBE_VIDEO_URL
 
 positional arguments:
   YOUTUBE_VIDEO_URL     Youtube video stream URL to download.
@@ -62,13 +64,13 @@ optional arguments:
   -h, --help            show this help message and exit
   --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
                         Log level. (Default: INFO)
-  -c CONF_FILE, --conf-file CONF_FILE
-                        Path to config file to use. (Default: $(pwd)/livestream_saver.cfg)
+  -c CONFIG_FILE, --config-file CONFIG_FILE
+                        Path to config file to use. (Default: ~/.config/livestream_saver/livestream_saver.cfg)
   --cookie COOKIE_PATH  Path to Netscape formatted cookie file.
   -q MAX_VIDEO_QUALITY, --max-video-quality MAX_VIDEO_QUALITY
                         Use best available video resolution up to this height in pixels. Example: "360" for maximum height 360p. Get the highest available resolution by default.
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
-                        Output directory where to write downloaded chunks. (Default: $(pwd))
+                        Output directory where to write downloaded chunks. (Default: CWD)
   -d, --delete-source   Delete source files once final merge has been done. (default: False)
   -n, --no-merge        Do not merge segments after live streams has ended. (default: False)
   -k, --keep-concat     Keep concatenated intermediary files even if merging of streams has been successful. Only useful for troubleshooting. (default: False)
@@ -88,7 +90,7 @@ Basic usage example: `python livestream_saver.py merge /path/to/stream_capture_{
 ```
 > python3 livestream_saver.py merge --help
 
-usage: livestream_saver.py merge [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONF_FILE] [-d] [-k] [-o OUTPUT_DIR] PATH
+usage: livestream_saver.py merge [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONFIG_FILE] [-d] [-k] [-o OUTPUT_DIR] PATH
 
 positional arguments:
   PATH                  Path to directory holding vid/aud sub-directories in which segments have been downloaded as well as the metadata.txt file.
@@ -97,8 +99,8 @@ optional arguments:
   -h, --help            show this help message and exit
   --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
                         Log level. (Default: INFO)
-  -c CONF_FILE, --conf-file CONF_FILE
-                        Path to config file to use. (Default: $(pwd)/livestream_saver.cfg)
+  -c CONFIG_FILE, --config-file CONFIG_FILE
+                        Path to config file to use. (Default: ~/.config/livestream_saver/livestream_saver.cfg)
   -d, --delete-source   Delete source files (vid/aud) once final merging of streams has been successfully done. (default: False)
   -k, --keep-concat     Keep concatenated intermediary files even if merging of streams has been successful. This is only useful for debugging. (default: False)
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
@@ -128,33 +130,40 @@ One could also clone the corresponding repositories manually to get the latest u
 
 # Configuration
 
-The template config file `livestream_saver.cfg.template` is provided as an example. 
-Options can generally be overriden via command line arguments (except for hooks).
+The template config file `livestream_saver.cfg.template` is provided as an example. The default path should be `~/.config/livestream_saver/livestream_saver.cfg` (On Windows, it is read directly from your base user directory).
+A lot of options can be overriden via command line arguments. See the --help message for details.
 
+A monitor section for a specific channel can be invoked from the CLI with `--section NAME` where `NAME` is the same string of characters from `[monitor NAME]` in the config file. This helps having one central config file. By default, the first section with this pattern will be loaded if none has been specified on the command line.
 
 ## On-download started hook
 
-You can spawn a process of your choosing whenever we start downloading segments. This can be useful to spawn youtube-dl or yt-dlp in parallel for example.
-This can only be specified in the config file. Example:
+You can spawn a process of your choosing on various events (see config file template). This can be useful to spawn youtube-dl (yt-dlp) in parallel for example.
+Note that these hooks can only be specified in a config file. Example:
+```ini
+# Call this program whenever a download is starting (the live stream might be pending still)
+on_download_initiated = yt-dlp --add-metadata --embed-thumbnail --wait-for-video 5 %VIDEO_URL%
 ```
-download_started_hook = yt-dlp, --add-metadata, --embed-thumbnail, %VIDEO_URL%
-```
-Arguments are split on commas. 
-Placeholders will be replaced by the corresponding value:
+The following place-holders will be replaced by the corresponding value (more will be added in the future):
 - `%VIDEO_URL%`: the URL of the live stream being currently downloaded
 - `%COOKIE_PATH%`: the path to the cookie file you have specified (in config, or CLI argument)
 
-Each section (`[channel_monitor]`, `[monitor]`, `[download]`) can have a different value. The `[DEFAULT]` section can be used as a fallback if none of them have such option specified.
-The command can be disabled and its output logged with the following options (placed in the **same section** as the affected command):
-```
+Each section (`[monitor]`, `[download]` and `[monitor CHANNEL]`) can have a different value for the same option / event. The `[DEFAULT]` section is only used as a fallback if none of them have an expected value specified. The `[monitor CHANNEL]` section will override any value from the `monitor` section, so you can specify different programs for different channels for example.
+The command can be disabled and its output logged with the following options (placed in the **same section** as the affected command). Additionally, regex can be used to narrow own when to spawn a command based on the targeted video's metadata:
+```ini
 # Disable spawning the command above (same as commenting the command out)
-download_started_hook_enabled = false
+on_download_initiated_enabled = false
 
 # Log command's output (both stdout & stderr)
-download_started_hook_logged = true
+on_download_initiated_logged = true
+
+# The command will only spawn if these expressions match against the video title + description:
+on_download_initiated_allow_regex = ".*archiv.*|.*sing.*"
+
+# The command will not spawn if these expressions match (honestly, this is not that useful, so don't use it): 
+on_download_initiated_block_regex = ".*pineapple.*|.*banana.*"
 ```
-You can also skip the downloading phase with the following option:
-```
+You can also skip the downloading phase every time with the following option:
+```ini
 # Skip download phase and only run the subprocess when a stream has started
 skip_download = true
 ```
@@ -187,6 +196,5 @@ This is beta software. It should work, but in case it doesn't, feel free to repo
 * Fetch segments in parallel to catch up faster.
 * Make sure age-restricted videos are not blocked (we rely on Pytube for this).
 * Monitor Twitch channels.
-* Integrate yt-dlp and streamlink as secondary back-ends.
-* Add user-supplied command after merge successful.
-* Make Docker image and a web-interface.
+* Make Docker container.
+* Make web interface.

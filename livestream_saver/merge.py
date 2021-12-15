@@ -36,7 +36,7 @@ def get_metadata_info(path: Path):
         }
 
 
-def concat(datatype: str, video_id: str, seg_list: list,
+def concat(datatype: str, video_id: str, seg_list: List,
            output_dir: Path, method: int = 0) -> Optional[Path]:
     """
     Concatenate segments.
@@ -264,12 +264,40 @@ def merge(info: Dict, data_dir: Path,
     if not video_files and not audio_files:
         return None
 
-    if len(video_files) != len(audio_files):
-        logger.warning("Number of audio and video segments do not match.")
+    def to_int(seg_list: List[Path]) -> List[int]:
+        # remove the "_audio/_video" part
+        return [int(i.stem[:-6]) for i in seg_list]
 
+    segment_number_mismatch = False
+    if len(video_files) != len(audio_files):
+        segment_number_mismatch = True
+
+        video_as_int = to_int(video_files)
+        audio_as_int = to_int(audio_files)
+        seg_list_as_ints = video_as_int + audio_as_int
+
+        affected_segs = [
+            i for i in seg_list_as_ints 
+            if i not in video_as_int or i not in audio_as_int
+        ]
+        missing_audio_ints = [i for i in video_as_int if i not in audio_as_int]
+        missing_video_ints = [i for i in audio_as_int if i not in video_as_int]
+        logger.warning(
+            "Number of audio and video segments do not match: "
+            f"{len(video_files)} video segments, {len(audio_files)} audio segments."
+            f" Affected segments: {affected_segs}. "
+            f" Missing video segments: {missing_video_ints}."
+            f" Missing audio segments: {missing_audio_ints}"
+        )
+        del video_as_int
+        del audio_as_int
+        del seg_list_as_ints
+        del missing_audio_ints
+        del missing_video_ints
+
+    # FIXME merge these checks with above checks
     missing_video = print_missing_segments(video_files, "_video")
     missing_audio = print_missing_segments(audio_files, "_audio")
-
     # FIXME "remove" the corresponding segments from each list above
     # in order to have exactly the same number of segments before
     # trying to concatenate and merge tracks. (only true for DASH/adaptive)
@@ -390,21 +418,20 @@ def merge(info: Dict, data_dir: Path,
         ffmpeg_output_path_audio.unlink()
         ffmpeg_output_path_video.unlink()
 
-    if len(missing_audio) > 0 or len(missing_video) > 0:
-        logger.warning(
-            "There were some missing segments, skipping deletion of source files."
-        )
-    elif ffmpeg_error:
-        logger.warning(
-            "There seem to have been errors while processing with ffmpeg."
-            " Skipping deletion of source files."
-        )
-    elif delete_source:
-        logger.info("Deleting source segments in {} and {}...".format(
-            video_seg_dir, audio_seg_dir)
-        )
-        rmtree(video_seg_dir)
-        rmtree(audio_seg_dir)
+    if delete_source:
+        if segment_number_mismatch or (len(missing_audio) > 0 or len(missing_video) > 0):
+            logger.warning("Not deleting source segments because some are missing.")
+        elif ffmpeg_error:
+            logger.warning(
+                "There seem to have been errors while processing with ffmpeg."
+                " Skipping deletion of source files."
+            )
+        else:
+            logger.info("Deleting source segments in {} and {}...".format(
+                video_seg_dir, audio_seg_dir)
+            )
+            rmtree(video_seg_dir)
+            rmtree(audio_seg_dir)
 
     return final_output_file
 

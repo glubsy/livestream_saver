@@ -1,6 +1,4 @@
 #!/usr/bin/env python
-from configparser import MAX_INTERPOLATION_DEPTH
-from itertools import takewhile
 from os import name, sep, path, makedirs, listdir
 from sys import stderr
 from platform import system
@@ -11,20 +9,18 @@ from json import dumps, dump
 from contextlib import closing
 from enum import Flag, auto
 import asyncio
-from typing import Awaitable, Optional, Dict, Tuple, Union, List, Set
+from typing import Optional, Dict, Tuple, Union, List, Set
 from types import MethodType
 from pathlib import Path
 from queue import LifoQueue
 import re
-# from urllib.request import urlopen
 import urllib.request
 import urllib.error
 from http.client import IncompleteRead
-# import concurrent.futures
 
-import pytube
 import pytube.cipher
-from pytube import YouTube
+from pytube import Stream, StreamQuery, itags
+import pytube
 import pytube.exceptions
 # import aiohttp
 
@@ -34,6 +30,7 @@ from livestream_saver import util
 from livestream_saver.constants import *
 # import livestream_saver
 from livestream_saver.request import ASession as Session
+from livestream_saver.hooks import is_wanted_based_on_metadata
 
 SYSTEM = system()
 ISPOSIX = SYSTEM == 'Linux' or SYSTEM == 'Darwin'
@@ -53,7 +50,7 @@ class Status(Flag):
 # logger.setLevel(logging.DEBUG)
 
 
-class PytubeYoutube(YouTube):
+class PytubeYoutube(pytube.YouTube):
     """Wrapper to override some methods in order to bypass several restrictions
     due to lacking features in pytube (most notably live stream support)."""
     def __init__(self, *args, **kwargs):
@@ -200,6 +197,7 @@ class YoutubeLiveBroadcast():
         filter_args: Dict = {},
         hooks: dict = {},
         skip_download = False,
+        regex_filters = {},
         log_level = logging.INFO
     ) -> None:
 
@@ -214,7 +212,7 @@ class YoutubeLiveBroadcast():
         self.download_start_triggered = False
         self.hooks = hooks
         self.skip_download = skip_download
-        self.selected_streams: set[pytube.Stream] = set()
+        self.selected_streams: set[Stream] = set()
         self.video_stream = None
         self.video_itag = None
         self.audio_stream = None
@@ -241,8 +239,11 @@ class YoutubeLiveBroadcast():
         # self.video_outpath = self.output_dir / 'vid'
         # self.audio_outpath = self.output_dir / 'aud'
 
+        self.allow_regex: Optional[re.Pattern] = regex_filters.get("allow_regex")
+        self.block_regex: Optional[re.Pattern] = regex_filters.get("block_regex")
+
     @property
-    def streams(self) -> pytube.StreamQuery:
+    def streams(self) -> StreamQuery:
         return self.ptyt.streams
 
     def print_available_streams(self, logger: logging.Logger = None) -> None:
@@ -268,7 +269,7 @@ class YoutubeLiveBroadcast():
 
         submitted_itags = util.split_by_plus(itags)
 
-        selected_streams: Set[pytube.Stream] = set()
+        selected_streams: Set[Stream] = set()
         # If an itag is supposed to provide a video track, we assume
         # the user wants a video track. Same goes for audio.
         wants_video = wants_audio = True
@@ -367,7 +368,7 @@ class YoutubeLiveBroadcast():
         self,
         tracktype: str,
         codec: str,
-        maxq: Optional[str] = None) -> pytube.Stream:
+        maxq: Optional[str] = None) -> Stream:
         """
         tracktype == video or audio
         codec == mp4, mov, webm...
@@ -468,13 +469,13 @@ class YoutubeLiveBroadcast():
 
         custom_filters = None
         if i_maxq is not None:  # int
-            def resolution_filter(s: pytube.Stream) -> bool:
+            def resolution_filter(s: Stream) -> bool:
                 res_int = as_int_re(s.resolution)
                 if res_int is None:
                     return False
                 return res_int <= i_maxq
 
-            def abitrate_filter(s: pytube.Stream) -> bool:
+            def abitrate_filter(s: Stream) -> bool:
                 res_int = as_int_re(s.abr)
                 if res_int is None:
                     return False
@@ -695,10 +696,10 @@ class YoutubeLiveBroadcast():
     def update_metadata(self) -> None:
         """Fetch various metadata and write them to disk."""
         if self.video_stream:
-            if info := pytube.itags.ITAGS.get(self.video_stream):
+            if info := itags.ITAGS.get(self.video_stream):
                 self.video_resolution = info[0]
         if self.audio_stream:
-            if info := pytube.itags.ITAGS.get(self.audio_stream):
+            if info := itags.ITAGS.get(self.audio_stream):
                 self.audio_bitrate = info[0]
 
         self.download_thumbnail()
@@ -1060,11 +1061,6 @@ class YoutubeLiveBroadcast():
 
         # loop.run_until_complete(tasks)
 
-
-    def on(self, event: str):
-        if hook := self.hooks.get(event, None):
-            hook.spawn_subprocess(self)
-
     def has_started(self) -> bool:
         self.status()
         if self._status & Status.OFFLINE:
@@ -1085,15 +1081,27 @@ class YoutubeLiveBroadcast():
             )
         self.logger.info(f'Will start downloading from segment number {self.seg}.')
 
+        # Disable download if regex submitted by user and they match
+        self.logger.debug(
+            f"Checking metadata items {(self.title, self.description)} against"
+            f" {self.allow_regex} and {self.block_regex}\n")
+        if not is_wanted_based_on_metadata(
+            (self.title, self.description), 
+            self.allow_regex, self.block_regex
+        ):
+            self.skip_download = True
+            self.logger.warning(
+                f"Skipping download of {self.video_id} {self.title} "
+                "because a regex filter matched.")
+
         if self.skip_download:
             # Longer delay in minutes between updates since we don't download
             # we don't care about accuracy that much. Random value.
-            wait_delay *= 7.7
+            wait_delay *= 14.7
 
-        # TODO get the current segment from the manifest, then start downloading
-        # from that segment onward (like ytdl), but also download all the segments
-        # from the start in parallel.
+        self.on("on_download_initiated")
 
+        attempt = 0
         need_status_update = True
         while not self.done and not self.error:
             try:
@@ -1126,19 +1134,16 @@ class YoutubeLiveBroadcast():
                 self.update_download_urls()
                 self.update_metadata()
 
-            if not self.download_start_triggered:
-                self.download_start_triggered = True
-                self.on('download_started')
+            self.on('on_download_started')
 
             if self.skip_download:
                 # We rely on the exception above to signal when the stream has ended
                 self.logger.debug(
-                    f"Not downloading. Waiting for {wait_delay} minutes..."
+                    f"Not downloading because \"skip-download\" option is active."
+                    f" Waiting for {wait_delay} minutes..."
                 )
                 sleep(wait_delay)
                 continue
-
-            # self.spawn_companion(self.url)
 
             while True:
                 attempt = 0
@@ -1163,9 +1168,9 @@ class YoutubeLiveBroadcast():
 
                         self.logger.warning(
                             "It seems the stream has not really ended. "
-                            f"Retrying in 10 secs... (attempt {attempt}/15)")
+                            f"Retrying in 5 secs... (attempt {attempt}/15)")
                         attempt += 1
-                        sleep(10)
+                        sleep(5)
                         try:
                             self.update_download_urls()
                         except Exception as e:
@@ -1181,6 +1186,7 @@ class YoutubeLiveBroadcast():
                     break
         if self.done:
             self.logger.info(f"Finished downloading {self.video_id}.")
+            self.on("on_download_ended")
         if self.error:
             self.logger.critical(
                 f"Some kind of error occured during download? {self.error}"
@@ -1199,7 +1205,7 @@ class YoutubeLiveBroadcast():
                 f"url {getattr(self.audio_stream, 'url', 'Missing URL')}"
             )
 
-        wait_sec = 60
+        wait_sec = 3
         attempt = 0
         while True:
             try:
@@ -1270,12 +1276,12 @@ class YoutubeLiveBroadcast():
                     # Usually this means the stream has ended and parts
                     # are now unavailable.
                     raise exceptions.ForbiddenSegmentException(e.reason)
-                if attempt >= 30:
+                if attempt >= 20:
                     raise e
                 attempt += 1
                 self.logger.warning(
                     f"Waiting for {wait_sec} seconds before retrying... "
-                    f"(attempt {attempt}/30)")
+                    f"(attempt {attempt}/20)")
                 sleep(wait_sec)
                 continue
             except (IncompleteRead, ValueError) as e:
@@ -1301,9 +1307,21 @@ class YoutubeLiveBroadcast():
         print(clear_line + fullmsg, end='')
         self.logger.info(fullmsg)
 
+    def on(self, event: str):
+        if hook := self.hooks.get(event, None):
+            args = {
+                "url": self.url,
+                "cookie_path": self.session.cookie_path,
+                "logger": self.logger,
+                "output_dir": self.output_dir,
+                "title": self.title,
+                "description": self.ptyt.description
+            }
+            hook.spawn_subprocess(args)
+
 
 async def worker_retries(
-    stream: pytube.Stream,
+    stream: Stream,
     name: str,
     queue,
     loop: asyncio.AbstractEventLoop,
@@ -1347,7 +1365,7 @@ async def worker_retries(
 
 # pytube.Stream
 async def async_download(
-    self: pytube.Stream,
+    self: Stream,
     loop: asyncio.AbstractEventLoop,
     ):
     basecolor = BLUE if self.type == "video" else YELLOW
@@ -1523,7 +1541,7 @@ async def async_download(
 
 
 class Segment():
-    def __init__(self, num: int, stream: pytube.Stream) -> None:
+    def __init__(self, num: int, stream: Stream) -> None:
         self.num: int = num
         # Reference stream for any future URL updates
         self.stream = stream
@@ -1658,7 +1676,7 @@ class Segment():
 class DownloadHandler():
     """Keep track of downloaded segments and errors."""
     def __init__(
-        self, stream: pytube.Stream,
+        self, stream: Stream,
         start_seg: int, upto_seg: int,
         name: str, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop,
         events: dict[str, asyncio.Event]) -> None:
@@ -1813,7 +1831,7 @@ def setup_logger(
     return logger
 
 
-def collect_missing_segments(output_dir: Path, stream: pytube.Stream):
+def collect_missing_segments(output_dir: Path, stream: Stream):
     """Update stream objects properties in selected streams with output
     directory, starting segment, and mising segments if any."""
     stream_output_dir = output_dir / stream.dir_suffix
