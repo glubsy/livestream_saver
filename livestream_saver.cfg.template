@@ -3,7 +3,7 @@
 # these will be used as a fallback.
 log_level = DEBUG
 # Path to cookies that is commmon to all modes if not overriden by sections:
-cookie = 
+# cookie = 
 # E-mail notification parameters (using ENV is better)
 email_notifications = False
 smtp_server = 
@@ -37,6 +37,8 @@ ytdlp_command = yt-dlp
 	--wait-for-video 5
 	%VIDEO_URL%
 
+# Path to cookies that can be reused in individual sections:
+cookie = 
 
 [monitor]
 # These values are only loaded in Monitor mode.
@@ -165,9 +167,10 @@ URL = https://www.youtube.com/c/kamikokana
 channel_name = Gawr Gura
 scan_delay = 20.0
 URL = https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g
+cookie = ${common:cookie}
 
 # Spawn a subprocess of your choosing (for this target channel only):
-on_upcoming_detected = $(common:ytdlp_command)
+on_upcoming_detected = ${common:ytdlp_command}
 on_upcoming_detected_enabled = false
 on_upcoming_detected_logged = true
 on_upcoming_detected_allow_regex = ".*archiv.*|.*karaoke.*|.*sing.*"

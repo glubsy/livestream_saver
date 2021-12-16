@@ -343,11 +343,13 @@ def _get_target_params(
         "scan_delay": config.getfloat(sub_cmd, "scan_delay", vars=args),
         "skip_download": config.getboolean(sub_cmd, "skip_download", vars=args),
         "hooks": get_hooks_for_section(sub_cmd, config),
+        "cookie": config.get(sub_cmd, "cookie", vars=args, fallback=None),
         "filters": {
             "allow_regex": None,
             "block_regex": None
         }
     }
+
 
     # This may throw, it should crash the program to avoid bad surprises
     if sub_cmd == "monitor":
@@ -380,6 +382,9 @@ def _get_target_params(
             )
             params["channel_name"] = config.get(
                 section, "channel_name", vars=args, fallback=None
+            )
+            params["cookie"] = config.get(
+                section, "cookie", vars=args, fallback=None
             )
             # Use the value from monitor section if missing
             params["scan_delay"] = config.getfloat(
@@ -424,7 +429,7 @@ def monitor_mode(config, args):
     scan_delay = args["scan_delay"]
 
     session = YoutubeUrllibSession(
-        config.get("monitor", "cookie", vars=args, fallback=None),
+        cookie_path=args.get("cookie"),
         notifier=notif_h
     )
 
@@ -542,7 +547,7 @@ def monitor_mode(config, args):
 
 def download_mode(config, args):
     session = YoutubeUrllibSession(
-        config.get("download", "cookie", vars=args, fallback=None),
+        cookie_path=args.get("cookie"),
         notifier=notif_h
     )
     try:
@@ -641,7 +646,7 @@ def init_config() -> ConfigParser:
     """Get a ConfigParser with sane default values."""
     # Create user config directory if it doesn't already exist
     conf_filename = "livestream_saver.cfg"
-    if platform == "Win32":
+    if platform == "win32":
         config_dir = Path.home() / "livestream_saver.cfg"
     else:
         config_dir = Path.home() / ".config/livestream_saver"
@@ -740,6 +745,7 @@ def main():
         args["channel_name"] = channel_name
         args["scan_delay"] = params.get("scan_delay")
         args["hooks"] = params.get("hooks")
+        args["cookie"] = params.get("cookie")
         args["skip_download"] = params.get("skip_download")
         args["filters"] = params.get("filters", {})
 
@@ -773,6 +779,7 @@ def main():
         )
         URL = args.get("URL", "")  # pass empty string for get_video_id()
         args["hooks"] = get_hooks_for_section(sub_cmd, config)
+        args["cookie"] = config.get(sub_cmd, "cookie", vars=args, fallback=None)
 
         video_id = extract.get_video_id(url=URL)
         args["video_id"] = video_id
