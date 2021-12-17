@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from os import name, sep, path, makedirs, listdir
+from os import path, makedirs, listdir
 from sys import stderr
 from platform import system
 import logging
@@ -1789,8 +1789,8 @@ def setup_logger(
     if isinstance(log_level, str):
         log_level = str.upper(log_level)
 
-    # We need to make an independent logger (with no parent) in order to
-    # avoid using the parent logger's handlers, although we are writing
+    # We need to make an independent logger - with no parent (other than root)- 
+    # in order to avoid using the parent logger's handlers, although we are writing
     # to the same file.
     logger = logging.getLogger("download" + "." + video_id)
 

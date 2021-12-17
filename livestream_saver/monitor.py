@@ -29,7 +29,7 @@ class YoutubeChannel:
         self.hooks = hooks
         self._hooked_videos = []
         self.output_dir = output_dir
-        self.logger = logger
+        # self.logger = logger
 
     def get_channel_name(self):
         """Get the name of the channel from the community JSON (once retrieved).
@@ -208,7 +208,9 @@ class YoutubeChannel:
 
     def trigger_hook(self, hook_name: str, vid):
         if hook := self.hooks.get(hook_name, None):
+            print(f"we got hook {hook}")
             if not self.is_hooked_video(vid.get("videoId", None)):
+                print(f"hooking video {vid}")
                 url = vid.get("url")
                 # Make an API request to fetch the description
                 description = vid.get("description")
@@ -219,7 +221,7 @@ class YoutubeChannel:
                 args = {
                     "url": f"https://www.youtube.com{url}" if url is not None else None,
                     "cookie_path": self.session.cookie_path,
-                    "logger": self.logger,
+                    "logger": logger,
                     "output_dir": self.output_dir,
                     "title": vid.get("title"),
                     "description": vid.get("description")

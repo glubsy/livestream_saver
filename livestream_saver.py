@@ -404,7 +404,6 @@ def _get_target_params(
         }
     }
 
-
     # This may throw, it should crash the program to avoid bad surprises
     if sub_cmd == "monitor":
         for regex_str in ("allow_regex", "block_regex"):
@@ -478,7 +477,7 @@ def _get_target_params(
 
 
 def monitor_mode(config, args):
-    from livestream_saver.monitor import YoutubeChannel, wait_block
+    # from livestream_saver.monitor import YoutubeChannel, wait_block
     URL = args["URL"]
     channel_id = args["channel_id"]
     scan_delay = args["scan_delay"]
@@ -736,21 +735,26 @@ async def merge_mode(config, args):
 
 
 def log_enabled(config, args, mode_str):
-    """Sanitize log level input value, return False if disabled by user."""
+    """Sanitize log level input value, return False if disabled by user.
+    Crash the entire program if the value is invalid. """
     if level := config.get(mode_str, "log_level", vars=args):
         # if level == "NONE":
         #     return False
         log_level = getattr(logging, level, None)
         if not isinstance(log_level, int):
             raise ValueError(f'Invalid log-level for {mode_str} mode: {level}')
-    return True
+        return True
+    return False
 
 
-def setup_logger(*, output_filepath, loglevel, log_to_file=True) -> logging.Logger:
-    # This uses the global variable "logger"
+def setup_logger(output_filepath, loglevel, logger_inst=None, log_to_file=True) -> None:
+    if logger_inst is None:
+        global logger
+        logger_inst = logger
+    
     if loglevel is None:
         logger.disabled = True
-        return logger
+        return
 
     if isinstance(loglevel, str):
         loglevel = str.upper(loglevel)
@@ -766,14 +770,13 @@ def setup_logger(*, output_filepath, loglevel, log_to_file=True) -> logging.Logg
         # FIXME DEBUG by default for file
         logfile.setLevel(logging.DEBUG)
         logfile.setFormatter(formatter)
-        logger.addHandler(logfile)
+        logger_inst.addHandler(logfile)
 
     # Console stdout handler
     conhandler = logging.StreamHandler()
     conhandler.setLevel(loglevel)
     conhandler.setFormatter(formatter)
-    logger.addHandler(conhandler)
-    return logger
+    logger_inst.addHandler(conhandler)
 
 
 def init_config() -> ConfigParser:
@@ -840,13 +843,13 @@ def update_config(config, args) -> None:
     conf_file = args.get("config_file")
     if conf_file:
         if not Path(conf_file).is_file():
-            logging.critical(
+            print(
                 f"Config file \"{conf_file}\" is not a valid file. "
                 "Continuing with default values only!")
             return
         read_conf_files = config.read(conf_file)
         if not read_conf_files:
-            logging.critical(f"Failed to read config file from {conf_file}")
+            print(f"Failed to read config file from {conf_file}")
         return
     # No config file specified, get it from ~/.config by default
     conf_file = Path(config.get("DEFAULT", "config_file"))
@@ -857,7 +860,7 @@ def update_config(config, args) -> None:
             return
     read_conf_files = config.read(conf_file)
     if not read_conf_files:
-        logging.critical(f"Failed to read config file from {conf_file}.")
+        print(f"Failed to read config file from {conf_file}.")
 
 
 def main():
@@ -904,7 +907,7 @@ def main():
 
         logfile_path = output_dir / f'monitor_{channel_id}.log'
 
-        logger = setup_logger(
+        setup_logger(
             output_filepath=logfile_path,
             loglevel=config.get(sub_cmd, "log_level", vars=args)
         )
@@ -928,7 +931,7 @@ def main():
         args["output_dir"] = output_dir
 
         logfile_path = output_dir / "download.log"
-        logger = setup_logger(
+        setup_logger(
             output_filepath=logfile_path,
             loglevel=config.get(sub_cmd, "log_level", vars=args)
         )

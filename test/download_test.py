@@ -42,12 +42,12 @@ def slow_server(monkeypatch):
         filename = "/".join(splits)
         filepath = FIXTURESDIR / "stream_capture__We0NmSfwqU" / filename
         now = datetime.datetime.now()
-        print(f"{now} Requested {url}")
+        print(f"Serv {now} Requested {url}")
 
         # After some time, we simulate stream being made private early
         timedout: bool = (now - start_time).total_seconds() >= TIMEOUT
         if timedout:
-            print(f"{RED}TIMEOUT. WE REFUSE SERVICE NOW.{ENDC}")
+            print(f"Serv {RED}TIMEOUT. WE REFUSE SERVICE NOW.{ENDC}")
             raise urllib.error.HTTPError(
                 url, 403, 
                 f"END forbidden seg {filename}. Stream is now private.", 
@@ -102,7 +102,7 @@ def slow_server(monkeypatch):
             now = datetime.datetime.now()
             # Limit printing to every second, and if there is a new chunk
             if now.second != curr_time.second:
-                print(f"{filename}: {progress:.2f}%")
+                print(f"Serv {filename}: {progress:.2f}%")
                 curr_time = now
 
         # class DummyFile():
@@ -168,7 +168,7 @@ def fake_broadcast(tmp_path, monkeypatch, cipher_signature, default_session):
     broadcast.logger.setLevel(logging.DEBUG)
     broadcast.ptyt = cipher_signature
     broadcast.ptyt._watch_html = generate_fake_html()
-    # removed because we already changed the private member
+    # We already changed the private member, so this is redundant:
     # monkeypatch.delattr(
     #     livestream_saver.download.PytubeYoutube,
     #     "watch_html"

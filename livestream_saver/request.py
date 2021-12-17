@@ -49,7 +49,7 @@ def monkeypatch_cookielib():
     logger.info(f"Patching cookie lib bug 45358...")
 
     def __parse_string(self, str, patt=httpcookies._CookiePattern):
-        # logging.debug(f"{WARNING}__parse_string({str}){ENDC}")
+        # logger.debug(f"{WARNING}__parse_string({str}){ENDC}")
         i = 0                 # Our starting point
         n = len(str)          # Length of string
         parsed_items = []     # Parsed (type, key, value) triples
@@ -101,7 +101,7 @@ def monkeypatch_cookielib():
         # The cookie string is valid, apply it.
         M = None         # current morsel
         for tp, key, value in parsed_items:
-            # logging.debug(f"__parse_string - Parsed_items: tp={tp}, key={key}, value={value}")
+            # logger.debug(f"__parse_string - Parsed_items: tp={tp}, key={key}, value={value}")
             if tp == TYPE_ATTRIBUTE:
                 assert M is not None
                 M[key] = value
@@ -121,7 +121,7 @@ def monkeypatch_cookielib():
     #     return run
     # httpcookies.BaseCookie.load = prefix_function(
     #     httpcookies.BaseCookie.load, 
-    #     lambda self, rawdata: logging.debug(
+    #     lambda self, rawdata: logger.debug(
     #         f"Current cookies: {self}\nNow Loading: \"{rawdata}\"")
     # )
 
@@ -335,7 +335,7 @@ class ASession:
             #                 {} # rest
             #             )
 
-            # if logger.isEnabledFor(logging.DEBUG):
+            # if logger.isEnabledFor(logger.DEBUG):
             #     logger.debug(f"Setting consent cookie: {cookie}")
 
             # New and simpler way of overwriting the consent cookie:
@@ -413,12 +413,76 @@ class ASession:
         # # finally:
         # #     loop.close()
         # result = fut.result()
-        logging.debug(f"{WARNING}Request result:{ENDC} {result[:150]}")
+        logger.debug(f"{WARNING}Request result:{ENDC} {result[:150]}")
         return result
 
     def is_logged_out(self, json_data):
         # TODO
         return False
+
+    def make_api_request(self, video_id):
+        """Make an innertube API call."""
+        # Try to circumvent throttling with this workaround for now since
+        # pytube is either broken or simply not up to date
+        # as per https://code.videolan.org/videolan/vlc/-/issues/26174#note_286445
+        headers = self.headers.copy()
+        headers.update(
+            {
+                'Content-Type': 'application/json',
+                'Origin': 'https://www.youtube.com',
+                'X-YouTube-Client-Name': '3',
+                'X-YouTube-Client-Version': '16.20',
+                # 'Accept': 'text/plain'
+            }
+        )
+        data = {
+            "context": {
+                "client": {
+                    "clientName": "ANDROID",
+                    "clientVersion": "16.20",
+                    "hl": "en"
+                }
+            },
+            "videoId": video_id,
+        }
+
+        req = Request(
+            "https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+            headers=headers,
+            data=json.dumps(data).encode(),
+            method="POST"
+        )
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"POST Request {req.full_url}")
+            logger.debug(f"POST Request headers: {req.header_items()}")
+        return self.get_html(req)
+
+    def get_html(self, req: Request) -> str:
+        """
+        Return the HTML page, or throw exception. Update cookies if needed.
+        """
+        # TODO get the DASH manifest (MPD) and parse that xml file instead
+        # We could also use youtube-dl --dump-json instead
+        with urlopen(req) as res:
+            logger.debug(f"REQUEST {req.full_url} -> response url: {res.url}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    f"Response Status code: {res.status}.\n"
+                    f"Response headers:\n{res.headers}")
+
+            if res.status == 429:
+                raise Exception(
+                    "Error 429. Too many requests? Please try again later "
+                    "or get a new IP (also a new cookie?)."
+                )
+
+            try:
+                content_page = str(res.read().decode('utf-8'))
+                return content_page
+            except Exception as e:
+                logger.critical(f"Failed to load html: {e}")
+                raise e
 
 
 class Session:
