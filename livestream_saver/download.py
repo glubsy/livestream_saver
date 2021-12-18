@@ -823,7 +823,8 @@ class YoutubeLiveBroadcast():
             self._status &= ~Status.OFFLINE
             self._status &= ~Status.WAITING
 
-        self.logger.info(f"Stream status {self._status}")
+        if not self.skip_download:
+            self.logger.info(f"Stream status {self._status}")
 
 
     # TODO get itag by quality first, and then update the itag download url
@@ -1157,7 +1158,7 @@ class YoutubeLiveBroadcast():
                     f"Not downloading because \"skip-download\" option is active."
                     f" Waiting for {wait_delay} minutes..."
                 )
-                sleep(wait_delay)
+                sleep(wait_delay * 60)
                 continue
 
             while True:
