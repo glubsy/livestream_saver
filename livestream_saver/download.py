@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 from os import sep, path, makedirs, listdir
-from sys import stderr
+from sys import set_coroutine_origin_tracking_depth, stderr
 from platform import system
 import logging
 from datetime import date, datetime
@@ -193,6 +193,11 @@ class YoutubeLiveStream():
         # to the same file.
         logger = logging.getLogger("download" + "." + self.video_id)
 
+        if self.skip_download:
+            # Increase level filter because we don't care as much
+            logger.setLevel(logging.WARNING)
+            return logger
+
         if logger.hasHandlers():
             logger.debug(
                 f"Logger {logger} already had handlers!"
@@ -229,41 +234,32 @@ class YoutubeLiveStream():
         logger.addHandler(conhandler)
         return logger
 
-    def get_first_segment(self, paths):
+    def get_first_segment(self, paths) -> int:
         """
-        Create each path in paths. If one already existed, return the last
-        segment already downloaded, otherwise return 1.
+        Determine the first segment number from which we should download.
+        If some files are found in paths, get the last segment numbers from each
+        and return the lowest number of the two.
         """
-        # If one of the directories exists, assume we are resuming a previously
-        # failed download attempt.
-        dir_existed = False
-        for path in paths:
-            try:
-                makedirs(path, 0o766)
-            except FileExistsError:
-                dir_existed = True
-
         # The sequence number to start downloading from (acually starts at 0).
         seg = 0
 
-        if dir_existed:
-            # Get the latest downloaded segment number,
-            # unless one directory holds an earlier segment than the other.
-            # video_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[0])])
-            # audio_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[1])])
-            # seg = min(video_last_segment, audio_last_segment)
-            seg = min([
-                    max([int(f[:f.index('.')].split('_')[0])
-                    for f in listdir(p)], default=1)
-                    for p in paths
-                ])
+        # Get the latest downloaded segment number,
+        # unless one directory holds an earlier segment than the other.
+        # video_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[0])])
+        # audio_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[1])])
+        # seg = min(video_last_segment, audio_last_segment)
+        seg = min([
+                max([int(f[:f.index('.')].split('_')[0])
+                for f in listdir(p)], default=1)
+                for p in paths
+            ])
 
-            # Step back one file just in case the latest segment got only partially
-            # downloaded (we want to overwrite it to avoid a corrupted segment)
-            if seg > 0:
-                self.logger.warning(f"An output directory already existed. \
+        # Step back one file just in case the latest segment got only partially
+        # downloaded (we want to overwrite it to avoid a corrupted segment)
+        if seg > 0:
+            self.logger.warning(f"An output directory already existed. \
 We assume a failed download attempt. Last segment available was {seg}.")
-                seg -= 1
+            seg -= 1
         return seg
 
     def is_live(self) -> None:
@@ -723,26 +719,38 @@ playability status is: {status} \
         self.logger.debug(f"Audio base url: {self.audio_base_url}")
 
     def download(self, wait_delay: float = 1.0):
-        self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
-        self.logger.info(f'Will start downloading from segment number {self.seg}.')
-
         # Disable download if regex submitted by user and they match
         self.logger.debug(
             f"Checking metadata items {(self.title, self.description)} against"
             f" {self.allow_regex} and {self.block_regex}\n")
         if not is_wanted_based_on_metadata(
-            (self.title, self.description), 
+            (self.title, self.description),
             self.allow_regex, self.block_regex
         ):
             self.skip_download = True
             self.logger.warning(
-                f"Skipping download of {self.video_id} {self.title} "
+                f"Will skip download of {self.video_id} {self.title} "
                 "because a regex filter matched.")
 
         if self.skip_download:
             # Longer delay in minutes between updates since we don't download
             # we don't care about accuracy that much. Random value.
             wait_delay *= 14.7
+        else:
+            # If one of the directories exists, assume we are resuming a previously
+            # failed download attempt.
+            dir_existed = False
+            for path in (self.video_outpath, self.audio_outpath):
+                try:
+                    makedirs(path, 0o766)
+                except FileExistsError:
+                    dir_existed = True
+
+            if dir_existed:
+                self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
+            else:
+                self.seg = 0
+            self.logger.info(f'Will start downloading from segment number {self.seg}.')
 
         self.on("on_download_initiated")
 
