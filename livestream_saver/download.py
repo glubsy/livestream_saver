@@ -609,7 +609,8 @@ We assume a failed download attempt. Last segment available was {seg}.")
             return
 
         self.is_live()
-        self.logger.info("Stream seems to be viewed live. Good.") \
+        if not self.skip_download:
+            self.logger.info("Stream seems to be viewed live. Good.") \
         if self.status & Status.VIEWED_LIVE else \
         self.logger.warning(
             "Stream is not being viewed live. This might not work!"
@@ -678,7 +679,8 @@ playability status is: {status} \
             self.status &= ~Status.OFFLINE
             self.status &= ~Status.WAITING
 
-        self.logger.info(f"Stream status {self.status}")
+        if not self.skip_download:
+            self.logger.info(f"Stream status {self.status}")
 
 
     # TODO get itag by quality first, and then update the itag download url
@@ -791,7 +793,7 @@ playability status is: {status} \
                     f"Not downloading because \"skip-download\" option is active."
                     f" Waiting for {wait_delay} minutes..."
                 )
-                sleep(wait_delay)
+                sleep(wait_delay * 60)
                 continue
 
             while True:
