@@ -1086,18 +1086,33 @@ class YoutubeLiveBroadcast():
             f"Checking metadata items {(self.title, self.description)} against"
             f" {self.allow_regex} and {self.block_regex}\n")
         if not is_wanted_based_on_metadata(
-            (self.title, self.description), 
+            (self.title, self.description),
             self.allow_regex, self.block_regex
         ):
             self.skip_download = True
             self.logger.warning(
-                f"Skipping download of {self.video_id} {self.title} "
+                f"Will skip download of {self.video_id} {self.title} "
                 "because a regex filter matched.")
 
         if self.skip_download:
             # Longer delay in minutes between updates since we don't download
             # we don't care about accuracy that much. Random value.
             wait_delay *= 14.7
+        else:
+            # If one of the directories exists, assume we are resuming a previously
+            # failed download attempt.
+            dir_existed = False
+            for path in (self.video_outpath, self.audio_outpath):
+                try:
+                    makedirs(path, 0o766)
+                except FileExistsError:
+                    dir_existed = True
+
+            if dir_existed:
+                self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
+            else:
+                self.seg = 0
+            self.logger.info(f'Will start downloading from segment number {self.seg}.')
 
         self.on("on_download_initiated")
 
