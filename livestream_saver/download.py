@@ -833,7 +833,7 @@ class YoutubeLiveBroadcast():
     # use progressive stream's audio track only?
     # This probably won't work with the DASH video stream, so we'll have
     # to download the progressive (video+audio) track only.
-    def update_download_urls(self):
+    def update_base_urls(self):
         video_stream = self.video_streams[0]
         audio_stream = self.audio_streams[0]
         self.logger.info(f"Selected Video {video_stream}")
@@ -862,6 +862,60 @@ class YoutubeLiveBroadcast():
         self.logger.debug(
             f"Initial audio base url: {getattr(self.audio_stream, 'url', None)}"
         )
+
+    # OBSOLETE
+    def update_download_urls(self, force = False):
+        previous_video_base_url = self.video_base_url
+        previous_audio_base_url = self.audio_base_url
+        if force:
+            self._watch_html = None
+            self._json = {}
+            self._player_config_args = None
+            self._player_response = None
+            self._js = None
+            self._fmt_streams = None
+            self.logger.info("Forcing update of download URLs.")
+
+        video_quality, audio_quality = self.get_best_streams(
+            maxq=self.max_video_quality, log=not force
+        )
+
+        if not force:
+            # Most likely first time
+            self.logger.debug(
+                f"Selected video itag {video_quality} / "
+                f"Selected audio itag:{audio_quality}"
+            )
+
+        if ((self.video_itag is not None
+        and self.video_itag.itag != video_quality.itag)
+        or
+        (self.audio_itag is not None
+        and self.audio_itag.itag != audio_quality.itag)):
+            # Probably should fail if we suddenly get a different format than the
+            # one we had before to avoid problems during merging.
+            self.logger.critical(
+                "Got a different format after refresh of download URL!\n"
+                f"Previous video: {self.video_stream}. New: {video_stream}.\n"
+                f"Previous audio: {self.audio_stream}. New: {audio_stream}"
+            )
+            raise Exception("Format mismatch after update of download URL.")
+
+        self.video_stream = video_stream
+        self.audio_stream = audio_stream
+
+        if not force:
+            self.logger.debug(f"Video base url: {self.video_base_url}")
+            self.logger.debug(f"Audio base url: {self.audio_base_url}")
+        else:
+            if previous_video_base_url != self.video_base_url:
+                self.logger.debug(
+                    f"Audio base URL got changed from {previous_video_base_url}"
+                    f" to {self.video_base_url}.")
+            if previous_audio_base_url != self.audio_base_url:
+                self.logger.debug(
+                    f"Audio base URL got changed from {previous_audio_base_url}"
+                    f" to {self.audio_base_url}.")
 
     def get_currently_broadcast_segment(self):
         # TODO parse mpd manifest to get the currently broadcast segment
@@ -1168,11 +1222,18 @@ class YoutubeLiveBroadcast():
                 except (exceptions.EmptySegmentException,
                         exceptions.ForbiddenSegmentException,
                         IncompleteRead,
-                        ValueError) as e:
+                        ValueError,
+                        ConnectionError  # ConnectionResetError - Connection reset by peer
+                    ) as e:
                     self.logger.info(e)
-                    # Force a status update
+                    # force update
+                    self._watch_html = None
+                    self._json = {}
+                    self._player_config_args = None
+                    self._js = None
+                    self.json
                     self.live_status(force_update=True)
-                    if Status.LIVE | Status.VIEWED_LIVE in self._status:
+                    if Status.LIVE | Status.VIEWED_LIVE in self.status:
 
                         if attempt >= 15:
                             self.logger.critical(
@@ -1188,7 +1249,8 @@ class YoutubeLiveBroadcast():
                         attempt += 1
                         sleep(5)
                         try:
-                            self.update_download_urls()
+                            # no force because cache is already updated here
+                            self.update_download_urls(force=False)
                         except Exception as e:
                             self.error = f"{e}"
                             break
@@ -1208,6 +1270,32 @@ class YoutubeLiveBroadcast():
                 f"Some kind of error occured during download? {self.error}"
             )
 
+    def download_seg(self, baseurl, seg, type):
+        segment_url = f'{baseurl}&sq={seg}'
+
+        # To have zero-padded filenames (not compatible with
+        # merge.py from https://github.com/mrwnwttk/youtube_stream_capture
+        # as it doesn't expect any zero padding )
+        if type == "video":
+            segment_filename = f'{self.video_outpath}{sep}{self.seg:0{10}}_video.ts'
+        else:
+            segment_filename = f'{self.audio_outpath}{sep}{self.seg:0{10}}_audio.ts'
+
+        with closing(urlopen(segment_url)) as in_stream:
+            headers = in_stream.headers
+            status = in_stream.status
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(f"Seg {self.seg} {type} URL: {segment_url}")
+                self.logger.debug(f"Seg status: {status}")
+                self.logger.debug(f"Seg headers:\n{headers}")
+
+            if not self.write_to_file(in_stream, segment_filename):
+                if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
+                    raise exceptions.EmptySegmentException(\
+                        f"Segment {self.seg} (video) is empty, stream might have ended...")
+                return False
+        return True
+
     # Obsolete
     def download_segments(self):
         if not self.video_stream or not self.video_stream.url:
@@ -1221,68 +1309,31 @@ class YoutubeLiveBroadcast():
                 f"url {getattr(self.audio_stream, 'url', 'Missing URL')}"
             )
 
+        last_check_time = datetime.now()
         wait_sec = 3
         attempt = 0
         while True:
             try:
-                self.seg += 1
-
-                video_segment_url = f'{self.video_stream.url}&sq={self.seg}'
-                audio_segment_url = f'{self.audio_stream.url}&sq={self.seg}'
                 self.print_progress(self.seg)
 
-                # To have zero-padded filenames (not compatible with
-                # merge.py from https://github.com/mrwnwttk/youtube_stream_capture
-                # as it doesn't expect any zero padding )
-                video_segment_filename = \
-                    self.video_outpath / f'{self.seg:0{10}}_video.ts'
-                audio_segment_filename = \
-                    self.audio_outpath / f'{self.seg:0{10}}_audio.ts'
+                # Update base URLs after 5 minutes, but only check time every 10 segs
+                if self.seg % 10 == 0:
+                    now = datetime.now()
+                    if (now - last_check_time).total_seconds() > 5 * 60:
+                        last_check_time = now
+                        self.update_download_urls(force=True)
 
-                # urllib.request.urlretrieve(video_segment_url, video_segment_filename)
-                # # Assume stream has ended if last segment is empty
-                # if stat(video_segment_filename).st_size == 0:
-                #     unlink(video_segment_filename)
-                #     break
-
-                # TODO pass proper user-agent headers to server (construct Request)
-                with closing(urllib.request.urlopen(video_segment_url)) as in_stream:
-                    headers = in_stream.headers
-                    status = in_stream.status
-                    if self.logger.isEnabledFor(logging.DEBUG):
-                        self.logger.debug(f"Seg {self.seg} (video) URL: {video_segment_url}")
-                        self.logger.debug(f"Seg status: {status}")
-                        self.logger.debug(f"Seg headers:\n{headers}")
-
-                    if not write_to_file(self.logger, in_stream, video_segment_filename):
-                        if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
-                            raise exceptions.EmptySegmentException(\
-                                f"Segment {self.seg} (video) is empty, stream might have ended...")
-                        self.logger.warning(f"Waiting for {wait_sec} seconds before retrying...")
+                if not self.download_seg(self.video_stream.url, self.seg, "video") \
+                or not self.download_seg(self.audio_stream.url, self.seg, "audio"):
+                    attempt += 1
+                    if attempt < 20:
+                        self.logger.warning(
+                            f"Waiting for {wait_sec} seconds before retrying... "
+                            f"(attempt {attempt}/20)")
                         sleep(wait_sec)
                         # FIXME perhaps update the base urls here to avoid
                         # hitting the same (unresponsive?) CDN server again?
                         continue
-
-                # urllib.request.urlretrieve(audio_segment_url, audio_segment_filename)
-                with closing(urllib.request.urlopen(audio_segment_url)) as in_stream:
-                    headers = in_stream.headers
-                    status = in_stream.status
-                    if self.logger.isEnabledFor(logging.DEBUG):
-                        self.logger.debug(f"Seg {self.seg} (audio) URL: {audio_segment_url}")
-                        self.logger.debug(f"Seg status: {status}")
-                        self.logger.debug(f"Seg headers:\n{headers}")
-
-                    if not write_to_file(self.logger, in_stream, audio_segment_filename):
-                        if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
-                            raise exceptions.EmptySegmentException(\
-                                f"Segment {self.seg} (audio) is empty, stream might have ended...")
-                        self.logger.warning(f"Waiting for {wait_sec} seconds before retrying...")
-                        sleep(wait_sec)
-                        # FIXME perhaps update the base urls here to avoid
-                        # hitting the same (unresponsive?) CDN server again?
-                        continue
-
                 attempt = 0
                 self.seg += 1
 
