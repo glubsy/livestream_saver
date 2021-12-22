@@ -22,6 +22,7 @@ import pytube
 from livestream_saver import exceptions
 from livestream_saver import extract
 from livestream_saver import util
+from livestream_saver.notifier import NotificationDispatcher, WebHookFactory
 from livestream_saver.request import YoutubeUrllibSession
 from livestream_saver.hooks import is_wanted_based_on_metadata
 
@@ -108,6 +109,7 @@ class YoutubeLiveStream():
         url: str,
         output_dir: Path,
         session: YoutubeUrllibSession,
+        notifier: NotificationDispatcher = None,
         video_id: Optional[str] = None,
         max_video_quality: Optional[str] = None,
         hooks: Dict = {},
@@ -160,6 +162,7 @@ class YoutubeLiveStream():
         self.video_base_url = None
         self.audio_base_url = None
         self.seg = 0
+        self.seg_attempt = 0
         self.status = Status.OFFLINE
         self.done = False
         self.error = None
@@ -177,6 +180,7 @@ class YoutubeLiveStream():
         #     )
 
         self.logger = self.setup_logger(self.output_dir, log_level)
+        self.notifier = notifier
 
         self.video_outpath = self.output_dir / 'vid'
         self.audio_outpath = self.output_dir / 'aud'
@@ -473,19 +477,19 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
     @property
     def thumbnail_url(self) -> str:
-        """Get the thumbnail url image.
+        """Get the best thumbnail url image.
 
         :rtype: str
         """
-        thumbnail_details = (
+        # The last item seems to have the maximum size
+        best_thumbnail = (
             self.player_response.get("videoDetails", {})
             .get("thumbnail", {})
-            .get("thumbnails")
+            .get("thumbnails", [{}])[-1]\
+            .get('url')
         )
-        if thumbnail_details:
-            thumbnail_details = thumbnail_details[-1]  # last item has max size
-            return thumbnail_details["url"]
-
+        if best_thumbnail:
+            return best_thumbnail
         return f"https://img.youtube.com/vi/{self.video_id}/maxresdefault.jpg"
 
     @property
@@ -530,7 +534,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
         if self._author:
             return self._author
         self._author = self.player_response.get(
-            "videoDetails", {}).get("author", "unknown")
+            "videoDetails", {}).get("author", "Author?")
         return self._author
 
     @author.setter
@@ -777,9 +781,9 @@ playability status is: {status} \
                 self.seg = 0
             self.logger.info(f'Will start downloading from segment number {self.seg}.')
 
-        self.on("on_download_initiated")
+        self.trigger_hooks("on_download_initiated")
 
-        attempt = 0
+        self.seg_attempt = 0
         while not self.done and not self.error:
             try:
                 self.update_status()
@@ -808,7 +812,7 @@ playability status is: {status} \
                 self.update_download_urls()
                 self.update_metadata()
 
-            self.on('on_download_started')
+            self.trigger_hooks('on_download_started')
 
             if self.skip_download:
                 # We rely on the exception above to signal when the stream has ended
@@ -838,18 +842,18 @@ playability status is: {status} \
                     self.is_live()
                     if Status.LIVE | Status.VIEWED_LIVE in self.status:
 
-                        if attempt >= 15:
+                        if self.seg_attempt >= 15:
                             self.logger.critical(
                                 f"Too many attempts on segment {self.seg}. "
                                 "Skipping it.")
                             self.seg += 1
-                            attempt = 0
+                            self.seg_attempt = 0
                             continue
 
                         self.logger.warning(
                             "It seems the stream has not really ended. "
-                            f"Retrying in 5 secs... (attempt {attempt}/15)")
-                        attempt += 1
+                            f"Retrying in 5 secs... (attempt {self.seg_attempt}/15)")
+                        self.seg_attempt += 1
                         sleep(5)
                         try:
                             # no force because cache is already updated here
@@ -867,7 +871,7 @@ playability status is: {status} \
                     break
         if self.done:
             self.logger.info(f"Finished downloading {self.video_id}.")
-            self.on("on_download_ended")
+            self.trigger_hooks("on_download_ended")
         if self.error:
             self.logger.critical(f"Some kind of error occured during download? {self.error}")
 
@@ -905,6 +909,7 @@ playability status is: {status} \
 
         last_check_time = datetime.now()
         wait_sec = 3
+        max_attempt = 10
         attempt = 0
         while True:
             try:
@@ -920,13 +925,17 @@ playability status is: {status} \
                 if not self.download_seg(self.video_base_url, self.seg, "video") \
                 or not self.download_seg(self.audio_base_url, self.seg, "audio"):
                     attempt += 1
-                    if attempt < 20:
+                    if attempt <= max_attempt:
                         self.logger.warning(
                             f"Waiting for {wait_sec} seconds before retrying... "
-                            f"(attempt {attempt}/20)")
+                            f"(attempt {attempt}/{max_attempt})")
                         sleep(wait_sec)
                         continue
+                    else:
+                        self.logger.warning(
+                            f"Skipping segment {self.seg} due to too many attempts.")
                 attempt = 0
+                self.seg_attempt = 0
                 self.seg += 1
 
             except urllib.error.URLError as e:
@@ -935,12 +944,12 @@ playability status is: {status} \
                     # Usually this means the stream has ended and parts
                     # are now unavailable.
                     raise exceptions.ForbiddenSegmentException(e.reason)
-                if attempt >= 20:
+                if attempt > max_attempt:
                     raise e
                 attempt += 1
                 self.logger.warning(
                     f"Waiting for {wait_sec} seconds before retrying... "
-                    f"(attempt {attempt}/20)")
+                    f"(attempt {attempt}/{max_attempt})")
                 sleep(wait_sec)
                 continue
             except (IncompleteRead, ValueError) as e:
@@ -1242,17 +1251,40 @@ playability status is: {status} \
                 buf = fsrc_read(length)
         return True
 
-    def on(self, event: str):
-        if hook := self.hooks.get(event, None):
-            args = {
+    def get_metadata_dict(self) -> Dict:
+        # TODO add more data, refresh those that got stale
+        thumbnails = self.player_response.get("videoDetails", {})\
+            .get("thumbnail", {})
+        
+        return {
                 "url": self.url,
+                "videoId": self.video_id,
                 "cookie_path": self.session.cookie_path,
                 "logger": self.logger,
                 "output_dir": self.output_dir,
                 "title": self.title,
-                "description": self.description
+                "description": self.description,
+                "author": self.author,
+                "isLive": Status.LIVE | Status.VIEWED_LIVE in self.status,
+                # We'll expect to get an array of thumbnails here
+                "thumbnail": thumbnails
             }
-            hook.spawn_subprocess(args)
+
+    def trigger_hooks(self, event: str):
+        hook_cmd = self.hooks.get(event, None)
+        # webhookfactory = self.notifier.get_webhook(event)
+        webhookfactory = None
+
+        if hook_cmd is not None or webhookfactory is not None:
+            # TODO if an event needs to refresh some data, update metadata here
+            args = self.get_metadata_dict()
+            
+            if hook_cmd:
+                hook_cmd.spawn_subprocess(args)
+        
+            if webhookfactory:
+                if webhook := webhookfactory.get(args):
+                    self.notifier.q.put(webhook)
 
 
 class Status(Flag):
