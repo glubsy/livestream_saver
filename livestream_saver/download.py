@@ -22,7 +22,7 @@ import pytube
 from livestream_saver import exceptions
 from livestream_saver import extract
 from livestream_saver import util
-from livestream_saver.notifier import NotificationDispatcher, WebHookFactory
+# from livestream_saver.notifier import NotificationDispatcher, WebHookFactory
 from livestream_saver.request import YoutubeUrllibSession
 from livestream_saver.hooks import is_wanted_based_on_metadata
 
@@ -109,7 +109,7 @@ class YoutubeLiveStream():
         url: str,
         output_dir: Path,
         session: YoutubeUrllibSession,
-        notifier: NotificationDispatcher = None,
+        # notifier: NotificationDispatcher,
         video_id: Optional[str] = None,
         max_video_quality: Optional[str] = None,
         hooks: Dict = {},
