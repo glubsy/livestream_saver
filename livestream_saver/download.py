@@ -180,7 +180,7 @@ class YoutubeLiveStream():
         #     )
 
         self.logger = self.setup_logger(self.output_dir, log_level)
-        self.notifier = notifier
+        # self.notifier = notifier
 
         self.video_outpath = self.output_dir / 'vid'
         self.audio_outpath = self.output_dir / 'aud'
