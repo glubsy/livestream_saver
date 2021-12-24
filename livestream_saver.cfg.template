@@ -136,8 +136,8 @@ on_download_initiated_command_block_regex = ${monitor:block_regex}
 
 # This triggers when the download has actually started on an active livestream.
 on_download_started_command = 
-on_download_started_enabled_command = false
-on_download_started_logged_command = false
+on_download_started_command_enabled = false
+on_download_started_command_logged = false
 # These regexes only apply to the condition on which to spawn the command.
 # These are matched against both title + description.
 on_download_started_command_allow_regex = ${common:allow_regex}
@@ -167,7 +167,7 @@ scan_delay = 2.5
 # cookie = /path/to/cookies.txt
 
 # This triggers when a download is pending and waiting for a livestream to start.
-on_download_initiated_command =
+on_download_initiated_command = ${common:ytdlp_command}
 on_download_initiated_command_enabled = false
 on_download_initiated_command_logged = false
 on_download_initiated_command_allow_regex = ${common:allow_regex}
@@ -232,8 +232,8 @@ on_upcoming_detected_command_allow_regex = ".*archiv.*|.*karaoke.*|.*sing.*"
 on_upcoming_detected_command_block_regex =
 
 # Trigger a web hook (only for this channel)
-on_download_initiated_webhook = ${DEFAULT:webhook_data_live}
-on_download_initiated_webhook_url = ${DEFAULT:webhook_url}
+on_download_initiated_webhook = ${webhook:webhook_data_live}
+on_download_initiated_webhook_url = ${webhook:webhook_url}
 on_download_initiated_webhook_enabled = false
 on_download_initiated_webhook_logged = true
 on_download_initiated_webhook_allow_regex =
