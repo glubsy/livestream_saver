@@ -75,14 +75,13 @@ class HookCommand():
                         new.append(url)
                         continue
                     else:
-                        logger.warning(
-                            f"No URL found in video {args}. Skipping command {self.cmd}.")
-                        raise Exception
+                        raise Exception(f"No URL found in video {args}. Skipping command {self.cmd}.")
                 if item == r"%COOKIE_PATH%":
                     # if parent.session.cookie_path is not None:
                     if cookie_path := args.get("cookie_path", None):
                         # cmd[cmd.index(item)] = cookie_path
                         new.append(cookie_path)
+                        continue
                     elif cmd[cmd.index(item) - 1] == "--cookies":
                         logger.warning(
                             "Detected --cookies argument in custom (yt-dlp?) command"
@@ -92,9 +91,7 @@ class HookCommand():
                         patched = True
                         continue
                     else:
-                        logger.warning(
-                            f"No cookie path submitted. Skipping command {self.cmd}.")
-                        raise Exception
+                        raise Exception(f"No cookie path submitted. Skipping command {self.cmd}.")
                 new.append(item)
             if patched:
                 logger.warning(f"{self.event_name} command after replacement: {new}.")
@@ -103,7 +100,8 @@ class HookCommand():
         # Make a copy to avoid reusing stale data
         try:
             cmd = replace_placeholders(self.cmd[:])
-        except Exception:
+        except Exception as e:
+            logger.warning(e)
             return
 
         try:

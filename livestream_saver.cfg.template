@@ -8,9 +8,12 @@
 # Path to cookies that is commmon to all modes if not overriden by sections (this is a fallback value)
 # cookie = 
 
-# Enable sending of e-mail notifications here
+# Enable sending of e-mail notifications:
 # email_notifications = True
 
+# Enable removal of source segments once video has been successfully merged 
+# (This can be set in each individual sections):
+# delete_source = True
 
 [common]
 # These variables can be re-used in other sections through interpolation. 
@@ -34,6 +37,7 @@ ytdlp_command = yt-dlp
 	-S "+res:240,res:360"
 	--add-metadata
 	--cookies %COOKIE_PATH%
+	--live-from-start
 	--wait-for-video 5
 	%VIDEO_URL%
 
