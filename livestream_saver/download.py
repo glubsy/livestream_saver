@@ -22,7 +22,7 @@ import pytube
 from livestream_saver import exceptions
 from livestream_saver import extract
 from livestream_saver import util
-# from livestream_saver.notifier import NotificationDispatcher, WebHookFactory
+from livestream_saver.notifier import NotificationDispatcher
 from livestream_saver.request import YoutubeUrllibSession
 from livestream_saver.hooks import is_wanted_based_on_metadata
 
@@ -109,7 +109,7 @@ class YoutubeLiveStream():
         url: str,
         output_dir: Path,
         session: YoutubeUrllibSession,
-        # notifier: NotificationDispatcher,
+        notifier: NotificationDispatcher,
         video_id: Optional[str] = None,
         max_video_quality: Optional[str] = None,
         hooks: Dict = {},
@@ -180,7 +180,7 @@ class YoutubeLiveStream():
         #     )
 
         self.logger = self.setup_logger(self.output_dir, log_level)
-        # self.notifier = notifier
+        self.notifier = notifier
 
         self.video_outpath = self.output_dir / 'vid'
         self.audio_outpath = self.output_dir / 'aud'
@@ -1272,8 +1272,7 @@ playability status is: {status} \
 
     def trigger_hooks(self, event: str):
         hook_cmd = self.hooks.get(event, None)
-        # webhookfactory = self.notifier.get_webhook(event)
-        webhookfactory = None
+        webhookfactory = self.notifier.get_webhook(event)
 
         if hook_cmd is not None or webhookfactory is not None:
             # TODO if an event needs to refresh some data, update metadata here

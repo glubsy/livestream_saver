@@ -3,8 +3,7 @@ import re
 from os import makedirs
 from platform import system
 from pathlib import Path
-from typing import Optional
-
+from typing import Optional, Iterable
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -13,7 +12,6 @@ logger = logging.getLogger(__name__)
 YT_CH_HASH_RE = re.compile(r".*(channel\/)?([0-9A-Za-z_-]{24}).*|.*youtube\.com\/c\/(.*)")
 # YT_CH_ID_HASH_RE = re.compile(r"^[0-9A-Za-z_-]{24}$")
 # YT_CH_NAME_RE = re.compile(r".*youtube\.com\/c\/(.*)")
-
 
 def get_channel_id(str_url, service_name):
     """
@@ -63,3 +61,43 @@ def get_system_ua():
         return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:89.0) Gecko/20100101 Firefox/89.0'
     return 'Mozilla/5.0 (X11; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0'
 
+def is_wanted_based_on_metadata(
+    data: Iterable[Optional[str]], 
+    allow_re: re.Pattern = None,
+    block_re: re.Pattern = None
+    ) -> bool:
+    """Test each RE against each item in data (title, description...)"""
+    if allow_re is None and block_re is None:
+        return True
+    wanted = True
+    blocked = False
+
+    if allow_re is not None:
+        wanted = False
+    if block_re is not None:
+        blocked = True
+
+    for item in data:
+        if not item:
+            continue
+        if allow_re and allow_re.search(item):
+            wanted = True
+        if block_re and block_re.search(item):
+            blocked = True
+    
+    if blocked:
+        return False
+    return wanted
+
+
+# Base name for each "event"
+event_props = [
+    "on_upcoming_detected",
+    "on_video_detected",
+    "on_download_initiated",
+    "on_download_started",
+    "on_download_ended",
+    "on_merge_done",
+]
+
+UA = get_system_ua()

@@ -8,7 +8,7 @@ from urllib.request import Request, urlopen #, build_opener, HTTPCookieProcessor
 import http.cookiejar
 from http.cookies import SimpleCookie
 
-from livestream_saver.util import get_system_ua
+from livestream_saver.util import UA
 from livestream_saver.cookies import get_cookie
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ class YoutubeUrllibSession:
         self.cookie_jar = get_cookie(cookie_path)
         # TODO add proxies
         self.headers = {
-        'user-agent': get_system_ua(), # TODO could use fake-useragent package here for an up-to-date string
+        'user-agent': UA, # TODO could use fake-useragent package here for an up-to-date string
         'accept-language': 'en-US,en' # ensure messages in english from the API
         }
         self._initialize_consent()
@@ -144,6 +144,10 @@ class YoutubeUrllibSession:
             data=json.dumps(data).encode(),
             method="POST"
         )
+
+        # FIXME API requests don't seem to care about cookies much so we
+        # need to investigate what kind of payload we should setup.
+        # The result is missing data for member-only streams!
         self.cookie_jar.add_cookie_header(req)
 
         if logger.isEnabledFor(logging.DEBUG):

@@ -1,9 +1,10 @@
 import os
 import re
 import logging
-from typing import Iterable, Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List
 from subprocess import Popen, DEVNULL
 from datetime import datetime
+from livestream_saver.util import is_wanted_based_on_metadata
 
 # logger = logging.getLogger("livestream_saver")
 
@@ -123,31 +124,3 @@ class HookCommand():
             logger.warning(f"Error spawning {cmd}: {e}")
             pass
 
-
-def is_wanted_based_on_metadata(
-    data: Iterable[Optional[str]], 
-    allow_re: re.Pattern = None,
-    block_re: re.Pattern = None
-    ) -> bool:
-    """Test each RE against each item in data (title, description...)"""
-    if allow_re is None and block_re is None:
-        return True
-    wanted = True
-    blocked = False
-
-    if allow_re is not None:
-        wanted = False
-    if block_re is not None:
-        blocked = True
-
-    for item in data:
-        if not item:
-            continue
-        if allow_re and allow_re.search(item):
-            wanted = True
-        if block_re and block_re.search(item):
-            blocked = True
-    
-    if blocked:
-        return False
-    return wanted

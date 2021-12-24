@@ -1,4 +1,4 @@
-from os import sep, makedirs, getcwd
+from os import sep, makedirs, getcwd, environ, getenv
 from sys import platform
 from sys import argv
 import argparse
@@ -8,21 +8,21 @@ from configparser import ConfigParser, ExtendedInterpolation
 import traceback
 import re
 from shlex import split
-from typing import Optional, Any, List, Dict
+from typing import Iterable, Optional, Any, List, Dict, Union
 from livestream_saver import extract, util
 import livestream_saver
 from livestream_saver.monitor import YoutubeChannel, wait_block
 from livestream_saver.download import YoutubeLiveStream
 from livestream_saver.merge import merge, get_metadata_info
-from livestream_saver.util import get_channel_id
+from livestream_saver.util import get_channel_id, event_props
 from livestream_saver.request import YoutubeUrllibSession
-from livestream_saver.smtp import NotificationHandler
+from livestream_saver.notifier import NotificationDispatcher, WebHookFactory
 from livestream_saver.hooks import HookCommand
 
 logger = logging.getLogger('livestream_saver')
 logger.setLevel(logging.DEBUG)
 
-notif_h = NotificationHandler()
+NOTIFIER = NotificationDispatcher()
 
 def parse_args(config) -> Dict[str, Any]:
     """
@@ -235,72 +235,100 @@ streams has been successful. This is only useful for debugging.'
     return vars(parser.parse_args())
 
 
-# Base name for each "event"
-event_props = [
-    "on_upcoming_detected",
-    "on_video_detected",
-    "on_download_initiated",
-    "on_download_started",
-    "on_download_ended",
-    "on_merge_done",
-]
+# def parse_regex_str(regex_str) -> Optional[re.Pattern]:
+#     if not regex_str:
+#         return None
+#     regex_str = regex_str.strip("\"\'")
+#     pattern = re.compile(regex_str)
+#     if not pattern.pattern:
+#         # could be 0 len string that matches everything!
+#         return None
+#     return pattern
 
 
 def _get_hook_from_config(
-    config: ConfigParser, section: str, hook_name: str) -> Optional[HookCommand]:
-    """Generate a HookCommand if one has been requested in a section."""
+    config: ConfigParser, 
+    section: str, hook_name: str, suffix: str = "_command"
+) -> Optional[Union[HookCommand, WebHookFactory]]:
+    """Generate a HookCommand or WebHookFactory if one has been requested 
+    within a section. They mostly share the same options."""
     # Remember this will try to get from the DEFAULT section if not found
     # and THEN use the fallback value.
-    cmd = config.getlist(section, hook_name, fallback=None)
+    full_hook_name = hook_name + suffix
+    cmd = None
+    url = None
+    if suffix == "_command":
+        cmd = config.getlist(section, full_hook_name, fallback=None)
+    else:
+        # This is the data payload part
+        cmd = config.get(section, full_hook_name, fallback=None)
+        url = config.get(section, full_hook_name + "_url", fallback=None)
+        if not url:
+            return
     if not cmd:
         return
-    if not config.getboolean(section, hook_name + "_enabled", fallback=False):
+
+    if not config.getboolean(section, full_hook_name + "_enabled", fallback=False):
         return
-    logged = config.getboolean(section, hook_name + "_logged", fallback=False)
+    logged = config.getboolean(section, full_hook_name + "_logged", fallback=False)
 
-    allow_regex = None
-    if allow_regex_str := config.get(
-    section, hook_name + "_allow_regex", fallback=None):
-        allow_regex_str = allow_regex_str.strip("\"\'")
-        allow_regex = re.compile(allow_regex_str)
-        if not allow_regex.pattern:
-            allow_regex = None
+    try:
+        allow_regex = _get_regex_from_config(section, config, full_hook_name + "_allow_regex")
+    except EmptyRegexException:
+        logger.debug(f"Empty value in [{section}] {full_hook_name + '_allow_regex'}")
+        allow_regex = None
 
-    block_regex = None
-    if block_regex_str := config.get(
-    section, hook_name + "_block_regex", fallback=None):
-        block_regex_str = block_regex_str.strip("\"\'")
-        block_regex = re.compile(block_regex_str)
-        if not block_regex.pattern:
-            block_regex = None
+    try:
+        block_regex = _get_regex_from_config(section, config, full_hook_name + "_block_regex")
+    except EmptyRegexException:
+        logger.debug(f"Empty value in [{section}] {full_hook_name + '_block_regex'}")
+        block_regex = None
 
+    # allow_regex = None
+    # if allow_regex_str := config.get(
+    #     section, hook_name + "_allow_regex", fallback=None):
+    #     allow_regex = parse_regex_str(allow_regex_str)
 
-    hook = HookCommand(
-        cmd=cmd,
-        logged=logged,
-        event_name=hook_name,
-        allow_regex=allow_regex,
-        block_regex=block_regex
-    )
+    # block_regex = None
+    # if block_regex_str := config.get(
+    # section, hook_name + "_block_regex", fallback=None):
+    #     block_regex = parse_regex_str(block_regex_str)
 
-    # The same object is used on many different videos, others are only used
-    # as part of the live stream object, so they are usually called once only anyway.
-    if hook_name in ("on_upcoming_detected", "on_video_detected"):
-        hook.call_only_once = False
-    return hook
+    if suffix == "_command" and isinstance(cmd, list):
+        hook = HookCommand(
+            cmd=cmd,
+            logged=logged,
+            event_name=hook_name,
+            allow_regex=allow_regex,
+            block_regex=block_regex
+        )
+        # The same object is used on many different videos, others are only used
+        # as part of the live stream object, so they are usually called once only anyway.
+        if hook_name in ("on_upcoming_detected", "on_video_detected"):
+            hook.call_only_once = False
+        return hook
+    if suffix == "_webhook":
+        hook = WebHookFactory(
+            url=url,
+            payload=cmd,
+            logged=logged,
+            event_name=hook_name,
+            allow_regex=allow_regex,
+            block_regex=block_regex
+        )
+        return hook
 
-
-def get_hooks_for_section(section: str, config: ConfigParser) -> Dict:
+def get_hooks_for_section(section: str, config: ConfigParser, hooktype: str) -> Dict:
+    """hooktype is either _command or _webhook."""
     cmds = {}
     for hook_name in event_props:
         try:
-            if hookcommand := _get_hook_from_config(config, section, hook_name):
+            if hookcommand := _get_hook_from_config(
+            config, section, hook_name, hooktype):
                 cmds[hook_name] = hookcommand
-        except Exception as e:
-            logger.critical(
-                f"Error parsing hook command \"{hook_name}\" of section "
-                f"{section}: {e}."
-            )
+        except Exception:
+            logger.exception(
+                f"Error parsing config [{section}] \"{hook_name + hooktype}\"")
     return cmds
 
 
@@ -318,6 +346,7 @@ def _get_regex_from_config(
             raise EmptyRegexException
         pattern = re.compile(regex_str, re.I|re.M)
         if not pattern.pattern:
+            # Could be 0-length that matches everything!
             raise EmptyRegexException
         return pattern
     return None
@@ -342,14 +371,14 @@ def _get_target_params(
         "channel_name": args.get("channel_name", None),
         "scan_delay": config.getfloat(sub_cmd, "scan_delay", vars=args),
         "skip_download": config.getboolean(sub_cmd, "skip_download", vars=args),
-        "hooks": get_hooks_for_section(sub_cmd, config),
+        "hooks": get_hooks_for_section(sub_cmd, config, "_command"),
+        "webhooks": get_hooks_for_section(sub_cmd, config, "_webhook"),
         "cookie": config.get(sub_cmd, "cookie", vars=args, fallback=None),
         "filters": {
             "allow_regex": None,
             "block_regex": None
         }
     }
-
 
     # This may throw, it should crash the program to avoid bad surprises
     if sub_cmd == "monitor":
@@ -397,8 +426,11 @@ def _get_target_params(
             )
 
             # Update any hook already present with those defined in that section
-            overriden_hooks = get_hooks_for_section(section, config)
+            overriden_hooks = get_hooks_for_section(section, config, "_command")
             params["hooks"].update(overriden_hooks)
+            
+            overriden_webhooks = get_hooks_for_section(section, config, "_webhook")
+            params["webhooks"].update(overriden_webhooks)
 
             # Update regex if it has been specified in the section
             for regex_str in ("allow_regex", "block_regex"):
@@ -430,21 +462,23 @@ def monitor_mode(config, args):
 
     session = YoutubeUrllibSession(
         cookie_path=args.get("cookie"),
-        notifier=notif_h
+        notifier=NOTIFIER
     )
 
     URL = util.sanitize_channel_url(URL)
 
     ch = YoutubeChannel(
         URL, channel_id, session,
-        output_dir=args["output_dir"], hooks=args["hooks"])
+        output_dir=args["output_dir"], hooks=args["hooks"], notifier=NOTIFIER)
 
     logger.info(f"Monitoring channel: {ch.id}")
 
     while True:
         live_videos = []
         try:
-            ch.upcoming_videos  # get a list of upcoming videos
+            # Get the list of upcoming videos. This is done separately because
+            # detection is flaky right now.
+            ch.upcoming_videos
             live_videos = ch.filter_videos('isLiveNow')  # get the actual live stream
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
@@ -470,6 +504,7 @@ def monitor_mode(config, args):
                 url=f"https://www.youtube.com{target_live.get('url')}", # /watch?v=...
                 output_dir=sub_output_dir,
                 session=ch.session,
+                notifier=NOTIFIER,
                 video_id=_id,
                 max_video_quality=config.getint(
                     "monitor", "max_video_quality", vars=args, fallback=None
@@ -499,7 +534,7 @@ def monitor_mode(config, args):
             pass
 
         if livestream.skip_download:
-            notif_h.send_email(
+            NOTIFIER.send_email(
                 subject=(
                     f"Skipped download of {ch.get_channel_name()} - "
                     f"{livestream.title} {_id}"
@@ -509,7 +544,7 @@ def monitor_mode(config, args):
 
         if livestream.done:
             logger.info(f"Finished downloading {_id}.")
-            notif_h.send_email(
+            NOTIFIER.send_email(
                 subject=f"Finished downloading {ch.get_channel_name()} - \
 {livestream.title} {_id}",
                 message_text=f""
@@ -528,12 +563,12 @@ def monitor_mode(config, args):
                     )
                 )
                 if merged is not None:
-                    livestream.on("on_merge_done")
+                    livestream.trigger_hooks("on_merge_done")
 
                 # TODO get the updated stream title from the channel page if
                 # the stream was recorded correctly?
         if livestream.error:
-            notif_h.send_email(
+            NOTIFIER.send_email(
                 subject=f"Error downloading stream {livestream.video_id}",
                 message_text=f"Error was: {livestream.error}\n"
                               "Resuming monitoring..."
@@ -548,13 +583,14 @@ def monitor_mode(config, args):
 def download_mode(config, args):
     session = YoutubeUrllibSession(
         cookie_path=args.get("cookie"),
-        notifier=notif_h
+        notifier=NOTIFIER
     )
     try:
         dl = YoutubeLiveStream(
             url=args.get("URL"),
             output_dir=args["output_dir"],
             session=session,
+            notifier=NOTIFIER,
             video_id=args["video_id"],
             max_video_quality=config.getint(
                 "download", "max_video_quality", vars=args, fallback=None
@@ -662,12 +698,23 @@ def init_config() -> ConfigParser:
         "keep_concat": "False",
         "no_merge": "False",
         "skip_download": "False",
-
         "email_notifications": "False",
-        "smtp_server": "",
-        "smtp_port": "",
-        "to_email": "",
-        "from_email": "",
+    }
+    other_defaults = {
+        "email": {
+            "smtp_server": "",
+            "smtp_port": "",
+            "smtp_login": "",
+            "smtp_password": "",
+            "to_email": "",
+            "from_email": "",
+        },
+        "monitor": {
+            "scan_delay": 15.0  # minutes
+        },
+        "download": {
+            "scan_delay": 2.0  # minutes
+        }
     }
 
     def parse_as_list(data: str) -> Optional[List[str]]:
@@ -685,12 +732,9 @@ def init_config() -> ConfigParser:
         converters={'list': parse_as_list}
     )
     # Set defaults for each section
-    config.add_section("monitor")
-    config.set("monitor", "scan_delay", "15.0")  # minutes
-    config.add_section("download")
-    config.set("download", "scan_delay", "2.0")  # minutes
+    config.read_dict(other_defaults)
     config.add_section("merge")
-    config.add_section("test-notification")
+    config.add_section("test-notification")  # FIXME this one is useless
     return config
 
 
@@ -721,13 +765,40 @@ def update_config(config, args) -> None:
         logging.critical(f"Failed to read config file from {conf_file}.")
 
 
+def get_from_env(lookup_keys: Iterable[str]) -> Optional[Dict]:
+    """Get keys found in lookup_keys from the environment variables if any.
+    Keys that start with the string will also be loaded as their own key/value."""
+    env_vars = {}
+    for env_key, env_value in environ.items():
+        for key in lookup_keys:
+            if key == env_key or key == env_key.upper() \
+            or env_key.startswith(key) or env_key.startswith(key.upper()):
+                # Keys are converted to lower case when loaded into the
+                # config parser, so we may overwrite to avoid duplicates.
+                env_vars[env_key.lower()] = env_value
+    if len(env_vars) > 0:
+        return env_vars
+
+
 def main():
     config: ConfigParser = init_config()
+
+    # Update "env" section with variables from env so that they can be 
+    # used in config via interpolation when loading the config file.
+    # For now we only look for the urls (with secret tokens).
+    if found_vars := get_from_env(("webhook_url",)):
+        env_vars = { "env": found_vars }
+        config.read_dict(env_vars)
+
     args = parse_args(config)
     update_config(config, args)
-    # print(f"parse_config() -> {[opt for sect in config.sections() for opt in config.options(sect)]}")
 
-    notif_h.setup(config, args)
+    # DEBUG
+    # for section in config.sections():
+    #     for option in config.options(section):
+    #         print(f"[{section}] {option} = {config.get(section, option)}")
+
+    global NOTIFIER
 
     sub_cmd = args.get("sub-command")
     if sub_cmd is None:
@@ -739,7 +810,11 @@ def main():
 
     logfile_path = Path("")  # cwd by default
     if sub_cmd == "monitor":
-        params = _get_target_params(config, args, sub_cmd=sub_cmd, override=args["section"])
+        params = _get_target_params(
+            config, args, sub_cmd=sub_cmd, override=args["section"])
+        NOTIFIER.webhooks = params.get("webhooks", {})
+        NOTIFIER.setup(config, args)
+
         args["URL"] = params.get("URL")
         channel_name = params.get("channel_name")
         args["channel_name"] = channel_name
@@ -778,8 +853,11 @@ def main():
             )
         )
         URL = args.get("URL", "")  # pass empty string for get_video_id()
-        args["hooks"] = get_hooks_for_section(sub_cmd, config)
+        args["hooks"] = get_hooks_for_section(sub_cmd, config, "_command")
         args["cookie"] = config.get(sub_cmd, "cookie", vars=args, fallback=None)
+
+        NOTIFIER.webhooks = get_hooks_for_section(sub_cmd, config, "_webhook")
+        NOTIFIER.setup(config, args)
 
         video_id = extract.get_video_id(url=URL)
         args["video_id"] = video_id
@@ -807,22 +885,64 @@ def main():
             loglevel=config.get(sub_cmd, "log_level", vars=args),
             log_to_file=False
         )
-        if notif_h.disabled:
-            print("Emails are currenly disabled by configuration.")
-            return
-        notif_h.send_email(
-            subject=f"{__file__.split(sep)[-1]} test email.",
-            message_text="The current configuration works fine!\nYay.\n"
-                         "You will receive notifications if the program "
-                         "encounters an issue while doing its tasks."
-        )
-        print(
-            f"Sent test e-mail to {notif_h.receiver_email} via "
-            f"SMTP server {notif_h.smtp_server}:{notif_h.smtp_port}... "
-            "Check your inbox!"
+
+        # Load one webhook from DEFAULT section only
+        # FIXME ideally we would need to use the exact same logic used with 
+        # regular sub-commands here. But we ignore regexes, and enabled options.
+        default_keys = ("webhook_url", "webhook_data")
+        print(f"Looking for keys {default_keys} in config's [webhook] section...")
+
+        url = config.get("webhook", default_keys[0])
+        payload = config.get("webhook", default_keys[1])
+        if url is not None and payload is not None:
+            print("Found valid webhook in config file...")
+            NOTIFIER.webhooks = {
+                "test_event":
+                    WebHookFactory(
+                        url=config.get("webhook", default_keys[0]),
+                        payload=config.get("webhook", default_keys[1]),
+                        logged=True,
+                        event_name="test_event",
+                        allow_regex=None, block_regex=None
+                    )
+            }
+        else:
+            print(
+                "Error loading the webhook from [webhook] section in config."
+                " Will skip testing webhook over the wire."
             )
-        if not notif_h.disabled:
-            notif_h.q.join()
+
+        NOTIFIER.setup(config, args)
+
+        if not NOTIFIER.email_handler.disabled:
+            NOTIFIER.send_email(
+                subject=f"{__file__.split(sep)[-1]} test email.",
+                message_text="The current configuration works fine!\nYay.\n"
+                            "You will receive notifications if the program "
+                            "encounters an issue while doing its tasks."
+            )
+            print(
+                f"Sent test e-mail to {NOTIFIER.email_handler.receiver_email} via "
+                f"SMTP server {NOTIFIER.email_handler.smtp_server}:{NOTIFIER.email_handler.smtp_port}... "
+                "Check your inbox!"
+            )
+
+        if len(NOTIFIER.webhooks):
+            # Only test webhook_url and webhook_data from DEFAULT section 
+            # to avoid spamming inadvertently.
+            fake_metadata = {
+                "videoId": "XXXXXXXXXXX",
+                "title": "test title",
+                "author": "test author",
+                "startTime": "1669028800",
+                "description": "test description",
+            }
+            NOTIFIER.call_webhook(hook_name="test_event", args=fake_metadata)
+        else:
+            print("No webhook could be loaded from config file.")
+
+        if not NOTIFIER.email_handler.disabled or NOTIFIER.webhooks:
+            NOTIFIER.q.join()
         return
     else:
         print("Wrong sub-command. Exiting.")
@@ -836,7 +956,7 @@ def main():
         from sys import exc_info
         exc_type, exc_value, exc_traceback = exc_info()
         logger.exception(e)
-        notif_h.send_email(
+        NOTIFIER.send_email(
             subject=f"{argv[0].split(sep)[-1]} crashed!",
             message_text=f"Mode: {args.get('sub-command', '').split('_')[0]}\n" \
             + f"Exception was: {e}\n" \
@@ -850,9 +970,9 @@ def main():
 
     # We need to join here (or sleep long enough) otherwise any email still
     # in the queue will fail to get sent because we exited too soon!
-    if not notif_h.disabled:
-        notif_h.q.join()
-        # notif_h.thread.join()
+    if not NOTIFIER.email_handler.disabled or NOTIFIER.webhooks:
+        NOTIFIER.q.join()
+        # NOTIFIER.thread.join()
     logging.shutdown()
     return error
 
