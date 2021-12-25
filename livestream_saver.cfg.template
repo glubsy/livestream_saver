@@ -33,7 +33,7 @@ ytdlp_command = yt-dlp
 	--embed-thumbnail
 	--fragment-retries 50
 	-o '%(upload_date)s %(uploader)s %(title)s_[%(height)s]_%(id)s.%(ext)s'
-	-f 'bestvideo+bestaudio'
+	; -f 'bestvideo+bestaudio'
 	-S "+res:240,res:360"
 	--add-metadata
 	--cookies %COOKIE_PATH%

@@ -97,6 +97,7 @@ f"{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
                "-map_metadata", "-1", # remove metadata
             #  "-auto_convert", "0" # might disable warnings?
                "-c", "copy",
+               "-movflags", "+faststart",
             #    "-bsf:v", "h264_mp4toannexb", # or [hevc|h264]_mp4toannexb
                str(ffmpeg_output_filename)]
 
@@ -112,10 +113,15 @@ f"{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
               f"concat:\"{list_files}\"", # this may overflow. Stupid design!
                "-map_metadata", "-1",  # remove metadata
                "-c", "copy",
+               "-movflags", "+faststart",
                str(ffmpeg_output_filename)]
         print(f"len cmd: {len(cmd)} cmd:\n{cmd}")
 
     else:
+        # FIXME this method does not detect corrupt packets! The only way to figure
+        # out that something is wrong here, is by checking the file duration and
+        # compare to the duration of the other (audio/video) track.
+
         if not concat_filepath.exists():
             # Concatenate segments through python
             with open(concat_filepath, "wb") as f:
@@ -128,6 +134,7 @@ f"{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
                "-i", str(concat_filepath),
                "-map_metadata", "-1", # remove metadata
                "-c", "copy",
+               "-movflags", "+faststart",
                str(ffmpeg_output_filename)]
 
     cproc = None
@@ -157,6 +164,11 @@ f"{video_id}_{datatype}_{METHOD[method]}_ffmpeg.{ext}"
     # if cproc is not None\
     # and ("Found duplicated MOOV Atom. Skipped it" in cproc.stderr
     #     or "Failed to add index entry" in cproc.stderr):
+    
+    # These are usually fatal, we should remove the corrup segments, then retry:
+    if cproc is not None and "Packet corrupt" in cproc.stderr:
+        ffmpeg_output_filename.unlink(missing_ok=True)
+        raise Exception("Corrupt packet detected!")
 
     props = probe(ffmpeg_output_filename)
     # FIXME This assumes that segments are roughly 1 second in duration
@@ -246,10 +258,10 @@ def merge(info: Dict, data_dir: Path,
         conhandler.setFormatter(formatter)
         logger.addHandler(conhandler)
 
-    if not which("ffmpeg"):
+    if not which("ffmpeg") or not which("ffprobe"):
         logger.error(
-            "Could not find ffmpeg! Make sure it is installed and in your PATH."
-            " Aborting merge phase."
+            "Could not find ffmpeg or ffprobe! Make sure it is installed and "
+            "in your PATH. Aborting merge phase."
         )
         return None
 
@@ -297,26 +309,58 @@ def merge(info: Dict, data_dir: Path,
     print_missing_segments(video_files, "_video")
     print_missing_segments(audio_files, "_audio")
 
-    # Determine codec from first file
+    # Determine codec from one file
     vid_props = probe(video_files[0])
     aud_props = probe(audio_files[0])
 
-    ffmpeg_output_path_video = concat(
-        datatype=vid_props.get("codec_name", "video"),
-        video_id=info.get("id", "UNKNOWN_ID"),
-        seg_list=video_files,
-        output_dir=data_dir
-    )
-    ffmpeg_output_path_audio = concat(
-        datatype=aud_props.get("codec_name", "audio"),
-        video_id=info.get("id", "UNKNOWN_ID"),
-        seg_list=audio_files,
-        output_dir=data_dir
-    )
+    try:
+        ffmpeg_output_path_video = concat(
+            datatype=vid_props.get("codec_name", "video"),
+            video_id=info.get("id", "UNKNOWN_ID"),
+            seg_list=video_files,
+            output_dir=data_dir
+        )
+    except Exception as e:
+        logger.error(e)
+        video_files = remove_corrupt(video_files)
+        ffmpeg_output_path_video = concat(
+            datatype=vid_props.get("codec_name", "video"),
+            video_id=info.get("id", "UNKNOWN_ID"),
+            seg_list=video_files,
+            output_dir=data_dir
+        )
+    try:
+        ffmpeg_output_path_audio = concat(
+            datatype=aud_props.get("codec_name", "audio"),
+            video_id=info.get("id", "UNKNOWN_ID"),
+            seg_list=audio_files,
+            output_dir=data_dir
+        )
+    except Exception as e:
+        logger.error(e)
+        audio_files = remove_corrupt(audio_files)
+        ffmpeg_output_path_audio = concat(
+            datatype=aud_props.get("codec_name", "audio"),
+            video_id=info.get("id", "UNKNOWN_ID"),
+            seg_list=audio_files,
+            output_dir=data_dir
+        )
 
     if not ffmpeg_output_path_audio or not ffmpeg_output_path_video:
         logger.error("Missing video or audio concatenated file!")
         return None
+
+    concats_have_different_durations = False
+    concat_vid_props = probe(ffmpeg_output_path_video)
+    concat_aud_props = probe(ffmpeg_output_path_audio)
+    # If we have more than one second of difference
+    if abs(int(float(concat_aud_props.get("duration", 0))) \
+    - int(float(concat_vid_props.get("duration", 0)))) > 1:
+        logger.warning(
+            "Track duration mismatch: "
+            f"Audio duration {concat_aud_props.get('duration')}, "
+            f"Video duration {concat_vid_props.get('duration')}. ")
+        concats_have_different_durations = True
 
     ext = "mp4"
     # Seems like an MP4 container can handle vp9 just fine. Perhaps we don't
@@ -395,6 +439,10 @@ def merge(info: Dict, data_dir: Path,
             "Check for errors in DEBUG log level.")
         final_output_file.unlink()
         return None
+    if concats_have_different_durations:
+        logger.warning("Track duration mismatch!")
+        final_output_file.unlink(missing_ok=True)
+        return None
 
     logger.info(f"Successfully wrote file \"{final_output_file.name}\".")
 
@@ -411,6 +459,12 @@ def merge(info: Dict, data_dir: Path,
     if delete_source:
         if segment_number_mismatch:
             logger.warning("Not deleting source segments because some are missing.")
+        elif concats_have_different_durations:
+            logger.warning(
+                "Track duration mismatch!:"
+                f"Audio duration {concat_aud_props.get('duration')}, "
+                f"Video duration {concat_vid_props.get('duration')}. "
+                " Not deleting source segments")
         else:
             logger.info("Deleting source segments in {} and {}...".format(
                 video_seg_dir, audio_seg_dir)
@@ -421,12 +475,43 @@ def merge(info: Dict, data_dir: Path,
     return final_output_file
 
 
+def remove_corrupt(filelist: List[Path]) -> List:
+    logger.info("Scanning for corrupt segment files...")
+    probecmd = ['ffprobe', '-hide_banner', '-v', 'warning']
+    corrupt = []
+    num = 0
+    for f in filelist:
+        num += 1
+        if num % 100 == 0:
+            logger.info("{num} files scanned...")
+        try:
+            probeproc = subprocess.run(probecmd + [str(f)],
+                capture_output=True, text=True
+            )
+            # logger.debug(f"{probeproc.args} stderr output:\n{probeproc.stderr}")
+        except FileNotFoundError as e:
+            logger.error(f"Failed to use ffprobe: {e}.")
+        else:
+            if "Packet corrupt" in probeproc.stderr:
+                logger.warning(f"Packet {f} is corrupt!")
+                corrupt.append(f)
+
+    if corrupt:
+        logger.warning(
+            f"Found {len(corrupt)} corrupt packets via ffprobe: {corrupt}."
+            " Will not use them in final concatenated file!")
+        return [f for f in filelist if f not in corrupt]
+    else:
+        logger.info("No corrupt file detected.")
+    return filelist
+
+
 def print_missing_segments(filelist: List, filetype: str) -> bool:
     """
-        Check that all segments are available.
-        :param list filelist: a list of pathlib.Path
-        :param str filetype: "_video" or "_audio"
-        :return bool: whether one or more segment seems to be missing.
+    Check that all segments are available.
+    :param list filelist: a list of pathlib.Path
+    :param str filetype: "_video" or "_audio"
+    :return bool: whether one or more segment seems to be missing.
     """
     missing = False
     first_segnum = 0
