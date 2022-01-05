@@ -247,10 +247,10 @@ streams has been successful. This is only useful for debugging.'
 
 
 def _get_hook_from_config(
-    config: ConfigParser, 
+    config: ConfigParser,
     section: str, hook_name: str, suffix: str = "_command"
 ) -> Optional[Union[HookCommand, WebHookFactory]]:
-    """Generate a HookCommand or WebHookFactory if one has been requested 
+    """Generate a HookCommand or WebHookFactory if one has been requested
     within a section. They mostly share the same options."""
     # Remember this will try to get from the DEFAULT section if not found
     # and THEN use the fallback value.
@@ -428,7 +428,7 @@ def _get_target_params(
             # Update any hook already present with those defined in that section
             overriden_hooks = get_hooks_for_section(section, config, "_command")
             params["hooks"].update(overriden_hooks)
-            
+
             overriden_webhooks = get_hooks_for_section(section, config, "_webhook")
             params["webhooks"].update(overriden_webhooks)
 
@@ -552,18 +552,23 @@ def monitor_mode(config, args):
             if not config.getboolean("monitor", "no_merge", vars=args):
                 logger.info("Merging segments...")
                 # TODO in a separate thread?
-                merged = merge(
-                    info=livestream.video_info,
-                    data_dir=livestream.output_dir,
-                    keep_concat=config.getboolean(
-                        "monitor", "keep_concat", vars=args
-                    ),
-                    delete_source=config.getboolean(
-                        "monitor", "delete_source", vars=args
+                merged = None
+                try:
+                    merged = merge(
+                        info=livestream.video_info,
+                        data_dir=livestream.output_dir,
+                        keep_concat=config.getboolean(
+                            "monitor", "keep_concat", vars=args
+                        ),
+                        delete_source=config.getboolean(
+                            "monitor", "delete_source", vars=args
+                        )
                     )
-                )
-                if merged is not None:
-                    livestream.trigger_hooks("on_merge_done")
+                except Exception as e:
+                    logger.error(e)
+
+                # TODO pass arguments about successful merge
+                livestream.trigger_hooks("on_merge_done")
 
                 # TODO get the updated stream title from the channel page if
                 # the stream was recorded correctly?
@@ -611,12 +616,18 @@ def download_mode(config, args):
 
     if dl.done and not config.getboolean("download", "no_merge", vars=args):
         logger.info("Merging segments...")
-        merge(
-            info=dl.video_info,
-            data_dir=dl.output_dir,
-            keep_concat=config.getboolean("download", "keep_concat", vars=args),
-            delete_source=config.getboolean("download", "delete_source", vars=args)
-        )
+        try:
+            merge(
+                info=dl.video_info,
+                data_dir=dl.output_dir,
+                keep_concat=config.getboolean("download", "keep_concat", vars=args),
+                delete_source=config.getboolean("download", "delete_source", vars=args)
+            )
+        except Exception as e:
+            logger.error(e)
+
+        # TODO pass arguments about successful merge
+        dl.trigger_hooks("on_merge_done")
     return 0
 
 
@@ -783,7 +794,7 @@ def get_from_env(lookup_keys: Iterable[str]) -> Optional[Dict]:
 def main():
     config: ConfigParser = init_config()
 
-    # Update "env" section with variables from env so that they can be 
+    # Update "env" section with variables from env so that they can be
     # used in config via interpolation when loading the config file.
     # For now we only look for the urls (with secret tokens).
     if found_vars := get_from_env(("webhook_url",)):
@@ -887,7 +898,7 @@ def main():
         )
 
         # Load one webhook from DEFAULT section only
-        # FIXME ideally we would need to use the exact same logic used with 
+        # FIXME ideally we would need to use the exact same logic used with
         # regular sub-commands here. But we ignore regexes, and enabled options.
         default_keys = ("webhook_url", "webhook_data")
         print(f"Looking for keys {default_keys} in config's [webhook] section...")
@@ -928,7 +939,7 @@ def main():
             )
 
         if len(NOTIFIER.webhooks):
-            # Only test webhook_url and webhook_data from DEFAULT section 
+            # Only test webhook_url and webhook_data from DEFAULT section
             # to avoid spamming inadvertently.
             fake_metadata = {
                 "videoId": "XXXXXXXXXXX",
