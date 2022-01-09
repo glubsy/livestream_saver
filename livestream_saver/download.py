@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 from os import sep, path, makedirs, listdir
-from sys import set_coroutine_origin_tracking_depth, stderr
+from sys import stderr
 from platform import system
 import logging
 from datetime import date, datetime
@@ -8,15 +8,15 @@ from time import time, sleep
 from json import dumps, dump, loads
 from contextlib import closing
 from enum import Flag, auto
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 from pathlib import Path
 import re
 from urllib.request import urlopen
 import urllib.error
 from http.client import IncompleteRead
+import xml.etree.ElementTree as ET
 
 import pytube.cipher
-# from pytube import Youtube
 import pytube
 
 from livestream_saver import exceptions
@@ -103,6 +103,28 @@ def throttling_array_split(js_array):
 pytube.cipher.throttling_array_split = throttling_array_split
 
 
+class BaseURL(str):
+    """Wrapper class to handle incrementing segment number in various URL formats."""
+    def __new__(cls, content):
+        return str.__new__(cls,
+            content[:-1] if content.endswith("/") else content)
+
+    def add_seg(self, seg_num: int):
+        raise NotImplementedError()
+
+
+class ParamURL(BaseURL):
+    """Old-school url with parameters."""
+    def add_seg(self, seg_num: int) -> str:
+        return self + f"&sq={seg_num}"
+
+
+class PathURL(BaseURL):
+    """URL made with lots of "/" for them fancy new APIs."""
+    def add_seg(self, seg_num: int) -> str:
+        return self + f"/sq/{seg_num}"
+
+
 class YoutubeLiveStream():
     def __init__(
         self,
@@ -166,6 +188,7 @@ class YoutubeLiveStream():
         self.status = Status.OFFLINE
         self.done = False
         self.error = None
+        self.mpd = None
 
         self.output_dir = output_dir
         if not self.output_dir.exists():
@@ -356,6 +379,74 @@ We assume a failed download attempt. Last segment available was {seg}.")
         """Sets the publish date."""
         self._publish_date = value
 
+    def get_content_from_mpd(self):
+        content = None
+        if self.mpd is None:
+            mpd = MPD(self)
+            try:
+                content = mpd.get_content()
+            except Exception as e:
+                self.logger.critical(e)
+                return None
+            self.mpd = mpd
+        else:
+            content = self.mpd.get_content(update=True)
+        return content
+
+    def get_streams_from_xml(self, data) -> List[pytube.Stream]:
+        """Parse MPD Dash manifest and return basic Stream objects from data found."""
+        # We could use the python-mpegdash package but that would be overkill
+        # https://www.brendanlong.com/the-structure-of-an-mpeg-dash-mpd.html
+        # https://www.brendanlong.com/common-informative-metadata-in-mpeg-dash.html
+        if not data:
+            return []
+        streams = []
+        try:
+            root = ET.fromstring(data)
+            # Strip namespaces for easier access (not necessary, let's use wildcards)
+            # it = ET.iterparse(StringIO(data))
+            # for _, el in it:
+            #     _, _, el.tag = el.tag.rpartition('}') # strip ns
+            # root = it.root
+        except Exception as e:
+            self.logger.critical(f"Error loading XML of MPD: {e}")
+            return streams
+
+        for _as in root.findall("{*}Period/{*}AdaptationSet"):
+            mimeType = _as.attrib.get("mimeType")
+            for _rs in _as.findall("{*}Representation"):
+                url = _rs.find("{*}BaseURL")
+                if url is None:
+                    self.logger.debug(f"No BaseURL found for {_rs.attrib}. Skipping.")
+                    continue
+                # Simulate what pytube does in a very basic way
+                # FIXME this can safely be removed in next pytube:
+                codec = _rs.get("codecs")
+                if not codec or not mimeType:
+                    self.logger.debug(f"No codecs key found for {_rs.attrib}. Skipping")
+                    continue
+                streams.append(pytube.Stream(
+                        stream = {
+                            "url": PathURL(url.text),
+                            "mimeType": mimeType,
+                            "type": mimeType + "; codecs=\"" + codec + "\"",  # FIXME removed in next pytube
+                            "itag": _rs.get('id'),
+                            "is_otf": False,  # not used
+                            "bitrate": None, # not used,
+                            "content_length": None, # FIXME removed in next pytube
+                            "fps": _rs.get("frameRate") # FIXME removed in next pytube
+                        },
+                        monostate = {},
+                        player_config_args = {} # FIXME removed in next pytube
+                    )
+                )
+        return streams
+
+    def get_streams_from_mpd(self) -> List[pytube.Stream]:
+        content = self.get_content_from_mpd()
+        # TODO for now we only care about the XML DASH MPD, but not the HLS m3u8.
+        return self.get_streams_from_xml(content)
+
     @property
     def streams(self):
         """Interface to query both adaptive (DASH) and progressive streams.
@@ -363,8 +454,17 @@ We assume a failed download attempt. Last segment available was {seg}.")
         :rtype: :class:`StreamQuery <StreamQuery>`.
         """
         # self.update_status()
-        return pytube.StreamQuery(self.fmt_streams)
-
+        query = pytube.StreamQuery(self.fmt_streams)
+        if len(query) == 0:
+            if mpd_streams := self.get_streams_from_mpd():
+                self.logger.warning(
+                    "Could not find any stream descriptor in the response!"
+                    f" Loaded streams from MPD instead.")
+                self.logger.debug(f"Streams from MPD: {mpd_streams}.")
+                query = pytube.StreamQuery(mpd_streams)
+            else:
+                raise Exception("Failed to load stream descriptors!")
+        return query
 
     @property
     def age_restricted(self):
@@ -702,15 +802,17 @@ playability status is: {status} \
             self.logger.info("Forcing update of download URLs.")
 
         video_quality, audio_quality = self.get_best_streams(
-            maxq=self.max_video_quality, log=not force
-        )
+            maxq=self.max_video_quality, log=not force)
 
         if not force:
             # Most likely first time
             self.logger.debug(
-                f"Selected video itag {video_quality} / "
-                f"Selected audio itag:{audio_quality}"
-            )
+                f"Selected video itag: {video_quality} / "
+                f"Selected audio itag: {audio_quality}")
+        elif not video_quality and not audio_quality:
+            if previous_audio_base_url is None and previous_video_base_url is None:
+                raise Exception(f"No stream URL found for {self.video_id}")
+            self.logger.critical(f"No stream URL found for {self.video_id}")
 
         if ((self.video_itag is not None
         and self.video_itag.itag != video_quality.itag)
@@ -746,6 +848,7 @@ playability status is: {status} \
                 self.logger.debug(
                     f"Audio base URL got changed from {previous_audio_base_url}"
                     f" to {self.audio_base_url}.")
+
 
     def download(self, wait_delay: float = 1.0):
         # Disable download if regex submitted by user and they match
@@ -876,7 +979,7 @@ playability status is: {status} \
             self.logger.critical(f"Some kind of error occured during download? {self.error}")
 
     def download_seg(self, baseurl, seg, type):
-        segment_url = f'{baseurl}&sq={seg}'
+        segment_url: str = baseurl.add_seg(seg)
 
         # To have zero-padded filenames (not compatible with
         # merge.py from https://github.com/mrwnwttk/youtube_stream_capture
@@ -1041,10 +1144,12 @@ playability status is: {status} \
             # Initialize stream objects
             stream_manifest = self.player_config_args[fmt]
             for stream in stream_manifest:
+                # Add method to increment segment:
+                stream["url"] = ParamURL(stream["url"])
                 video = pytube.Stream(
                     stream=stream,
                     player_config_args=self.player_config_args,
-                    monostate=None,
+                    monostate={},  # FIXME This is a bit dangerous but we don't use it anyway
                 )
                 self._fmt_streams.append(video)
 
@@ -1255,7 +1360,7 @@ playability status is: {status} \
         # TODO add more data, refresh those that got stale
         thumbnails = self.player_response.get("videoDetails", {})\
             .get("thumbnail", {})
-        
+
         return {
                 "url": self.url,
                 "videoId": self.video_id,
@@ -1277,13 +1382,50 @@ playability status is: {status} \
         if hook_cmd is not None or webhookfactory is not None:
             # TODO if an event needs to refresh some data, update metadata here
             args = self.get_metadata_dict()
-            
+
             if hook_cmd:
                 hook_cmd.spawn_subprocess(args)
-        
+
             if webhookfactory:
                 if webhook := webhookfactory.get(args):
                     self.notifier.q.put(webhook)
+
+
+class MPD():
+    """Cache the URL to the manifest, but enable fetching it data if needed."""
+    def __init__(self, parent: YoutubeLiveStream, mpd_type: str = "dash") -> None:
+        self.parent = parent
+        self.url = None
+        self.content = None
+        # self.expires: Optional[float] = None
+        self.mpd_type = mpd_type  # dash or hls
+
+    def update_url(self) -> Optional[str]:
+        mpd_type = "dashManifestUrl" if self.mpd_type == "dash" else "hlsManifestUrl"
+
+        json = self.parent.json
+
+        if streamingData := json.get("streamingData", {}):
+            if ManifestUrl := streamingData.get(mpd_type):
+                self.url = ManifestUrl
+            else:
+                raise Exception(
+                    f"No URL found for MPD manifest of {self.parent.video_id}.")
+        else:
+            raise Exception("No streamingData in json. Cannot load MPD.")
+
+    def get_content(self, update=False):
+        if self.content is not None and not update:
+            return self.content
+
+        if not self.url:
+            self.update_url()
+
+        try:
+            self.content = self.parent.session.make_request(self.url)
+        except:
+            self.content = None
+        return self.content
 
 
 class Status(Flag):
