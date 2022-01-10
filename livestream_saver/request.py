@@ -7,6 +7,9 @@ from random import randint
 from urllib.request import Request, urlopen #, build_opener, HTTPCookieProcessor, HTTPHandler
 import http.cookiejar
 from http.cookies import SimpleCookie
+from typing import Dict, Optional, Union
+import time
+import hashlib
 
 from livestream_saver.util import UA
 from livestream_saver.cookies import get_cookie
@@ -26,13 +29,94 @@ class YoutubeUrllibSession:
         self.cookie_jar = get_cookie(cookie_path)
         # TODO add proxies
         self.headers = {
-        'user-agent': UA, # TODO could use fake-useragent package here for an up-to-date string
-        'accept-language': 'en-US,en' # ensure messages in english from the API
+            'user-agent': UA, # TODO could use fake-useragent package here for an up-to-date string
+            'accept-language': 'en-US,en' # ensure messages in english from the API
         }
         self._initialize_consent()
         self._logged_in = False
         self.notify_h = notifier
+        self.ytcfg = None
+        self._SAPISID: Union[str, bool, None] = None
 
+    def get_ytcfg(self, data) -> Dict:
+        if not isinstance(data, str):
+            # FIXME we assume this is an object with file-like interface
+            content_html = None
+            try:
+                content_html = str(data.read().decode('utf-8'))
+            except Exception as e:
+                logger.critical(f"Failed to load html for ytcfg: {e}")
+            return self.get_ytcfg_from_html(content_html)
+
+        return self.get_ytcfg_from_html(data)
+    
+    @staticmethod
+    def get_ytcfg_from_html(html) -> Dict:
+        # TODO only keep the keys we care about (that thing is huge)
+        if result := re.search(r"ytcfg\.set\((\{.*\})\);", html):
+            # Assuming the first result is the one we're looking for
+            objstr = result.group(1)
+            try:
+                return json.loads(objstr)
+            except Exception as e:
+                logger.error(f"Error loading ytcfg as json: {e}.")
+        return {}
+
+    def _generate_sapisidhash_header(
+        self, 
+        origin: Optional[str] = 'https://www.youtube.com') -> Optional[str]:
+        if not origin:
+            return None
+
+        if len(self.cookie_jar) == 0:
+            return None
+
+        if self._SAPISID is None:
+            cookies = {}
+            keys = ("SAPISID", "__Secure-3PAPISID")
+            for cookie in self.cookie_jar:
+                if "youtube.com" in cookie.domain:
+                    for k in keys:
+                        if k in cookie.name and cookie.value:
+                            cookies[k] = cookie
+                            break
+            if len(cookies.values()) > 0:
+                # Value should be the same for both of them
+                self._SAPISID = tuple(cookies.values())[-1].value
+                logger.info("Extracted SAPISID cookie")
+                # We still require SAPISID to be present anyway
+                if not cookies.get("SAPISID"):
+                    domain = '.youtube.com'
+                    cookie = http.cookiejar.Cookie(
+                        0, # version
+                        'SAPISID', # name
+                        self._SAPISID, # value
+                        None, # port
+                        False, # port_specified
+                        domain, # domain
+                        True, # domain_specified
+                        domain.startswith('.'), # domain_initial_dot
+                        '/', # path
+                        True, # path_specified
+                        True, # secure
+                        round(time.time()) + 3600, # expires
+                        False, # discard
+                        None, # comment
+                        None, # comment_url
+                        {} # rest
+                    )
+                    self.cookie_jar.set_cookie(cookie)
+                    logger.debug(f"Copied __Secure-3PAPISID to missing SAPISID.")
+            else:
+                self._SAPISID = False
+        if not self._SAPISID:
+            return None
+        
+        # SAPISIDHASH algorithm from https://stackoverflow.com/a/32065323
+        time_now = round(time.time())
+        sapisidhash = hashlib.sha1(
+            f'{time_now} {self._SAPISID} {origin}'.encode('utf-8')).hexdigest()
+        return f'SAPISIDHASH {time_now}_{sapisidhash}'
 
     def _initialize_consent(self):
         """
@@ -51,6 +135,9 @@ class YoutubeUrllibSession:
 
         logger.debug(f"Initial req header items: {req.header_items()}")
         logger.debug(f"Initial res headers: {res.headers}")
+      
+        if self.user_supplied_cookies:
+            self.ytcfg = self.get_ytcfg(res)
 
         # Update our cookies according to the response headers
         # if not len(self.cookie_jar) and self.cookie_jar.make_cookies(res, req):
@@ -112,8 +199,8 @@ class YoutubeUrllibSession:
 
         return self.get_html(req)
 
-    def make_api_request(self, video_id):
-        """Make an innertube API call."""
+    def make_api_request(self, video_id) -> str:
+        """Make an innertube API call. Return response as string."""
         # Try to circumvent throttling with this workaround for now since
         # pytube is either broken or simply not up to date
         # as per https://code.videolan.org/videolan/vlc/-/issues/26174#note_286445
@@ -127,6 +214,26 @@ class YoutubeUrllibSession:
                 # 'Accept': 'text/plain'
             }
         )
+        if auth := self._generate_sapisidhash_header():
+            headers.update(
+                {
+                    'X-Origin': "https://www.youtube.com",
+                    'Authorization': auth
+                }
+            )
+
+        if self.ytcfg:
+            if IdToken := self.ytcfg.get('IdToken'):
+                headers["X-Youtube-Identity-Token"] = IdToken
+            if DelegatedSessionId := self.ytcfg.get('DelegatedSessionId'):
+                headers["X-Goog-PageId"] = DelegatedSessionId
+            if VisitorData := self.ytcfg.get('VisitorData'):
+                headers["X-Goog-Visitor-Id"] = VisitorData
+            if SessionIndex := self.ytcfg.get('SessionIndex'):
+                headers["X-Goog-AuthUser"] = SessionIndex
+        
+        logger.debug(f"Making API request with headers:{headers}")
+
         data = {
             "context": {
                 "client": {
@@ -145,9 +252,6 @@ class YoutubeUrllibSession:
             method="POST"
         )
 
-        # FIXME API requests don't seem to care about cookies much so we
-        # need to investigate what kind of payload we should setup.
-        # The result is missing data for member-only streams!
         self.cookie_jar.add_cookie_header(req)
 
         if logger.isEnabledFor(logging.DEBUG):
@@ -208,10 +312,9 @@ class YoutubeUrllibSession:
                 return
 
         self.cookie_jar.extract_cookies(res, req)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                f"CookieJar after extract_cookies(): {self.cookie_jar}"
-            )
+
+        # logger.debug(
+        #         f"CookieJar after extract_cookies(): {self.cookie_jar}")
 
     def get_html(self, req: Request) -> str:
         """
@@ -231,12 +334,11 @@ class YoutubeUrllibSession:
             if res.status == 429:
                 raise Exception(
                     "Error 429. Too many requests? Please try again later "
-                    "or get a new IP (also a new cookie?)."
-                )
+                    "or get a new IP (also a new cookie?).")
 
             try:
                 content_page = str(res.read().decode('utf-8'))
                 return content_page
             except Exception as e:
-                logger.critical(f"Failed to load html: {e}")
+                logger.critical(f"Failed to load {req.full_url}: {e}")
                 raise e

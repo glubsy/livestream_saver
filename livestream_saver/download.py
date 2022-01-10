@@ -455,6 +455,10 @@ We assume a failed download attempt. Last segment available was {seg}.")
         """
         # self.update_status()
         query = pytube.StreamQuery(self.fmt_streams)
+        # BUG in pytube, livestreams with resolution higher than 1080 do not 
+        # return descriptions for their available streams, except in the 
+        # DASH MPD manifest! These descriptions seem to re-appear after the 
+        # stream has been converted to a VOD though.
         if len(query) == 0:
             if mpd_streams := self.get_streams_from_mpd():
                 self.logger.warning(

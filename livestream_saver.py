@@ -522,8 +522,7 @@ def monitor_mode(config, args):
 
         logger.info(
             f"Found live: {_id} title: {target_live.get('title')}. "
-            "Downloading..."
-        )
+            "Downloading...")
 
         try:
             livestream.download()

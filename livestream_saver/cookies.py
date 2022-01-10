@@ -84,9 +84,10 @@ Defaulting to empty cookie.")
                 cj.clear(".youtube.com", "/", cookie.name)
                 continue
 
-            if cookie.is_expired:
-                logger.warning(f"{cookie} is expired ({cookie.expires})! \
-Might want to renew it.")
+            if cookie.is_expired():
+                logger.warning(
+                    f"{cookie} is expired ({cookie.expires})! "
+                     "Might want to renew it.")
 
     return cj
 

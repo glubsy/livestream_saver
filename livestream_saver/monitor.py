@@ -6,7 +6,6 @@ from typing import Optional, Any, List, Dict
 from livestream_saver import extract
 from livestream_saver.hooks import HookCommand
 from livestream_saver.notifier import WebHookFactory
-# import pprint
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +252,7 @@ class YoutubeChannel:
 
     def get_metadata_dict(self, vid: Dict) -> Dict:
         """Update vid with various matadata fetched from the API."""
-        # TODO make vid a full-fledged class FFS!
+        # TODO make vid a full-fledged class!
         url = vid.get("url")
         vid.update({
             "url": f"https://www.youtube.com{url}" if url is not None else None,
@@ -262,49 +261,55 @@ class YoutubeChannel:
             "output_dir": self.output_dir
             }
         )
-
-        description = vid.get("description")
+        description = vid.get("description", "")
         if not description:
-            if json_d := self.fetch_video_metadata(vid):
-                # self.logger.debug(f"Fetched metadata JSON: {pprint.pprint(json_d, indent=4)}")
-                vid["description"] = json_d.get('videoDetails', {})\
-                                           .get("shortDescription", "N/A")
-                vid["author"] = json_d.get('videoDetails', {})\
-                                      .get("author", "Author?")
-                if isLive := json_d.get('videoDetails', {})\
-                                      .get('isLiveContent', False):
-                    # This should overwrite the same value.
-                    vid["isLive"] = isLive
-                # "This live event will begin in 3 hours."
-                vid["liveStatus"] = json_d.get('playabilityStatus', {})\
-                                          .get('reason')
-                if liveStreamOfflineSlateRenderer := json_d\
-                    .get('playabilityStatus', {})\
-                    .get('liveStreamability', {})\
-                    .get('liveStreamabilityRenderer', {})\
-                    .get('offlineSlate', {})\
-                    .get('liveStreamOfflineSlateRenderer', {}):
-                    if mainTextruns := liveStreamOfflineSlateRenderer\
-                        .get('mainText', {})\
-                        .get('runs', []):
-                        shortRemainingTime = ""
-                        for text in mainTextruns:
-                            # "Live in " + "3 hours"
-                            shortRemainingTime += text.get('text', "")
-                        vid["shortRemainingTime"] = shortRemainingTime
+            json_d = self.fetch_video_metadata(vid)
+            if not json_d:
+                return vid
+            self.logger.debug(
+                f"Got metadata JSON for videoId \"{vid.get('videoId', '')}\".")
+            # if self.logger.isEnabledFor(logging.DEBUG):
+            #     import pprint
+            #     pprint.pprint(json_d, indent=4)
 
-                    if subtitleTextRuns := liveStreamOfflineSlateRenderer\
-                        .get('subtitleText', {})\
-                        .get('runs', []):
-                        if localScheduledTime := subtitleTextRuns[0].get('text'):
-                            # December 22, 11:00 AM GMT+9
-                            vid["localScheduledTime"] = localScheduledTime
+            vid["description"] = json_d.get('videoDetails', {})\
+                                        .get("shortDescription", "")
+            vid["author"] = json_d.get('videoDetails', {})\
+                                    .get("author", "Author?")
+            if isLive := json_d.get('videoDetails', {})\
+                                    .get('isLiveContent', False):
+                # This should overwrite the same value.
+                vid["isLive"] = isLive
+            # "This live event will begin in 3 hours."
+            vid["liveStatus"] = json_d.get('playabilityStatus', {})\
+                                        .get('reason')
+            if liveStreamOfflineSlateRenderer := json_d\
+                .get('playabilityStatus', {})\
+                .get('liveStreamability', {})\
+                .get('liveStreamabilityRenderer', {})\
+                .get('offlineSlate', {})\
+                .get('liveStreamOfflineSlateRenderer', {}):
+                if mainTextruns := liveStreamOfflineSlateRenderer\
+                    .get('mainText', {})\
+                    .get('runs', []):
+                    shortRemainingTime = ""
+                    for text in mainTextruns:
+                        # "Live in " + "3 hours"
+                        shortRemainingTime += text.get('text', "")
+                    vid["shortRemainingTime"] = shortRemainingTime
 
-                    if scheduledStartTime := liveStreamOfflineSlateRenderer\
-                        .get('scheduledStartTime'):
-                        # Timestamp, will overwrite
-                        vid["startTime"] = scheduledStartTime
-                # logger.debug(f"JSON fetched for video {vid}:\n{json_d}")
+                if subtitleTextRuns := liveStreamOfflineSlateRenderer\
+                    .get('subtitleText', {})\
+                    .get('runs', []):
+                    if localScheduledTime := subtitleTextRuns[0].get('text'):
+                        # December 22, 11:00 AM GMT+9
+                        vid["localScheduledTime"] = localScheduledTime
+
+                if scheduledStartTime := liveStreamOfflineSlateRenderer\
+                    .get('scheduledStartTime'):
+                    # Timestamp, will overwrite
+                    vid["startTime"] = scheduledStartTime
+            # logger.debug(f"JSON fetched for video {vid}:\n{json_d}")
         return vid
 
     def fetch_video_metadata(self, vid: Optional[Dict]) -> Optional[Dict]:
@@ -315,22 +320,23 @@ class YoutubeChannel:
         if not videoId:
             return None
 
-        # FIXME workaround: We prefer to get the html if we passed cookies
-        # just to make sure the response is not half-baked as the cookies seem
-        # to be ignored during API requests.
-        if self.session.cookie_path and vid.get("url"):
+        logger.info(f"Fetching video {videoId} info from API...")
+        try:
+            json_string = self.session.make_api_request(videoId)
+            return extract.str_as_json(json_string)
+        except Exception as e:
+            logger.warning(f"Error fetching metadata for video {videoId}: {e}")
+
+        # Fallback: fetch from regular HTML page
+        if vid.get("url"):
+            logger.info(f"Fetching video {videoId} info from HTML page...")
             try:
                 html_page = self.session.make_request(vid.get("url"))
                 return extract.str_as_json(
                     extract.initial_player_response(html_page))
             except Exception as e:
                 logger.warning(f"Error fetching metadata for video {videoId}: {e}")
-        else:
-            try:
-                json_string = self.session.make_api_request(videoId)
-                return extract.str_as_json(json_string)
-            except Exception as e:
-                logger.warning(f"Error fetching metadata for video {videoId}: {e}")
+
 
     def is_hooked_video(self, videoId: Optional[str]):
         """Keep track of the last few videos for which we have triggered a hook
