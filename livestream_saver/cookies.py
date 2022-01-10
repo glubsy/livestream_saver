@@ -17,10 +17,13 @@ def get_cookie(path):
 def _get_cookie_jar(cookie_path: str):
     """Necessary for urllib.request."""
 
+    policy = http.cookiejar.DefaultCookiePolicy(
+        allowed_domains=(".youtube.com", ".google.com"))
+
     # Before Python 3.10, these cookies are ignored which breaks our credentials
-    cj = http.cookiejar.MozillaCookieJar() \
+    cj = http.cookiejar.MozillaCookieJar(policy=policy) \
         if "HTTPONLY_PREFIX" in dir(http.cookiejar) \
-        else CompatMozillaCookieJar()
+        else CompatMozillaCookieJar(policy=policy)
 
     if not cookie_path:
         logger.info(f"No cookie path submitted. Using a blank cookie jar.")
