@@ -64,7 +64,6 @@ def get_throttling_function_name(js: str) -> str:
     )
 pytube.cipher.get_throttling_function_name = get_throttling_function_name
 
-
 # Another temporary backport to fix https://github.com/pytube/pytube/issues/1163
 def throttling_array_split(js_array):
     results = []
@@ -101,6 +100,30 @@ def throttling_array_split(js_array):
 
     return results
 pytube.cipher.throttling_array_split = throttling_array_split
+
+
+# Another temporary hotfix https://github.com/pytube/pytube/issues/1199
+def patched__init__(self, js: str):
+    self.transform_plan: List[str] = pytube.cipher.get_transform_plan(js)
+    var_regex = re.compile(r"^\$*\w+\W")
+    var_match = var_regex.search(self.transform_plan[0])
+    if not var_match:
+        raise RegexMatchError(
+            caller="__init__", pattern=var_regex.pattern
+        )
+    var = var_match.group(0)[:-1]
+    self.transform_map = pytube.cipher.get_transform_map(js, var)
+    self.js_func_patterns = [
+        r"\w+\.(\w+)\(\w,(\d+)\)",
+        r"\w+\[(\"\w+\")\]\(\w,(\d+)\)"
+    ]
+
+    self.throttling_plan = pytube.cipher.get_throttling_plan(js)
+    self.throttling_array = pytube.cipher.get_throttling_function_array(js)
+
+    self.calculated_n = None
+
+pytube.cipher.Cipher.__init__ = patched__init__
 
 
 class BaseURL(str):
