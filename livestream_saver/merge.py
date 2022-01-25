@@ -101,7 +101,7 @@ class ConcatMethod():
 
         if cproc is not None and "Non-monotonous DTS" in cproc.stderr:
             # This error seems to happen when concatenating mpegts
-            raise Exception("Non-monotonous DTS detected!")
+            raise NonMonotonousDTSError("Non-monotonous DTS detected!")
 
     @property
     def segment_duration(self) -> float:
