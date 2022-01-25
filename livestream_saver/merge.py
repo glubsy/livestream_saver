@@ -36,6 +36,9 @@ def get_metadata_info(path: Path):
 class CorruptPacketError(Exception):
     pass
 
+class NonMonotonousDTSError(Exception):
+    pass
+
 class DurationMismatchError(Exception):
     pass
 
@@ -335,6 +338,9 @@ class NativeConcatFile(ConcatMethod):
             duration = probe(self._final_file).get("duration", 0.0)
             if not self.is_valid_duration(self._final_file, duration):
                 raise DurationMismatchError()
+        except NonMonotonousDTSError:
+            # Non-monotonous DTS warnings might be harmless in this case
+            pass
         finally:
             if self.temp_concat.exists():
                 self.temp_concat.unlink()
