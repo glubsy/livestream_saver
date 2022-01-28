@@ -4,15 +4,19 @@ from random import uniform
 import logging
 from typing import Optional, Any, List, Dict
 from livestream_saver import extract
+from livestream_saver.hooks import HookCommand
+from livestream_saver.notifier import WebHookFactory
 
 logger = logging.getLogger(__name__)
 
 
 class YoutubeChannel:
-    def __init__(self, URL, channel_id, session, output_dir: Path = Path(), hooks={}):
+    def __init__(self, URL, channel_id, session, notifier,
+    output_dir: Path = Path(), hooks={}):
         self.session = session
         self.url = URL
         self.id = channel_id
+        self.channel_name = "N/A"
         self.videos_json = None
         self._community_videos = None
         self._public_videos = None
@@ -26,6 +30,7 @@ class YoutubeChannel:
         self._public_json = None
         self._upcoming_json = None
 
+        self.notifier = notifier
         self.hooks = hooks
         self._hooked_videos = []
         self.output_dir = output_dir
@@ -42,10 +47,10 @@ class YoutubeChannel:
             _json = self.community_json
 
         if _json:
-            return _json.get('metadata', {})\
-                        .get('channelMetadataRenderer', {})\
-                        .get('title')
-        return "Unknown"
+            self.channel_name = _json.get('metadata', {})\
+                .get('channelMetadataRenderer', {})\
+                .get('title')
+        return self.channel_name
 
     @property
     def community_videos_html(self):
@@ -113,14 +118,17 @@ class YoutubeChannel:
     def community_videos(self):
         community_videos = self.update_community_videos()
 
+        # Occurs on the first time
         if self._community_videos is None:
-            # Log only the very first time
             logger.info(
                 "Currently listed community videos: {}\n{}".format(
                     len(community_videos),
                     format_list_output(community_videos)
                 )
             )
+            for vid in community_videos:
+                if vid.get("upcoming"):
+                    self.trigger_hook('on_upcoming_detected', vid)
         else:
             new_comm_videos = [
                 v for v in community_videos if v not in self._community_videos
@@ -133,6 +141,11 @@ class YoutubeChannel:
                     )
                 )
                 for vid in new_comm_videos:
+                    if vid.get("upcoming"):
+                        self.trigger_hook('on_upcoming_detected', vid)
+                    if vid.get("isLiveNow") or vid.get("isLive"):
+                        continue
+                    # Although rare, this should trigger for VODs only
                     self.trigger_hook('on_video_detected', vid)
         self._community_videos = community_videos
         return self._community_videos
@@ -141,14 +154,17 @@ class YoutubeChannel:
     def public_videos(self):
         public_videos = self.update_public_videos()
 
+        # Occurs on the first time
         if self._public_videos is None:
-            # Log only the very first time
             logger.info(
                 "Currently listed public videos: {}\n{}".format(
                     len(public_videos),
                     format_list_output(public_videos)
                 )
             )
+            for vid in public_videos:
+                if vid.get("upcoming"):
+                    self.trigger_hook('on_upcoming_detected', vid)
         else:
             new_pub_videos = [
                 v for v in public_videos if v not in self._public_videos
@@ -161,6 +177,8 @@ class YoutubeChannel:
                     )
                 )
                 for vid in new_pub_videos:
+                    if vid.get("upcoming"):
+                        self.trigger_hook('on_upcoming_detected', vid)
                     if vid.get("isLiveNow") or vid.get("isLive"):
                         continue
                     # This should only trigger for VOD (non-live) videos
@@ -170,12 +188,22 @@ class YoutubeChannel:
 
     @property
     def upcoming_videos(self) -> List[Dict]:
+        """Supposed to return upcoming Live Streams (or Premieres?),
+        but the site will redirect to public videos if there is none found."""
         upcoming_videos: List[Dict] = self.update_upcoming_videos()
 
+        # Make sure we only list upcoming videos and not public VODs due to redirect
+        upcoming_videos_filtered = []
+        for vid in upcoming_videos:
+            if not vid.get('upcoming'):
+                continue
+            upcoming_videos_filtered.append(vid)
+        upcoming_videos = upcoming_videos_filtered
+
+        # Occurs on the first time
         if self._upcoming_videos is None:
-            # Log only the very first time
             logger.info(
-                "Currently listed upcoming videos: {}\n{}".format(
+                "Currently listed public upcoming videos: {}\n{}".format(
                     len(upcoming_videos),
                     format_list_output(upcoming_videos)
                 )
@@ -183,10 +211,11 @@ class YoutubeChannel:
             for vid in upcoming_videos:
                 # These checks are important to avoid the youtube bug that
                 # return VODs if there is no upcoming video at all.
-                # FIXME perhaps API calls might help solve this, otherwise we
-                # could keep track of public videoIds and ignore them. 
-                if vid.get('upcoming') and vid.get('isLive'):
-                    self.trigger_hook('on_upcoming_detected', vid)
+                # FIXME perhaps API calls might help filter these better,
+                # otherwise we could keep track of public videoIds and
+                # ignore them.
+                # if vid.get('upcoming') and vid.get('isLive'):
+                self.trigger_hook('on_upcoming_detected', vid)
         else:
             new_upcoming_videos = [
                 v for v in upcoming_videos if v not in self._upcoming_videos
@@ -201,48 +230,113 @@ class YoutubeChannel:
                 for vid in new_upcoming_videos:
                     # These checks are important to avoid the youtube bug that
                     # return VOD here as well.
-                    if vid.get('upcoming') and vid.get('isLive'):
+                    if vid.get('upcoming'): # and vid.get('isLive'):
                         self.trigger_hook('on_upcoming_detected', vid)
         self._upcoming_videos = upcoming_videos
         return self._upcoming_videos
 
-    def trigger_hook(self, hook_name: str, vid):
-        if hook := self.hooks.get(hook_name, None):
-            print(f"we got hook {hook}")
-            if not self.is_hooked_video(vid.get("videoId", None)):
-                print(f"hooking video {vid}")
-                url = vid.get("url")
-                # Make an API request to fetch the description
-                description = vid.get("description")
-                if not description:
-                    if metadata := self.get_video_metadata(vid.get("videoId")):
-                        vid["description"] = self.get_description_metadata(metadata)
+    def trigger_hook(self, hook_name: str, vid: Dict):
+        hook_cmd: Optional[HookCommand] = self.hooks.get(hook_name, None)
+        webhookfactory: Optional[WebHookFactory] = self.notifier.get_webhook(hook_name)
 
-                args = {
-                    "url": f"https://www.youtube.com{url}" if url is not None else None,
-                    "cookie_path": self.session.cookie_path,
-                    "logger": logger,
-                    "output_dir": self.output_dir,
-                    "title": vid.get("title"),
-                    "description": vid.get("description")
-                }
-                hook.spawn_subprocess(args)
+        if hook_cmd is not None or webhookfactory is not None:
+            self.get_metadata_dict(vid)
+            self.logger.debug(f"Fetched metadata for vid: {vid}")
 
-    @staticmethod
-    def get_description_metadata(json: Dict) -> Optional[str]:
-        return json.get('videoDetails', {})\
-                   .get("shortDescription")
+            if hook_cmd and not self.is_hooked_video(vid.get("videoId", None)):
+                hook_cmd.spawn_subprocess(vid)
 
-    def get_video_metadata(self, videoId: Optional[str]) -> Optional[Dict]:
+            if webhookfactory:
+                if webhook := webhookfactory.get(vid):
+                    self.notifier.q.put(webhook)
+
+    def get_metadata_dict(self, vid: Dict) -> Dict:
+        """Update vid with various matadata fetched from the API."""
+        # TODO make vid a full-fledged class!
+        url = vid.get("url")
+        vid.update({
+            "url": f"https://www.youtube.com{url}" if url is not None else None,
+            "cookie_path": self.session.cookie_path,
+            "logger": self.logger,
+            "output_dir": self.output_dir
+            }
+        )
+        description = vid.get("description", "")
+        if not description:
+            json_d = self.fetch_video_metadata(vid)
+            if not json_d:
+                return vid
+            self.logger.debug(
+                f"Got metadata JSON for videoId \"{vid.get('videoId', '')}\".")
+            # if self.logger.isEnabledFor(logging.DEBUG):
+            #     import pprint
+            #     pprint.pprint(json_d, indent=4)
+
+            vid["description"] = json_d.get('videoDetails', {})\
+                                        .get("shortDescription", "")
+            vid["author"] = json_d.get('videoDetails', {})\
+                                    .get("author", "Author?")
+            if isLive := json_d.get('videoDetails', {})\
+                                    .get('isLiveContent', False):
+                # This should overwrite the same value.
+                vid["isLive"] = isLive
+            # "This live event will begin in 3 hours."
+            vid["liveStatus"] = json_d.get('playabilityStatus', {})\
+                                        .get('reason')
+            if liveStreamOfflineSlateRenderer := json_d\
+                .get('playabilityStatus', {})\
+                .get('liveStreamability', {})\
+                .get('liveStreamabilityRenderer', {})\
+                .get('offlineSlate', {})\
+                .get('liveStreamOfflineSlateRenderer', {}):
+                if mainTextruns := liveStreamOfflineSlateRenderer\
+                    .get('mainText', {})\
+                    .get('runs', []):
+                    shortRemainingTime = ""
+                    for text in mainTextruns:
+                        # "Live in " + "3 hours"
+                        shortRemainingTime += text.get('text', "")
+                    vid["shortRemainingTime"] = shortRemainingTime
+
+                if subtitleTextRuns := liveStreamOfflineSlateRenderer\
+                    .get('subtitleText', {})\
+                    .get('runs', []):
+                    if localScheduledTime := subtitleTextRuns[0].get('text'):
+                        # December 22, 11:00 AM GMT+9
+                        vid["localScheduledTime"] = localScheduledTime
+
+                if scheduledStartTime := liveStreamOfflineSlateRenderer\
+                    .get('scheduledStartTime'):
+                    # Timestamp, will overwrite
+                    vid["startTime"] = scheduledStartTime
+            # logger.debug(f"JSON fetched for video {vid}:\n{json_d}")
+        return vid
+
+    def fetch_video_metadata(self, vid: Optional[Dict]) -> Optional[Dict]:
         """Fetch more details about a particular video ID."""
+        if not vid:
+            return None
+        videoId = vid.get("videoId")
         if not videoId:
             return None
+
+        logger.info(f"Fetching video {videoId} info from API...")
         try:
             json_string = self.session.make_api_request(videoId)
             return extract.str_as_json(json_string)
         except Exception as e:
             logger.warning(f"Error fetching metadata for video {videoId}: {e}")
-            return None
+
+        # Fallback: fetch from regular HTML page
+        if vid.get("url"):
+            logger.info(f"Fetching video {videoId} info from HTML page...")
+            try:
+                html_page = self.session.make_request(vid.get("url"))
+                return extract.str_as_json(
+                    extract.initial_player_response(html_page))
+            except Exception as e:
+                logger.warning(f"Error fetching metadata for video {videoId}: {e}")
+
 
     def is_hooked_video(self, videoId: Optional[str]):
         """Keep track of the last few videos for which we have triggered a hook
@@ -266,6 +360,8 @@ class YoutubeChannel:
         for vid in self.community_videos:
             if vid.get(filter_type):
                 live_videos.append(vid)
+        # No need to check for "upcoming_videos" because live videos should appear
+        # in the public videos list:
         for vid in self.public_videos:
             if vid.get(filter_type):
                 live_videos.append(vid)
@@ -317,16 +413,15 @@ class YoutubeChannel:
             # https://www.youtube.com/c/kamikokana/videos\?view\=2\&live_view\=502
             # https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g/videos?view=2&live_view=502
             # This video tab filtered list, returns public upcoming livestreams (with scheduled times)
+            # BUG it seems there is a redirect to the public videos if there is
+            # no scheduled upcoming live stream listed on the page.
             return self.session.make_request(
-                self.url + '/videos?view=2&live_view=502'
-
-            )
+                self.url + '/videos?view=2&live_view=502')
         if filtertype == 'current':
             # NOTE: active livestreams are also displays in /featured tab:
             # https://www.youtube.com/c/kamikokana/videos?view=2&live_view=501
             return self.session.make_request(
-                self.url + '/videos?view=2&live_view=501'
-            )
+                self.url + '/videos?view=2&live_view=501')
         if filtertype == 'featured':
             # NOTE "featured" tab is ONLY reliable for CURRENT live streams
             return self.session.make_request(
@@ -354,31 +449,41 @@ def get_videos_from_tab(tabs, tabtype) -> List[Dict]:
                     post = __item.get('backstagePostThreadRenderer', {})\
                                  .get('post', {})
                     if post:
-                        video_attachement = get_video_from_post(
-                            post.get('backstagePostRenderer', {})\
-                                .get('backstageAttachment', {})\
-                                .get('videoRenderer', {})
-                            )
-                        if video_attachement.get('videoId'):
-                            # some posts don't have attached videos
-                            videos.append(video_attachement)
+                        if backstageAttachment := post\
+                            .get('backstagePostRenderer', {})\
+                            .get('backstageAttachment', {}):
+                            if videoRenderer := backstageAttachment\
+                                .get('videoRenderer', {}):
+                                vid_metadata = get_video_from_post(videoRenderer)
+                                if vid_metadata.get('videoId'):
+                                    # some posts don't have attached videos
+                                    videos.append(vid_metadata)
                 elif tabtype == "Videos":
                     griditems = __item.get('gridRenderer', {})\
                                       .get('items', [])
                     for griditem in griditems:
-                        video_attachement = get_video_from_post(
+                        vid_metadata = get_video_from_post(
                             griditem.get('gridVideoRenderer')
                         )
-                        if video_attachement.get('videoId'):
-                            videos.append(video_attachement)
+                        if vid_metadata.get('videoId'):
+                            videos.append(vid_metadata)
     return videos
 
 
 def get_video_from_post(attachment: Dict) -> Dict[str, Any]:
+    """Get video entry and attach various metadata found alongside it."""
     if not attachment:
         return {}
     video_post = {}
     video_post['videoId'] = attachment.get('videoId')
+    video_post['thumbnail'] = attachment.get('thumbnail', {})
+
+    badges = attachment.get('badges', [])
+    if len(badges) and isinstance(badges[0], dict):
+        label = badges[0].get("metadataBadgeRenderer", {}).get("label")
+        if label and "Members only" in label:
+            video_post['members-only'] = label
+
     for _item in attachment.get('title', {}).get('runs', []):
         if _item.get('text'): # assumes list with only one item
             video_post['title'] = _item.get('text')
@@ -456,6 +561,7 @@ def format_list_output(vid_list: List[Dict]) -> str:
     for vid in vid_list:
         strs.append(
             f"{vid.get('videoId')} - {vid.get('title')}"
-            f"{' (Livestream)' if vid.get('isLive') else ''}"
-            f"{' LIVE NOW' if vid.get('isLiveNow') else ''}")
+            f"{' (LiveStream)' if vid.get('isLive') else ''}"
+            f"{' LIVE NOW!' if vid.get('isLiveNow') else ''}"
+            f"{' (Upcoming)' if vid.get('upcoming') else ''}")
     return "\n".join(strs)

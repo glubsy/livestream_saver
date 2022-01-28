@@ -1,9 +1,10 @@
 import os
 import re
 import logging
-from typing import Iterable, Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List
 from subprocess import Popen, DEVNULL
 from datetime import datetime
+from livestream_saver.util import is_wanted_based_on_metadata
 
 # logger = logging.getLogger("livestream_saver")
 
@@ -74,14 +75,13 @@ class HookCommand():
                         new.append(url)
                         continue
                     else:
-                        logger.warning(
-                            f"No URL found in video {args}. Skipping command {self.cmd}.")
-                        raise Exception
+                        raise Exception(f"No URL found in video {args}. Skipping command {self.cmd}.")
                 if item == r"%COOKIE_PATH%":
                     # if parent.session.cookie_path is not None:
                     if cookie_path := args.get("cookie_path", None):
                         # cmd[cmd.index(item)] = cookie_path
                         new.append(cookie_path)
+                        continue
                     elif cmd[cmd.index(item) - 1] == "--cookies":
                         logger.warning(
                             "Detected --cookies argument in custom (yt-dlp?) command"
@@ -91,9 +91,7 @@ class HookCommand():
                         patched = True
                         continue
                     else:
-                        logger.warning(
-                            f"No cookie path submitted. Skipping command {self.cmd}.")
-                        raise Exception
+                        raise Exception(f"No cookie path submitted. Skipping command {self.cmd}.")
                 new.append(item)
             if patched:
                 logger.warning(f"{self.event_name} command after replacement: {new}.")
@@ -102,7 +100,8 @@ class HookCommand():
         # Make a copy to avoid reusing stale data
         try:
             cmd = replace_placeholders(self.cmd[:])
-        except Exception:
+        except Exception as e:
+            logger.warning(e)
             return
 
         try:
@@ -123,31 +122,3 @@ class HookCommand():
             logger.warning(f"Error spawning {cmd}: {e}")
             pass
 
-
-def is_wanted_based_on_metadata(
-    data: Iterable[Optional[str]], 
-    allow_re: re.Pattern = None,
-    block_re: re.Pattern = None
-    ) -> bool:
-    """Test each RE against each item in data (title, description...)"""
-    if allow_re is None and block_re is None:
-        return True
-    wanted = True
-    blocked = False
-
-    if allow_re is not None:
-        wanted = False
-    if block_re is not None:
-        blocked = True
-
-    for item in data:
-        if not item:
-            continue
-        if allow_re and allow_re.search(item):
-            wanted = True
-        if block_re and block_re.search(item):
-            blocked = True
-    
-    if blocked:
-        return False
-    return wanted

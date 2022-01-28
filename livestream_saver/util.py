@@ -2,8 +2,9 @@ import re
 from os import makedirs
 from platform import system
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Iterable
 import logging
+
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
@@ -189,3 +190,45 @@ def split_by_plus(itags: Optional[str]) -> Optional[Tuple[int, ...]]:
         
     as_ints = tuple(int(num) for num in splits)
     return as_ints if as_ints else None
+
+
+def is_wanted_based_on_metadata(
+    data: Iterable[Optional[str]], 
+    allow_re: re.Pattern = None,
+    block_re: re.Pattern = None
+    ) -> bool:
+    """Test each RE against each item in data (title, description...)"""
+    if allow_re is None and block_re is None:
+        return True
+    wanted = True
+    blocked = False
+
+    if allow_re is not None:
+        wanted = False
+    if block_re is not None:
+        blocked = True
+
+    for item in data:
+        if not item:
+            continue
+        if allow_re and allow_re.search(item):
+            wanted = True
+        if block_re and block_re.search(item):
+            blocked = True
+    
+    if blocked:
+        return False
+    return wanted
+
+
+# Base name for each "event"
+event_props = [
+    "on_upcoming_detected",
+    "on_video_detected",
+    "on_download_initiated",
+    "on_download_started",
+    "on_download_ended",
+    "on_merge_done",
+]
+
+UA = get_system_ua()

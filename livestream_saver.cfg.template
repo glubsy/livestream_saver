@@ -1,44 +1,93 @@
 [DEFAULT]
 # If these keys are not specified in other sections, 
 # these will be used as a fallback.
-log_level = DEBUG
-# Path to cookies that is commmon to all modes if not overriden by sections:
-# cookie = 
-# E-mail notification parameters (using ENV is better)
-email_notifications = False
-smtp_server = 
-smtp_port = 25
-smtp_login =
-smtp_password =
-to_email = 
-from_email =
 
+# Default log level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
+# log_level = DEBUG
+
+# Path to cookies that is commmon to all modes if not overriden by sections (this is a fallback value)
+# cookie = 
+
+# Enable sending of e-mail notifications:
+# email_notifications = True
+
+# Enable removal of source segments once video has been successfully merged 
+# (This can be set in each individual sections):
+# delete_source = True
 
 [common]
-# These variables can be re-used in other sections. This section does nothing else.
-# Reference these variables from other sections as ${common:variable}.
+# These variables can be re-used in other sections through interpolation. 
+# This section does nothing else.
+# Reference these variables as ${common:variable_name} from anywhere.
 
 # Only trigger download if this regex matches in video title + description
 allow_regex = ".*archiv.*|.*karaoke.*"
 # Do not trigger download if this regex matches in video title + description
 block_regex = ""
-# This is just an example of yt-dlp (limiting video height to 240p)
+
+# This is just an example invoking yt-dlp (limiting maximum video height to 240p).
 # Note that "--cookies %COOKIE_PATH%" will be smartly removed if the value was 
-# not provided from the config file nor from the command line as argument. 
+# not provided from this config file or as a command line argument. 
 ytdlp_command = yt-dlp
 	-v
 	--embed-thumbnail
 	--fragment-retries 50
 	-o '%(upload_date)s %(uploader)s %(title)s_[%(height)s]_%(id)s.%(ext)s'
-	-f 'bestvideo+bestaudio'
+	; -f 'bestvideo+bestaudio'
 	-S "+res:240,res:360"
 	--add-metadata
 	--cookies %COOKIE_PATH%
+	--live-from-start
 	--wait-for-video 5
 	%VIDEO_URL%
 
-# Path to cookies that can be reused in individual sections:
+# Path to cookies that can be re-used in individual sections:
 cookie = 
+
+
+[webhook]
+# Convenience section, similar to [common].
+
+# Example of a typical endpoint URL:
+webhook_url = https://discord.com/api/webhooks/xxx/yyy
+# For more security, this can be overriden from environment variables:
+# webhook_url = {env:webhook_url_for_discord}
+
+# Example of a typical payload to send to Discord (note that this key is also 
+# what will be loaded in test-notification mode as well):
+webhook_data = '{
+	"content": "UPCOMING %ISLIVECONTENT%: (starts @ %START_TIME%, %LIVE_STATUS_SHORT%)",
+	"embeds": [{
+			"title": "%TITLE% (%VIDEO_ID%) %ISMEMBERSONLY%",
+			"url": "%VIDEO_URL%",
+			"description": "%LIVE_STATUS%\n%DESCRIPTION%\nScheduled @ %LOCAL_SCHEDULED%",
+			"thumbnail": { "url": "%THUMBNAIL_URL%" },
+			"author": { "name": "%AUTHOR%" }
+		}
+	]}'
+webhook_data_live = '{
+	"content": "%ISLIVECONTENT% just went LIVE:",
+	"embeds": [{
+			"title": "%TITLE% (%VIDEO_ID%) %ISMEMBERSONLY%",
+			"url": "%VIDEO_URL%",
+			"description": "%DESCRIPTION%",
+			"thumbnail": { "url": "%THUMBNAIL_URL%" },
+			"author": { "name": "%AUTHOR%" }
+		}
+	]}'
+
+
+[email]
+# Values in this section will be overriden by environment variables 
+# of the same names (case insensitive).
+
+# smtp_server = 
+# smtp_port =
+# smtp_login =
+# smtp_password =
+# to_email =
+# from_email =
+
 
 [monitor]
 # These values are only loaded in Monitor mode.
@@ -55,51 +104,60 @@ allow_regex = ''
 block_regex = ""
 
 # This triggers when an upcoming video is listed in the channel page.
-on_upcoming_detected = ${common:ytdlp_command}
-on_upcoming_detected_enabled = false
-on_upcoming_detected_logged = false
+on_upcoming_detected_command = ${common:ytdlp_command}
+on_upcoming_detected_command_enabled = false
+on_upcoming_detected_command_logged = false
 # These regexes only apply to the condition on which to spawn the command.
-on_upcoming_detected_allow_regex =
-# For example, do not download KSON's "video" used solely for its chat room
-on_upcoming_detected_block_regex = ".*FREE CHATTING SPACE.*"
+on_upcoming_detected_command_allow_regex =
+# For example, do not download KSON's "video" that is used solely as a permanent chat room
+on_upcoming_detected_command_block_regex = ".*FREE CHATTING SPACE.*"
+
+# This will trigger a web hook.
+on_upcoming_detected_webhook = ${webhook:webhook_data}
+on_upcoming_detected_webhook_url = ${webhook:webhook_url}
+on_upcoming_detected_webhook_enabled = false
+on_upcoming_detected_webhook_logged = true
+on_upcoming_detected_webhook_allow_regex =
+on_upcoming_detected_webhook_block_regex =
+
 
 # This should trigger only for non-live videos (VOD).
-on_video_detected = ${common:ytdlp_command}
-on_video_detected_enabled = false
-on_video_detected_logged = true
+on_video_detected_command = ${common:ytdlp_command}
+on_video_detected_command_enabled = false
+on_video_detected_command_logged = true
 # These regexes only apply to the condition on which to spawn the command.
-on_video_detected_allow_regex = ${common:allow_regex}
-on_video_detected_block_regex = 
+on_video_detected_command_allow_regex = ${common:allow_regex}
+on_video_detected_command_block_regex = 
 
 # This triggers when a download is pending and waiting for a livestream to start.
-on_download_initiated = ${common:ytdlp_command}
-on_download_initiated_enabled = true
-on_download_initiated_logged = true
+on_download_initiated_command = ${common:ytdlp_command}
+on_download_initiated_command_enabled = false
+on_download_initiated_command_logged = true
 # These regexes only apply to the condition on which to spawn the command.
 # These are matched against both title + description.
-on_download_initiated_allow_regex = ${monitor:allow_regex}
-on_download_initiated_block_regex = ${monitor:block_regex}
+on_download_initiated_command_allow_regex = ${monitor:allow_regex}
+on_download_initiated_command_block_regex = ${monitor:block_regex}
 
 # This triggers when the download has actually started on an active livestream.
-on_download_started = 
-on_download_started_enabled = false
-on_download_started_logged = false
+on_download_started_command = 
+on_download_started_command_enabled = false
+on_download_started_command_logged = false
 # These regexes only apply to the condition on which to spawn the command.
 # These are matched against both title + description.
-on_download_started_allow_regex = ${common:allow_regex}
-on_download_started_block_regex = ${common:block_regex}
+on_download_started_command_allow_regex = ${common:allow_regex}
+on_download_started_command_block_regex = ${common:block_regex}
 
 # This triggers when we consider a livestream to be finished.
-on_download_ended = 
-on_download_ended_enabled = false
-on_download_ended_logged = false
+on_download_ended_command = 
+on_download_ended_command_enabled = false
+on_download_ended_command_logged = false
 
 # This triggers when the merge is done (successfully or not).
-on_merge_done = 
-on_merge_done_enabled = false
-on_merge_done_logged = false
+on_merge_done_command = 
+on_merge_done_command_enabled = false
+on_merge_done_command_logged = false
 
-# This can be used in any section to skip downloading.
+# This can be used in any section to skip downloading anything.
 # skip_download = True
 
 
@@ -113,32 +171,32 @@ scan_delay = 2.5
 # cookie = /path/to/cookies.txt
 
 # This triggers when a download is pending and waiting for a livestream to start.
-on_download_initiated =
-on_download_initiated_enabled = false
-on_download_initiated_logged = false
-on_download_initiated_allow_regex = ${common:allow_regex}
-on_download_initiated_block_regex = ${common:block_regex}
+on_download_initiated_command = ${common:ytdlp_command}
+on_download_initiated_command_enabled = false
+on_download_initiated_command_logged = false
+on_download_initiated_command_allow_regex = ${common:allow_regex}
+on_download_initiated_command_block_regex = ${common:block_regex}
 
 # This triggers when the download has actually started on an active livestream.
-on_download_started =
-on_download_started_enabled = false
-on_download_started_logged = false
-on_download_started_allow_regex = ${common:allow_regex}
-on_download_started_block_regex = ${common:block_regex}
+on_download_started_command =
+on_download_started_command_enabled = false
+on_download_started_command_logged = false
+on_download_started_command_allow_regex = ${common:allow_regex}
+on_download_started_command_block_regex = ${common:block_regex}
 
 # This triggers when we consider a livestream to be finished.
-on_download_ended =
-on_download_ended_enabled = false
-on_download_ended_logged = false
+on_download_ended_command =
+on_download_ended_command_enabled = false
+on_download_ended_command_logged = false
 
 # This triggers when the merge is done (successfully or not).
-on_merge_done =
-on_merge_done_enabled = false
-on_merge_done_logged = false
+on_merge_done_command =
+on_merge_done_command_enabled = false
+on_merge_done_command_logged = false
 
 
+# These values in the following sections only apply to Monitor mode.
 [monitor Meru]
-# These values only apply to monitor mode.
 channel_name = Matsuro Meru
 scan_delay = 20.0
 URL = https://www.youtube.com/channel/UCIJ6TGsTcBlYGUj-zbL60EQ
@@ -169,14 +227,23 @@ scan_delay = 20.0
 URL = https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g
 cookie = ${common:cookie}
 
-# Spawn a subprocess of your choosing (for this target channel only):
-on_upcoming_detected = ${common:ytdlp_command}
-on_upcoming_detected_enabled = false
-on_upcoming_detected_logged = true
-on_upcoming_detected_allow_regex = ".*archiv.*|.*karaoke.*|.*sing.*"
-on_upcoming_detected_block_regex =
+# Spawn a subprocess of your choosing (only for this target channel, and only 
+# if the metadata matches the regex):
+on_upcoming_detected_command = ${common:ytdlp_command}
+on_upcoming_detected_command_enabled = false
+on_upcoming_detected_command_logged = true
+on_upcoming_detected_command_allow_regex = ".*archiv.*|.*karaoke.*|.*sing.*"
+on_upcoming_detected_command_block_regex =
 
-# Using "" as value will remove any value set in the "monitor" section above.
-# This is useful to override the value for a specific channel only.
+# Trigger a web hook (only for this channel)
+on_download_initiated_webhook = ${webhook:webhook_data_live}
+on_download_initiated_webhook_url = ${webhook:webhook_url}
+on_download_initiated_webhook_enabled = false
+on_download_initiated_webhook_logged = true
+on_download_initiated_webhook_allow_regex =
+on_download_initiated_webhook_block_regex =
+
+# Note that using "" as value will remove any value set in the "monitor" section
+# above. This is useful to override the value for a specific channel only.
 allow_regex = ".*archiv.*|.*karaoke.*|.*sing.*"
 block_regex = ""
