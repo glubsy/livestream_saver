@@ -1,0 +1,18 @@
+version: '3'
+
+x-defaults:
+  &defaults
+  image: livestreamsaver
+  restart: always
+  volumes:
+    - ./livestream_saver.cfg:/app/livestream_saver.cfg
+    - ./youtube.com_cookies.txt:/app/cookies.txt
+    - ./downloads:/app/downloads
+
+services:
+  streamOne:
+    <<: *defaults
+    command:  python3 livestream_saver.py monitor https://www.youtube.com/channel/UChs0pSaEoNLV4mevBFGaoKA -c /app/livestream_saver.cfg --cookie /app/cookies.txt --log-level DEBUG
+  streamTwo:
+    <<: *defaults
+    command:  python3 livestream_saver.py monitor https://www.youtube.com/channel/UChs0pSaEoNLV4mevBFGaoKA -c /app/livestream_saver.cfg --cookie /app/cookies.txt --log-level DEBUG
