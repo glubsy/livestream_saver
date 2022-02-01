@@ -44,6 +44,7 @@ def get_throttling_function_name(js: str) -> str:
     :returns:
         The name of the function used to compute the throttling parameter.
     """
+    return "iha"
     function_patterns = [
         # https://github.com/ytdl-org/youtube-dl/issues/29326#issuecomment-865985377
         # a.C&&(b=a.get("n"))&&(b=Dea(b),a.set("n",b))}};
