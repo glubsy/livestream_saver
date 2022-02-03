@@ -9,11 +9,13 @@ RUN apk update \
     && pip install Pillow \
     && apk del build-deps
 
-COPY ./requirements.txt requirements.txt
-COPY ./livestream_saver.py livestream_saver.py
-COPY ./livestream_saver livestream_saver
+COPY ./requirements.txt /app/requirements.txt
+COPY ./livestream_saver.py /app/livestream_saver.py
+COPY ./livestream_saver /app/livestream_saver
 RUN python3 -m pip install --upgrade pip
-RUN python3 -m pip install -r requirements.txt
+RUN python3 -m pip install -r /app/requirements.txt
 
-COPY ./livestream_saver.cfg.template ./config.yml
-RUN chmod a+x livestream_saver.py
+ENV PATH "$PATH:/app/"
+COPY ./livestream_saver.cfg.template ./livestream_saver.cfg
+RUN chmod u+x /app/livestream_saver.py
+RUN ln -s /app/livestream_saver.py /usr/bin

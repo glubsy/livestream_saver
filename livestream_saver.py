@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from os import sep, makedirs, getcwd, environ, getenv
 from sys import platform
 from sys import argv

@@ -15,7 +15,7 @@ x-defaults:
 services:
   streamOne:
     <<: *defaults
-    command:  python3 livestream_saver.py monitor https://www.youtube.com/channel/UChs0pSaEoNLV4mevBFGaoKA -c /app/livestream_saver.cfg --cookie /app/cookies.txt --log-level DEBUG
+    command: livestream_saver.py monitor https://www.youtube.com/channel/UChs0pSaEoNLV4mevBFGaoKA -c livestream_saver.cfg --cookie /app/cookies.txt --log-level DEBUG
   streamTwo:
     <<: *defaults
-    command:  python3 livestream_saver.py monitor https://www.youtube.com/channel/UChs0pSaEoNLV4mevBFGaoKA -c /app/livestream_saver.cfg --cookie /app/cookies.txt --log-level DEBUG
+    command: livestream_saver.py monitor https://www.youtube.com/channel/UChs0pSaEoNLV4mevBFGaoKA -c livestream_saver.cfg --cookie /app/cookies.txt --log-level DEBUG
