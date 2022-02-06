@@ -38,6 +38,9 @@ def get_metadata_info(path: Path):
 class CorruptPacketError(Exception):
     pass
 
+class NonMonotonousDTSError(Exception):
+    pass
+
 class DurationMismatchError(Exception):
     pass
 
@@ -57,6 +60,7 @@ class ConcatMethod():
         self._missing_seg_ints = missing_ints
         self._corrupt_segments = corrupt_segs
         self._segment_duration = None
+        self.error = None
         self.video_id = video_id
         self.output_dir = output_dir
         # Determine container type according to codec
@@ -100,7 +104,7 @@ class ConcatMethod():
 
         if cproc is not None and "Non-monotonous DTS" in cproc.stderr:
             # This error seems to happen when concatenating mpegts
-            raise Exception("Non-monotonous DTS detected!")
+            raise NonMonotonousDTSError("Non-monotonous DTS detected!")
 
     @property
     def segment_duration(self) -> float:
@@ -337,6 +341,17 @@ class NativeConcatFile(ConcatMethod):
             duration = probe(self._final_file).get("duration", 0.0)
             if not self.is_valid_duration(self._final_file, duration):
                 raise DurationMismatchError()
+        except NonMonotonousDTSError as e:
+            logger.warning(e)
+            self.error = e
+            cmd = self.setup_command(ignore_dts=True)
+            logger.info("Retrying by ignoring dts...")
+            # FIXME these exception handlers should be in a separate method
+            # FIXME ignoring dts doesn't seem to change anything, useless?
+            try:
+                self.run_ffmpeg(cmd)
+            except:
+                pass
         finally:
             if self.temp_concat.exists():
                 self.temp_concat.unlink()
@@ -356,10 +371,9 @@ class NativeConcatFile(ConcatMethod):
             return self.temp_concat
         return None
 
-    def setup_command(self) -> List:
+    def setup_command(self, ignore_dts = False) -> List:
         # '-c:a' if datatype == 'audio' else '-c:v' but '-c copy' might work for both here.
-        return ["ffmpeg", "-hide_banner", "-y",
-            #    "-fflags", "+igndts",
+        cmd = ["ffmpeg", "-hide_banner", "-y",
                "-i", str(self.temp_concat),
                "-map_metadata", "-1", # remove metadata
                "-c", "copy",
@@ -368,6 +382,10 @@ class NativeConcatFile(ConcatMethod):
             #    "-bsf:v", "h264_mp4toannexb",  # or [hevc|h264]_mp4toannexb
             #    "-vsync", "2",
                str(self._final_file)]
+        if ignore_dts:
+            for arg in ["-fflags", "+igndts"]:
+                cmd.insert(cmd.index("-i"), arg)
+        return cmd
 
     def setup_ts_command(self):
         # This is the temporary file, it might help with fixing timestamps
@@ -526,6 +544,7 @@ def merge(info: Dict, data_dir: Path,
     # There is only one method that works currently
     methods = (NativeConcatFile,)
     attempt = 0
+    got_errors = False
     concat_video_file = None
     concat_audio_file = None
     corrupt_vid_segs: Optional[List[Path]] = None
@@ -538,6 +557,8 @@ def merge(info: Dict, data_dir: Path,
                 info.get("id", "UNKNOWN_ID"), output_dir,
                 missing_video_ints, corrupt_vid_segs)
             concat_video_file.make()
+            if concat_video_file.error is not None:
+                got_errors = True
 
             if concat_video_file._corrupt_segments:
                 # Keep a reference to reuse with next method if needed:
@@ -559,6 +580,8 @@ def merge(info: Dict, data_dir: Path,
                 info.get("id", "UNKNOWN_ID"), output_dir,
                 missing_audio_ints, corrupt_aud_segs)
             concat_audio_file.make()
+            if concat_audio_file.error is not None:
+                got_errors = True
 
             # We have to rebuild the video after removing video segments
             # corresponding to the corrupt audio segments:
@@ -718,6 +741,8 @@ def merge(info: Dict, data_dir: Path,
             logger.warning(f"Some segments were corrupted! {action_msg}")
         elif attempt > 0:
             logger.warning(f"A concat method failed. {action_msg}")
+        elif got_errors:
+            logger.warning(f"We got suspicious errors while concatenating. {action_msg}")
         else:
             logger.info("Deleting source segments in {} and {}...".format(
                 video_seg_dir, audio_seg_dir)
