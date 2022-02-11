@@ -19,16 +19,18 @@ import urllib.error
 from http.client import IncompleteRead
 import xml.etree.ElementTree as ET
 
+from livestream_saver.pytube import PytubeYoutube
+from livestream_saver.youtube import PytubeYoutubeVideo, BaseStream
 import pytube
-import pytube.exceptions
 # import aiohttp
 
 from livestream_saver import exceptions
 from livestream_saver import extract
 from livestream_saver import util
 from livestream_saver.constants import *
+from livestream_saver.youtube import BaseYoutubeVideo
 # import livestream_saver
-from livestream_saver.request import ASession as Session
+from livestream_saver.request import ASession as Session, Session as SSession
 from livestream_saver.notifier import NotificationDispatcher
 from livestream_saver.hooks import is_wanted_based_on_metadata
 
@@ -50,155 +52,13 @@ class Status(Flag):
 # logger.setLevel(logging.DEBUG)
 
 
-class PytubeYoutube(pytube.YouTube):
-    """Wrapper to override some methods in order to bypass several restrictions
-    due to lacking features in pytube (most notably live stream support)."""
-    def __init__(self, *args, **kwargs):
-        # Keep a handle to update its status
-        self.parent: Optional[YoutubeLiveBroadcast] = kwargs.get("parent")
-        self.session: Optional[Session] = kwargs.get("session")
-        super().__init__(*args)
-        # if "www" is omitted, it might force a redirect on YT's side
-        # (with &ucbcb=1) and force us to update cookies again. YT is very picky
-        # about that. Let's just avoid it.
-        self.watch_url = f"https://www.youtube.com/watch?v={self.video_id}"
-
-
-# Temporary backport from pytube 11.0.1
-def get_throttling_function_name(js: str) -> str:
-    """Extract the name of the function that computes the throttling parameter.
-
-    :param str js:
-        The contents of the base.js asset file.
-    :rtype: str
-    :returns:
-        The name of the function used to compute the throttling parameter.
-    """
-    function_patterns = [
-        # https://github.com/yt-dlp/yt-dlp/commit/48416bc4a8f1d5ff07d5977659cb8ece7640dcd8
-        # var Bpa = [iha];
-        # ...
-        # a.C && (b = a.get("n")) && (b = Bpa[0](b), a.set("n", b),
-        # Bpa.length || iha("")) }};
-        # In the above case, `iha` is the relevant function name
-        r'a\.[A-Z]\s*&&\s*\(b\s*=\s*a\.get\("n"\)\)\s*&&\s*\(b\s*=\s*([a-zA-Z0-9$]{3})(\[\d+\])?\(b\)',
-    ]
-    # print('Finding throttling function name')
-    for pattern in function_patterns:
-        regex = re.compile(pattern)
-        function_match = regex.search(js)
-        if function_match:
-            print("finished regex search, matched: %s", pattern)
-            if len(function_match.groups()) == 1:
-                return function_match.group(1)
-            idx = function_match.group(2)
-            if idx:
-                idx = idx.strip("[]")
-                array = re.search(
-                    r'var {nfunc}\s*=\s*(\[.+?\]);'.format(
-                        nfunc=function_match.group(1)), 
-                    js
-                )
-                if array:
-                    array = array.group(1).strip("[]").split(",")
-                    array = [x.strip() for x in array]
-                    return array[int(idx)]
-
-    raise pytube.RegexMatchError(
-        caller="get_throttling_function_name", pattern="multiple"
-    )
-pytube.cipher.get_throttling_function_name = get_throttling_function_name
-
-# Another temporary backport to fix https://github.com/pytube/pytube/issues/1163
-def throttling_array_split(js_array):
-    results = []
-    curr_substring = js_array[1:]
-
-    comma_regex = re.compile(r",")
-    func_regex = re.compile(r"function\([^)]*\)")
-
-    while len(curr_substring) > 0:
-        if curr_substring.startswith('function') and func_regex.search(curr_substring) is not None:
-            # Handle functions separately. These can contain commas
-            match = func_regex.search(curr_substring)
-
-            match_start, match_end = match.span()
-
-            function_text = pytube.parser.find_object_from_startpoint(curr_substring, match.span()[1])
-            full_function_def = curr_substring[:match_end + len(function_text)]
-            results.append(full_function_def)
-            curr_substring = curr_substring[len(full_function_def) + 1:]
-        else:
-            match = comma_regex.search(curr_substring)
-
-            # Try-catch to capture end of array
-            try:
-                match_start, match_end = match.span()
-            except AttributeError:
-                match_start = len(curr_substring) - 1
-                match_end = match_start + 1
-
-
-            curr_el = curr_substring[:match_start]
-            results.append(curr_el)
-            curr_substring = curr_substring[match_end:]
-
-    return results
-pytube.cipher.throttling_array_split = throttling_array_split
-
-
-# Another temporary hotfix https://github.com/pytube/pytube/issues/1199
-def patched__init__(self, js: str):
-    self.transform_plan: List[str] = pytube.cipher.get_transform_plan(js)
-    var_regex = re.compile(r"^\$*\w+\W")
-    var_match = var_regex.search(self.transform_plan[0])
-    if not var_match:
-        raise RegexMatchError(
-            caller="__init__", pattern=var_regex.pattern
-        )
-    var = var_match.group(0)[:-1]
-    self.transform_map = pytube.cipher.get_transform_map(js, var)
-    self.js_func_patterns = [
-        r"\w+\.(\w+)\(\w,(\d+)\)",
-        r"\w+\[(\"\w+\")\]\(\w,(\d+)\)"
-    ]
-
-    self.throttling_plan = pytube.cipher.get_throttling_plan(js)
-    self.throttling_array = pytube.cipher.get_throttling_function_array(js)
-
-    self.calculated_n = None
-
-pytube.cipher.Cipher.__init__ = patched__init__
-
-
-class BaseURL(str):
-    """Wrapper class to handle incrementing segment number in various URL formats."""
-    def __new__(cls, content):
-        return str.__new__(cls,
-            content[:-1] if content.endswith("/") else content)
-
-    def add_seg(self, seg_num: int):
-        raise NotImplementedError()
-
-
-class ParamURL(BaseURL):
-    """Old-school url with parameters."""
-    def add_seg(self, seg_num: int) -> str:
-        return self + f"&sq={seg_num}"
-
-
-class PathURL(BaseURL):
-    """URL made with lots of "/" for them fancy new APIs."""
-    def add_seg(self, seg_num: int) -> str:
-        return self + f"/sq/{seg_num}"
-
-
+# FIXME This entire class is obsolete.
 class YoutubeLiveStream():
     def __init__(
         self,
         url: str,
         output_dir: Path,
-        session: YoutubeUrllibSession,
+        session: SSession,
         notifier: NotificationDispatcher,
         video_id: Optional[str] = None,
         max_video_quality: Optional[str] = None,
@@ -419,7 +279,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
         if self._json:
             return self._json
         try:
-            # json_string = extract.initial_player_response(self.watch_html)
+            # json_string = extract.initial_player_response(self.ptyt.watch_html)
             # API request with ANDROID client gives us a pre-signed URL
             json_string = self.session.make_api_request(self.video_id)
             self._json = extract.str_as_json(json_string)
@@ -437,27 +297,26 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
         if not self._json:
             self.logger.critical(
-                f"WARNING: invalid JSON for {self.watch_url}: {self._json}"
-            )
+                f"WARNING: invalid JSON for {self.watch_url}: {self._json}")
             self.status &= ~Status.AVAILABLE
 
         return self._json
 
-    @property
-    def publish_date(self):
-        """Get the publish date.
+    # @property
+    # def publish_date(self):
+    #     """Get the publish date.
 
-        :rtype: datetime
-        """
-        if self._publish_date:
-            return self._publish_date
-        self._publish_date = extract.publish_date(self.watch_html)
-        return self._publish_date
+    #     :rtype: datetime
+    #     """
+    #     if self._publish_date:
+    #         return self._publish_date
+    #     self._publish_date = extract.publish_date(self.watch_html)
+    #     return self._publish_date
 
-    @publish_date.setter
-    def publish_date(self, value):
-        """Sets the publish date."""
-        self._publish_date = value
+    # @publish_date.setter
+    # def publish_date(self, value):
+    #     """Sets the publish date."""
+    #     self._publish_date = value
 
     def get_content_from_mpd(self):
         content = None
@@ -550,41 +409,41 @@ We assume a failed download attempt. Last segment available was {seg}.")
                 raise Exception("Failed to load stream descriptors!")
         return query
 
-    @property
-    def age_restricted(self):
-        if self._age_restricted:
-            return self._age_restricted
-        self._age_restricted = pytube.extract.is_age_restricted(self.watch_html)
-        return self._age_restricted
+    # @property
+    # def age_restricted(self):
+    #     if self._age_restricted:
+    #         return self._age_restricted
+    #     self._age_restricted = pytube.extract.is_age_restricted(self.watch_html)
+    #     return self._age_restricted
 
-    @property
-    def js_url(self):
-        if self._js_url:
-            return self._js_url
+    # @property
+    # def js_url(self):
+    #     if self._js_url:
+    #         return self._js_url
 
-        if self.age_restricted:
-            self._js_url = pytube.extract.js_url(self.embed_html)
-        else:
-            self._js_url = pytube.extract.js_url(self.watch_html)
+    #     if self.age_restricted:
+    #         self._js_url = pytube.extract.js_url(self.embed_html)
+    #     else:
+    #         self._js_url = pytube.extract.js_url(self.watch_html)
 
-        return self._js_url
+    #     return self._js_url
 
-    @property
-    def js(self):
-        """Override for livestream_saver. We have to make the request ourselves
-        in order to pass the cookies."""
-        if not self.session:
-            return super().js
-        if self._js:
-            return self._js
-        if pytube.__js_url__ != self.js_url:
-            self._js = self.session.make_request(url=self.js_url)
-            pytube.__js__ = self._js
-            pytube.__js_url__ = self.js_url
-        else:
-            self._js = pytube.__js__
+    # @property
+    # def js(self):
+    #     """Override for livestream_saver. We have to make the request ourselves
+    #     in order to pass the cookies."""
+    #     if not self.session:
+    #         return super().js
+    #     if self._js:
+    #         return self._js
+    #     if pytube.__js_url__ != self.js_url:
+    #         self._js = self.session.make_request(url=self.js_url)
+    #         pytube.__js__ = self._js
+    #         pytube.__js_url__ = self.js_url
+    #     else:
+    #         self._js = pytube.__js__
 
-        return self._js
+    #     return self._js
 
 
     # @property
@@ -683,11 +542,12 @@ class YoutubeLiveBroadcast():
         self.video_id = video_id if video_id is not None \
                                  else extract.get_video_id(url)
         self._json: Dict = {}
-        self.ptyt = PytubeYoutube(url, session=session, parent=self)
+        # self.ptyt = PytubeYoutube(url, session=session, parent=self)
+        self.yt = PytubeYoutubeVideo(url, session=session)
         self.download_start_triggered = False
         self.hooks = hooks
         self.skip_download = skip_download
-        self.selected_streams: set[pytube.Stream] = set()
+        self.selected_streams: set[BaseStream] = set()
         self.video_stream = None
         self.video_itag = None
         self.audio_stream = None
@@ -718,259 +578,245 @@ class YoutubeLiveBroadcast():
         self.block_regex: Optional[re.Pattern] = regex_filters.get("block_regex")
 
     @property
-    def streams(self) -> StreamQuery:
-        return self.ptyt.streams
-
-    def print_available_streams(self, logger: logging.Logger = None) -> None:
-        if logger is None:
-            logger = self.logger
-        if len(self.streams) == 0:
-            raise Exception("No stream available.")
-        for s in self.streams:
-            logger.info(
-                "Available {}".format(s.__repr__().replace(' ', '\t'))
-            )
-
-    def filter_streams(
-        self,
-        vcodec: str = "mp4",
-        acodec: str = "mp4",
-        itags: Optional[str] = None,
-        maxq: Optional[str] = None
-    ) -> None:
-        """Sets the selected_streams property to a Set of streams selected from
-        user supplied parameters (itags, or max quality threshold)."""
-        self.logger.debug(f"Filtering streams: itag {itags}, maxq {maxq}")
-
-        submitted_itags = util.split_by_plus(itags)
-
-        selected_streams: Set[Stream] = set()
-        # If an itag is supposed to provide a video track, we assume
-        # the user wants a video track. Same goes for audio.
-        wants_video = wants_audio = True
-        invalid_itags = None
-
-        if submitted_itags is not None:
-            wants_video, wants_audio, invalid_itags = \
-                util.check_available_tracks_from_itags(submitted_itags)
-            if invalid_itags:
-                # However, if we discarded an itag, we cannot be sure of what
-                # the user really wanted. We assume they wanted both.
-                self.logger.warning(f"Invalid itags {invalid_itags} supplied.")
-                wants_video = wants_audio = True
-
-            submitted_itags = tuple(
-                itag for itag in submitted_itags if itag not in invalid_itags
-            )
-
-        found_by_itags = set()
-        itags_not_found = set()
-        if submitted_itags:
-            for itag in submitted_itags:
-                # if available_stream := util.stream_by_itag(itag, self.streams):
-                if available_stream := self.streams.get_by_itag(itag):
-                    found_by_itags.add(available_stream)
-                else:
-                    itags_not_found.add(itag)
-                    self.logger.warning(
-                        f"itag {itag} could not be found among available streams.")
-
-            # This is exactly what the user wanted
-            # FIXME fail if we have specified 2 progressive streams?
-            if found_by_itags and len(found_by_itags) == len(submitted_itags) \
-            and not invalid_itags:
-                self.selected_streams = found_by_itags
-                return
-            elif found_by_itags:
-                selected_streams = found_by_itags
-
-            if len(found_by_itags) == 0:
-                self.logger.warning(
-                    "Could not find any of the specified itags "
-                    f"\"{submitted_itags}\" among the available streams."
-                )
-
-        missing_audio = True
-        missing_video = True
-
-        for stream in selected_streams:
-            self.selected_streams.add(stream)
-            # At least one stream should be enough since it has both video/audio
-            if stream.is_progressive:
-                self.selected_streams = selected_streams
-                return
-            if stream.includes_audio_track:
-                missing_audio = False
-            if stream.includes_video_track:
-                missing_video = False
-
-        if missing_video and wants_video:
-            video_stream = self._filter_streams(
-                tracktype="video", codec=vcodec, maxq=maxq
-            )
-            self.selected_streams.add(video_stream)
-
-        if missing_audio and wants_audio:
-            for stream in self.selected_streams:
-                if stream.is_progressive:
-                    # We already have an audio track
-                    return
-
-            # No quality limit for now on audio
-            audio_stream = self._filter_streams(
-                tracktype="audio", codec=acodec, maxq=None
-            )
-            self.selected_streams.add(audio_stream)
-
-        if not self.selected_streams:
-            raise Exception(f"No stream assigned to {self.video_id} object!")
-        else:
-            # We emulate an initializator because no idea how to subclass
-            # pytube.Stream other than with a monkeypatch
-            # TODO: see https://stackoverflow.com/questions/100003/what-are-metaclasses-in-python?rq=1
-            for stream in self.selected_streams:
-                stream.parent = self
-                stream.logger = self.logger
-                stream.missing_segs = []
-                stream.start_seg = 0
-                stream.current_seg = 0
-                # stream.async_download = async_download
-                stream.async_download = MethodType(async_download, stream)
-                stream.fname_suffix = stream.type[1:] if stream.is_adaptive else "a+v"
-                stream.dir_suffix = "f" + str(stream.itag)
-
-    def _filter_streams(
-        self,
-        tracktype: str,
-        codec: str,
-        maxq: Optional[str] = None) -> Stream:
-        """
-        tracktype == video or audio
-        codec == mp4, mov, webm...
-        Coalesce filters depending on user-specified criteria.
-        """
-        if tracktype == "video":
-            custom_filters = self.generate_custom_filter(maxq)
-            criteria = "resolution"
-        else:
-            custom_filters = None
-            criteria = "abr"
-
-        q = LifoQueue(maxsize=5)
-        self.logger.debug(f"Filtering {tracktype} streams by type: \"{codec}\"")
-        streams = self.streams.filter(
-            subtype=codec, type=tracktype
-        )
-
-        if len(streams) == 0:
-            self.logger.debug(
-                f"No {tracktype} streams for type: \"{codec}\". "
-                "Falling back to filtering without any criterium."
-            )
-            streams = self.streams.filter(type=tracktype)
-
-        self.logger.debug(f"Pushing onto stack: {streams}")
-        q.put(streams)
-
-        # This one will usually be empty for livestreams anyway
-        # NOTE the if statement is not really necessary, we could push
-        # an empty query, it would not matter much in the end
-        if progressive_streams := streams.filter(progressive=True):
-            self.logger.debug(
-                f"Pushing progressive {tracktype} streams to stack: {progressive_streams}"
-            )
-            q.put(progressive_streams)
-
-        # Prefer adaptive to progressive, so we do this last in order to
-        # put on top of the stack and test it first
-        if adaptive_streams := streams.filter(adaptive=True):
-            self.logger.debug(
-                f"Pushing adaptive {tracktype} streams to stack: {adaptive_streams}"
-            )
-            q.put(adaptive_streams)
-
-        selected_stream = None
-        while not selected_stream:
-            query = q.get()
-            # Filter anything above our maximum desired resolution
-            query = query.filter(custom_filter_functions=custom_filters) \
-                .order_by(criteria).desc()
-            selected_stream = query.first()
-            if q.empty():
-                break
-
-        if not selected_stream:
-            self.logger.critical(
-                f"Could not get a specified {tracktype} stream! "
-            )
-            selected_stream = self.streams.filter(type=tracktype) \
-                .order_by(criteria).desc().first()
-            self.logger.critical(
-                f"Falling back to best quality available: {selected_stream}"
-            )
-        else:
-            self.logger.info(f"Selected {tracktype} stream: {selected_stream}")
-
-        return selected_stream
-
-    def generate_custom_filter(self, maxq: Optional[str]) -> Optional[List]:
-        """Generate a list of (currently one) callback functions to use in
-        pytube.StreamQuery to filter streams up to a specified maximum
-        resolution, or average bitrate (although we don't use audio bitrate)."""
-        if maxq is None:
-            return None
-
-        def as_int_re(res_or_abr: str) -> Optional[int]:
-            if res_or_abr is None:
-                return None
-            as_int = None
-            # looks for "1080p" or "48kbps", either a resolution or abr
-            if match := re.search(r"(\d{3,4})(p)?|(\d{2,4})(kpbs)?", res_or_abr):
-                as_int = int(match.group(1))
-            return as_int
-
-        i_maxq = None
-        if maxq is not None:
-            i_maxq = as_int_re(maxq)
-            # if match := re.search(r"(\d{3,4})(p)?|(\d{2,4}(kpbs)?", maxq):
-            #     maxq = int(match.group(1))
-            if i_maxq is None:
-                self.logger.warning(
-                    f"Max resolution setting \"{maxq}\" is incorrect. "
-                    "Defaulting to best video quality available."
-                )
-        elif isinstance(maxq, int):
-            i_maxq = maxq
-
-        custom_filters = None
-        if i_maxq is not None:  # int
-            def resolution_filter(s: Stream) -> bool:
-                res_int = as_int_re(s.resolution)
-                if res_int is None:
-                    return False
-                return res_int <= i_maxq
-
-            def abitrate_filter(s: Stream) -> bool:
-                res_int = as_int_re(s.abr)
-                if res_int is None:
-                    return False
-                return res_int <= i_maxq
-
-            # FIXME currently we don't use audio track filtering and we take
-            # the highest abr available.
-            if "kpbs" in maxq:
-                custom_filters = [abitrate_filter]
-            else:
-                custom_filters = [resolution_filter]
-        return custom_filters
+    def streams(self) -> List[BaseStream]:
+        return self.yt.streams
 
     @property
     def title(self):
-        return self.ptyt.title
+        return self.yt.title
 
-    @property
-    def decription(self):
-        return self.player_response.get("videoDetails", {}).get("shortDescription")
+    # def filter_streams(
+    #     self,
+    #     vcodec: str = "mp4",
+    #     acodec: str = "mp4",
+    #     itags: Optional[str] = None,
+    #     maxq: Optional[str] = None
+    # ) -> None:
+    #     """Sets the selected_streams property to a Set of streams selected from
+    #     user supplied parameters (itags, or max quality threshold)."""
+    #     self.logger.debug(f"Filtering streams: itag {itags}, maxq {maxq}")
+
+    #     submitted_itags = util.split_by_plus(itags)
+
+    #     selected_streams: Set[BaseStream] = set()
+    #     # If an itag is supposed to provide a video track, we assume
+    #     # the user wants a video track. Same goes for audio.
+    #     wants_video = wants_audio = True
+    #     invalid_itags = None
+
+    #     if submitted_itags is not None:
+    #         wants_video, wants_audio, invalid_itags = \
+    #             util.check_available_tracks_from_itags(submitted_itags)
+    #         if invalid_itags:
+    #             # However, if we discarded an itag, we cannot be sure of what
+    #             # the user really wanted. We assume they wanted both.
+    #             self.logger.warning(f"Invalid itags {invalid_itags} supplied.")
+    #             wants_video = wants_audio = True
+
+    #         submitted_itags = tuple(
+    #             itag for itag in submitted_itags if itag not in invalid_itags
+    #         )
+
+    #     found_by_itags = set()
+    #     itags_not_found = set()
+    #     if submitted_itags:
+    #         for itag in submitted_itags:
+    #             # if available_stream := util.stream_by_itag(itag, self.streams):
+    #             if available_stream := self.streams.get_by_itag(itag):
+    #                 found_by_itags.add(available_stream)
+    #             else:
+    #                 itags_not_found.add(itag)
+    #                 self.logger.warning(
+    #                     f"itag {itag} could not be found among available streams.")
+
+    #         # This is exactly what the user wanted
+    #         # FIXME fail if we have specified 2 progressive streams?
+    #         if found_by_itags and len(found_by_itags) == len(submitted_itags) \
+    #         and not invalid_itags:
+    #             self.selected_streams = found_by_itags
+    #             return
+    #         elif found_by_itags:
+    #             selected_streams = found_by_itags
+
+    #         if len(found_by_itags) == 0:
+    #             self.logger.warning(
+    #                 "Could not find any of the specified itags "
+    #                 f"\"{submitted_itags}\" among the available streams."
+    #             )
+
+    #     missing_audio = True
+    #     missing_video = True
+
+    #     for stream in selected_streams:
+    #         self.selected_streams.add(stream)
+    #         # At least one stream should be enough since it has both video/audio
+    #         if stream.is_progressive:
+    #             self.selected_streams = selected_streams
+    #             return
+    #         if stream.includes_audio_track:
+    #             missing_audio = False
+    #         if stream.includes_video_track:
+    #             missing_video = False
+
+    #     if missing_video and wants_video:
+    #         video_stream = self._filter_streams(
+    #             tracktype="video", codec=vcodec, maxq=maxq
+    #         )
+    #         self.selected_streams.add(video_stream)
+
+    #     if missing_audio and wants_audio:
+    #         for stream in self.selected_streams:
+    #             if stream.is_progressive:
+    #                 # We already have an audio track
+    #                 return
+
+    #         # No quality limit for now on audio
+    #         audio_stream = self._filter_streams(
+    #             tracktype="audio", codec=acodec, maxq=None
+    #         )
+    #         self.selected_streams.add(audio_stream)
+
+    #     if not self.selected_streams:
+    #         raise Exception(f"No stream assigned to {self.video_id} object!")
+    #     else:
+    #         # We emulate an initializator because no idea how to subclass
+    #         # pytube.Stream other than with a monkeypatch
+    #         # TODO: see https://stackoverflow.com/questions/100003/what-are-metaclasses-in-python?rq=1
+    #         for stream in self.selected_streams:
+    #             stream.parent = self
+    #             stream.logger = self.logger
+    #             stream.missing_segs = []
+    #             stream.start_seg = 0
+    #             stream.current_seg = 0
+    #             # stream.async_download = async_download
+    #             stream.async_download = MethodType(async_download, stream)
+    #             stream.fname_suffix = stream.type[1:] if stream.is_adaptive else "a+v"
+    #             stream.dir_suffix = "f" + str(stream.itag)
+
+    # def _filter_streams(
+    #     self,
+    #     tracktype: str,
+    #     codec: str,
+    #     maxq: Optional[str] = None) -> pytube.Stream:
+    #     """
+    #     tracktype == video or audio
+    #     codec == mp4, mov, webm...
+    #     Coalesce filters depending on user-specified criteria.
+    #     """
+    #     if tracktype == "video":
+    #         custom_filters = self.generate_custom_filter(maxq)
+    #         criteria = "resolution"
+    #     else:
+    #         custom_filters = None
+    #         criteria = "abr"
+
+    #     q = LifoQueue(maxsize=5)
+    #     self.logger.debug(f"Filtering {tracktype} streams by type: \"{codec}\"")
+    #     streams = self.streams.filter(
+    #         subtype=codec, type=tracktype
+    #     )
+
+    #     if len(streams) == 0:
+    #         self.logger.debug(
+    #             f"No {tracktype} streams for type: \"{codec}\". "
+    #             "Falling back to filtering without any criterium."
+    #         )
+    #         streams = self.streams.filter(type=tracktype)
+
+    #     self.logger.debug(f"Pushing onto stack: {streams}")
+    #     q.put(streams)
+
+    #     # This one will usually be empty for livestreams anyway
+    #     # NOTE the if statement is not really necessary, we could push
+    #     # an empty query, it would not matter much in the end
+    #     if progressive_streams := streams.filter(progressive=True):
+    #         self.logger.debug(
+    #             f"Pushing progressive {tracktype} streams to stack: {progressive_streams}"
+    #         )
+    #         q.put(progressive_streams)
+
+    #     # Prefer adaptive to progressive, so we do this last in order to
+    #     # put on top of the stack and test it first
+    #     if adaptive_streams := streams.filter(adaptive=True):
+    #         self.logger.debug(
+    #             f"Pushing adaptive {tracktype} streams to stack: {adaptive_streams}"
+    #         )
+    #         q.put(adaptive_streams)
+
+    #     selected_stream = None
+    #     while not selected_stream:
+    #         query = q.get()
+    #         # Filter anything above our maximum desired resolution
+    #         query = query.filter(custom_filter_functions=custom_filters) \
+    #             .order_by(criteria).desc()
+    #         selected_stream = query.first()
+    #         if q.empty():
+    #             break
+
+    #     if not selected_stream:
+    #         self.logger.critical(
+    #             f"Could not get a specified {tracktype} stream! "
+    #         )
+    #         selected_stream = self.streams.filter(type=tracktype) \
+    #             .order_by(criteria).desc().first()
+    #         self.logger.critical(
+    #             f"Falling back to best quality available: {selected_stream}"
+    #         )
+    #     else:
+    #         self.logger.info(f"Selected {tracktype} stream: {selected_stream}")
+
+    #     return selected_stream
+
+    # def generate_custom_filter(self, maxq: Optional[str]) -> Optional[List]:
+    #     """Generate a list of (currently one) callback functions to use in
+    #     pytube.StreamQuery to filter streams up to a specified maximum
+    #     resolution, or average bitrate (although we don't use audio bitrate)."""
+    #     if maxq is None:
+    #         return None
+
+    #     def as_int_re(res_or_abr: str) -> Optional[int]:
+    #         if res_or_abr is None:
+    #             return None
+    #         as_int = None
+    #         # looks for "1080p" or "48kbps", either a resolution or abr
+    #         if match := re.search(r"(\d{3,4})(p)?|(\d{2,4})(kpbs)?", res_or_abr):
+    #             as_int = int(match.group(1))
+    #         return as_int
+
+    #     i_maxq = None
+    #     if maxq is not None:
+    #         i_maxq = as_int_re(maxq)
+    #         # if match := re.search(r"(\d{3,4})(p)?|(\d{2,4}(kpbs)?", maxq):
+    #         #     maxq = int(match.group(1))
+    #         if i_maxq is None:
+    #             self.logger.warning(
+    #                 f"Max resolution setting \"{maxq}\" is incorrect. "
+    #                 "Defaulting to best video quality available."
+    #             )
+    #     elif isinstance(maxq, int):
+    #         i_maxq = maxq
+
+    #     custom_filters = None
+    #     if i_maxq is not None:  # int
+    #         def resolution_filter(s: pytube.Stream) -> bool:
+    #             res_int = as_int_re(s.resolution)
+    #             if res_int is None:
+    #                 return False
+    #             return res_int <= i_maxq
+
+    #         def abitrate_filter(s: pytube.Stream) -> bool:
+    #             res_int = as_int_re(s.abr)
+    #             if res_int is None:
+    #                 return False
+    #             return res_int <= i_maxq
+
+    #         # FIXME currently we don't use audio track filtering and we take
+    #         # the highest abr available.
+    #         if "kpbs" in maxq:
+    #             custom_filters = [abitrate_filter]
+    #         else:
+    #             custom_filters = [resolution_filter]
+    #     return custom_filters
 
     # # NOT USED
     # def populate_info(self):
@@ -995,102 +841,73 @@ class YoutubeLiveBroadcast():
     #         self.logger.debug(f"Video author: {self.author}")
 
 
-    @property
-    def thumbnail_url(self) -> str:
-        """Get the best thumbnail url image.
+    # @property
+    # def thumbnail_url(self) -> str:
+    #     """Get the best thumbnail url image.
 
-        :rtype: str
-        """
-        # The last item seems to have the maximum size
-        best_thumbnail = (
-            self.ptyt.player_response.get("videoDetails", {})
-            .get("thumbnail", {})
-            .get("thumbnails", [{}])[-1]\
-            .get('url')
-        )
-        if best_thumbnail:
-            return best_thumbnail
-        return f"https://img.youtube.com/vi/{self.video_id}/maxresdefault.jpg"
+    #     :rtype: str
+    #     """
+    #     # The last item seems to have the maximum size
+    #     best_thumbnail = (
+    #         self.ptyt.player_response.get("videoDetails", {})
+    #         .get("thumbnail", {})
+    #         .get("thumbnails", [{}])[-1]\
+    #         .get('url')
+    #     )
+    #     if best_thumbnail:
+    #         return best_thumbnail
+    #     return f"https://img.youtube.com/vi/{self.video_id}/maxresdefault.jpg"
 
-    @property
-    def start_time(self):
-        if self._start_time:
-            return self._start_time
-        try:
-            # String reprensentation in UTC format
-            self._start_time = self.ptyt.player_response \
-                .get("microformat", {}) \
-                .get("playerMicroformatRenderer", {}) \
-                .get("liveBroadcastDetails", {}) \
-                .get("startTimestamp", None)
-        except Exception as e:
-            self.logger.debug(f"Error getting start_time: {e}")
-        return self._start_time
+    # @property
+    # def start_time(self):
+    #     if self._start_time:
+    #         return self._start_time
+    #     try:
+    #         # String reprensentation in UTC format
+    #         self._start_time = self.yt.player_response \
+    #             .get("microformat", {}) \
+    #             .get("playerMicroformatRenderer", {}) \
+    #             .get("liveBroadcastDetails", {}) \
+    #             .get("startTimestamp", None)
+    #     except Exception as e:
+    #         self.logger.debug(f"Error getting start_time: {e}")
+    #     return self._start_time
 
-    def author(self) -> str:
-        """Get the video author.
-        :rtype: str
-        """
-        if self._author:
-            return self._author
-        self._author = self.player_response.get(
-            "videoDetails", {}).get("author", "Author?")
-        return self._author
+    # @property
+    # def author(self) -> str:
+    #     """Get the video author.
+    #     :rtype: str
+    #     """
+    #     if self._author:
+    #         return self._author
+    #     self._author = self.player_response.get(
+    #         "videoDetails", {}).get("author", "Author?")
+    #     return self._author
 
-    @author.setter
-    def author(self, value):
-        """Set the video author."""
-        self._author = value
+    # @author.setter
+    # def author(self, value):
+    #     """Set the video author."""
+    #     self._author = value
 
-    def download_thumbnail(self):
-        # TODO write more thumbnail files in case the first one somehow
-        #  got updated.
-        thumbnail_path = self.output_dir / 'thumbnail'
-        if self.thumbnail_url and not path.exists(thumbnail_path):
-            try:
-                with closing(urlopen(self.thumbnail_url)) as in_stream:
-                    self.write_to_file(in_stream, thumbnail_path)
-            except Exception as e:
-                self.logger.warning(f"Error writing thumbnails: {e}")
+    # @property
+    # def video_streams(self):
+    #     return (s for s in self.streams if s.includes_video_track())
 
-    def update_metadata(self):
-        if self.video_itag:
-            if info := pytube.itags.ITAGS.get(self.video_itag):
-                self.video_resolution = info[0]
-        if self.audio_itag:
-            if info := pytube.itags.ITAGS.get(self.audio_itag):
-                self.audio_bitrate = info[0]
-
-        self.download_thumbnail()
-
-        # TODO get the description once the stream has started
-
-        metadata_file = self.output_dir / 'metadata.json'
-        if path.exists(metadata_file):
-            # FIXME this avoids writing this file more than once for now.
-            # No further updates.
-            return
-        with open(metadata_file, 'w', encoding='utf8') as fp:
-            dump(obj=self.video_info, fp=fp, indent=4, ensure_ascii=False)
-
-    @property
-    def video_streams(self):
-        return (s for s in self.streams if s.includes_video_track())
-
-    @property
-    def audio_streams(self):
-        return (s for s in self.streams if s.includes_audio_track())
+    # @property
+    # def audio_streams(self):
+    #     return (s for s in self.streams if s.includes_audio_track())
 
     # was is_live()
     def live_status(self, force_update=False) -> None:
         if force_update:
-            self.ptyt._watch_html = None
-            self._json = {}
+            # self.yt._watch_html = None
+            self.yt.clear_attr("_watch_html")
+            self.yt._json = {}
 
-        if not self.json:
+        if not self.yt.json:
             return
 
-        isLive = self.json.get('videoDetails', {}).get('isLive')
+        isLive = self.yt.json.get('videoDetails', {}).get('isLive')
         if isLive is not None and isLive is True:
             self._status |= Status.LIVE
         else:
@@ -1098,7 +915,7 @@ class YoutubeLiveBroadcast():
 
         # Is this actually being streamed live?
         val = None
-        for _dict in self.ptyt.json.get('responseContext', {}) \
+        for _dict in self.yt.json.get('responseContext', {}) \
         .get('serviceTrackingParams', []):
             param = _dict.get('params', [])
             for key in param:
@@ -1117,30 +934,31 @@ class YoutubeLiveBroadcast():
         """Check if the stream is still reported as being 'live' and update
         the status property accordingly."""
         if update:
-            self.ptyt._watch_html = None
-            self._json = {}
+            # self.yt._watch_html = None
+            self.yt.clear_attr("_watch_html")
+            self.yt._json = {}
 
-        if not self.json:
+        if not self.yt.json:
             raise Exception("Missing json data during status check")
 
         status = self._status
 
-        self.is_live()
+        self.live_status()
         if not self.skip_download:
             self.logger.info("Stream seems to be viewed live. Good.") \
-        if self.status & Status.VIEWED_LIVE else \
+        if self._status & Status.VIEWED_LIVE else \
         self.logger.warning(
             "Stream is not being viewed live. This might not work!"
         )
 
         # Check if video is indeed available through its reported status.
-        playabilityStatus = self.json.get('playabilityStatus', {})
+        playabilityStatus = self.yt.json.get('playabilityStatus', {})
         status = playabilityStatus.get('status')
 
         if status == 'LIVE_STREAM_OFFLINE':
             self._status |= Status.OFFLINE
 
-            scheduled_time = self.scheduled_timestamp
+            scheduled_time = self.yt.scheduled_timestamp
             if scheduled_time is not None:
                 self._status |= Status.WAITING
 
@@ -1202,87 +1020,44 @@ class YoutubeLiveBroadcast():
 
         return self._status
 
-    @property
-    def json(self) -> dict:
-        """Return the extracted json from html and update some states in the
-        process."""
-        if self._json:
-            return self._json
-        try:
-            json_string = extract.initial_player_response(self.ptyt.watch_html)
-            self._json = extract.str_as_json(json_string)
-            self.session.is_logged_out(self._json)
 
-            remove_useless_keys(self._json)
-            if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug(
-                    "Extracted JSON from html:\n"
-                    + dumps(self._json, indent=4, ensure_ascii=False)
-                )
-        except Exception as e:
-            self.logger.debug(f"Error extracting JSON from HTML: {e}")
-            self._json = {}
-
-        if not self._json:
-            self.logger.critical(
-                f"WARNING: invalid JSON for {self.ptyt.watch_url}: {self._json}"
-            )
-            self._status &= ~Status.AVAILABLE
-
-        return self._json
-
-    @property
-    def start_time(self) -> Optional[str]:
-        if self._start_time:
-            return self._start_time
-        try:
-            # String reprensentation in UTC format
-            self._start_time = self.json \
-                .get("microformat", {}) \
-                .get("playerMicroformatRenderer", {}) \
-                .get("liveBroadcastDetails", {}) \
-                .get("startTimestamp", None)
-            self.logger.info(f"Found start time: {self._start_time}")
-        except Exception as e:
-            self.logger.debug(f"Error getting start_time: {e}")
-        return self._start_time
-
-    @property
-    def scheduled_timestamp(self) -> Optional[int]:
-        if self._scheduled_timestamp:
-            return self._scheduled_timestamp
-        try:
-            timestamp = self.json.get("playabilityStatus", {}) \
-                .get('liveStreamability', {})\
-                .get('liveStreamabilityRenderer', {}) \
-                .get('offlineSlate', {}) \
-                .get('liveStreamOfflineSlateRenderer', {}) \
-                .get('scheduledStartTime', None) # unix timestamp
-            if timestamp is not None:
-                self._scheduled_timestamp = int(timestamp)
-            else:
-                self._scheduled_timestamp = None
-            self.logger.info(f"Found scheduledStartTime: {self._scheduled_timestamp}")
-        except Exception as e:
-            self.logger.debug(f"Error getting scheduled_timestamp: {e}")
-        return self._scheduled_timestamp
+    # @property
+    # def scheduled_timestamp(self) -> Optional[int]:
+    #     if self._scheduled_timestamp:
+    #         return self._scheduled_timestamp
+    #     try:
+    #         timestamp = self.yt.json.get("playabilityStatus", {}) \
+    #             .get('liveStreamability', {})\
+    #             .get('liveStreamabilityRenderer', {}) \
+    #             .get('offlineSlate', {}) \
+    #             .get('liveStreamOfflineSlateRenderer', {}) \
+    #             .get('scheduledStartTime', None) # unix timestamp
+    #         if timestamp is not None:
+    #             self._scheduled_timestamp = int(timestamp)
+    #         else:
+    #             self._scheduled_timestamp = None
+    #         self.logger.info(f"Found scheduledStartTime: {self._scheduled_timestamp}")
+    #     except Exception as e:
+    #         self.logger.debug(f"Error getting scheduled_timestamp: {e}")
+    #     return self._scheduled_timestamp
 
     def download_thumbnail(self) -> None:
         # TODO write more thumbnail files in case the first one somehow
         # got updated, by renaming, then placing in place.
         thumbnail_path = self.output_dir / ('thumbnail_' + self.video_id)
-        if self.ptyt.thumbnail_url and not path.exists(thumbnail_path):
-            with closing(urllib.request.urlopen(self.ptyt.thumbnail_url)) as in_stream:
+        if self.yt.thumbnail_url and not path.exists(thumbnail_path):
+            with closing(urllib.request.urlopen(self.yt.thumbnail_url)) as in_stream:
                 write_to_file(self.logger, in_stream, thumbnail_path)
 
     def update_metadata(self) -> None:
         """Fetch various metadata and write them to disk."""
-        if self.video_stream:
-            if info := itags.ITAGS.get(self.video_stream):
-                self.video_resolution = info[0]
-        if self.audio_stream:
-            if info := itags.ITAGS.get(self.audio_stream):
-                self.audio_bitrate = info[0]
+        # Seems obsolete
+        # if self.video_stream:
+        #     if info := itags.ITAGS.get(self.video_stream):
+        #         self.video_resolution = info[0]
+        # if self.audio_stream:
+        #     if info := itags.ITAGS.get(self.audio_stream):
+        #         self.audio_bitrate = info[0]
 
         self.download_thumbnail()
 
@@ -1299,29 +1074,31 @@ class YoutubeLiveBroadcast():
     @property
     def video_info(self):
         """Return current metadata for writing to disk as JSON."""
+        # BUG if this is called once the stream is private, some fields
+        # will be overwritten with blank strings.
         info = {
-            "id": self.video_id,
-            "title": self.ptyt.title,
-            "author": self.ptyt.author,
-            "publish_date": str(self.ptyt.publish_date),
-            "start_time": self.start_time,
+            "id": self.yt.video_id,
+            "title": self.yt.title,
+            "author": self.yt.author,
+            "publish_date": str(self.yt.publish_date),
+            "start_time": self.yt.start_time,
             "download_date": date.fromtimestamp(time()).__str__(),
             "video_streams": [],
             "audio_streams": [],
-            "description": self.ptyt.description,
+            "description": self.yt.description,
             "download_time": datetime.now().strftime("%d%m%Y_%H-%M-%S"),
         }
-        if self.scheduled_timestamp is not None:
+        if self.yt.scheduled_timestamp is not None:
             info["scheduled_time"] = datetime.utcfromtimestamp(
-                self.scheduled_timestamp
-            ).__str__()
+                self.yt.scheduled_timestamp).__str__()
 
-        for stream in self.video_streams:
+        # FIXME not sure if we want all available streams or just the ones selected
+        for stream in self.yt.video_streams:
             s_info = {}
             s_info["itag"] = stream.itag
             s_info["resolution"] = stream.resolution
             info["video_streams"].append(s_info)
-        for stream in self.audio_streams:
+        for stream in self.yt.audio_streams:
             s_info = {}
             s_info["itag"] = stream.itag
             s_info["audio_bitrate"] = stream.abr
@@ -1341,13 +1118,13 @@ class YoutubeLiveBroadcast():
         )
 
         # Check if video is indeed available through its reported status.
-        playabilityStatus = self.json.get('playabilityStatus', {})
+        playabilityStatus = self.yt.json.get('playabilityStatus', {})
         status = playabilityStatus.get('status')
 
         if status == 'LIVE_STREAM_OFFLINE':
             self._status |= Status.OFFLINE
 
-            scheduled_time = self.scheduled_timestamp
+            scheduled_time = self.yt.scheduled_timestamp
             if scheduled_time is not None:
                 self._status |= Status.WAITING
 
@@ -1503,20 +1280,36 @@ class YoutubeLiveBroadcast():
 
     def get_currently_broadcast_segment(self):
         # TODO parse mpd manifest to get the currently broadcast segment
+        # self.yt.get_streams_from_mpd()
         return 10
 
     def download(self, wait_delay: float = 2.0):
         """High level entry point to download selected streams separately.
         Can be called from synchronous code.
         """
-        self.filter_streams(**self.filter_args)
-        self.logger.info(f"Selected streams: {self.selected_streams}")
+        # self.filter_streams(**self.filter_args)
+        self.yt.filter_streams(**self.filter_args)
+        self.logger.info(f"Selected streams: {self.yt.selected_streams}")
+
+        # We emulate an initializator because no idea how to subclass
+        # pytube.Stream other than with a monkeypatch
+        # TODO: see https://stackoverflow.com/questions/100003/what-are-metaclasses-in-python?rq=1
+        for stream in self.yt.selected_streams:
+            stream.parent = self
+            stream.logger = self.logger
+            stream.missing_segs = []
+            stream.start_seg = 0
+            stream.current_seg = 0
+            # stream.async_download = async_download
+            stream.async_download = MethodType(async_download, stream)
+            stream.fname_suffix = stream.type[1:] if stream.is_adaptive else "a+v"
+            stream.dir_suffix = "f" + str(stream.itag)
 
         # In case we forgot to fetch them first, get the default
         if not self.selected_streams:
             self.logger.warning(
                 "Missing selected streams, getting best available by default.")
-            self.filter_streams()
+            self.yt.filter_streams()
             if not self.selected_streams:
                 raise Exception("No stream found")
 
@@ -1545,7 +1338,7 @@ class YoutubeLiveBroadcast():
         # Used to signal offline state detection to both stream downloads
         offline_event = asyncio.Event()
 
-        for stream in self.selected_streams:
+        for stream in self.yt.selected_streams:
             stream.offline_event = offline_event
             sub_dir: Path = self.output_dir / ("f" + str(stream.itag))
             sub_dir.mkdir(exist_ok=True)
@@ -1553,7 +1346,7 @@ class YoutubeLiveBroadcast():
 
         tasks = [
             loop.create_task(stream.async_download(loop))
-            for stream in self.selected_streams
+            for stream in self.yt.selected_streams
         ]
         try:
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -2025,81 +1818,81 @@ class YoutubeLiveBroadcast():
 
         return self._fmt_streams
 
-    def get_best_streams(self, maxq=None, log=True, codec="mp4", fps="60"):
-        """Return a tuple of pytube.Stream objects, first one for video
-        second one for audio.
-        If only progressive streams are available, the second item in tuple
-        will be None.
-        :param str maxq:
-        :param str codec: mp4, webm
-        :param str fps: 30, 60"""
-        video_stream = None
-        audio_stream = None
+    # def get_best_streams(self, maxq=None, log=True, codec="mp4", fps="60"):
+    #     """Return a tuple of pytube.Stream objects, first one for video
+    #     second one for audio.
+    #     If only progressive streams are available, the second item in tuple
+    #     will be None.
+    #     :param str maxq:
+    #     :param str codec: mp4, webm
+    #     :param str fps: 30, 60"""
+    #     video_stream = None
+    #     audio_stream = None
 
-        def as_int(res_or_abr: str) -> Optional[int]:
-            if res_or_abr is None:
-                return None
-            as_int = None
-            # looks for "1080p" or "48kbps", either a resolution or abr
-            if match := re.search(r"(\d{3,4})(p)?|(\d{2,4})(kpbs)?", res_or_abr):
-                as_int = int(match.group(1))
-            return as_int
+    #     def as_int(res_or_abr: str) -> Optional[int]:
+    #         if res_or_abr is None:
+    #             return None
+    #         as_int = None
+    #         # looks for "1080p" or "48kbps", either a resolution or abr
+    #         if match := re.search(r"(\d{3,4})(p)?|(\d{2,4})(kpbs)?", res_or_abr):
+    #             as_int = int(match.group(1))
+    #         return as_int
 
-        if maxq is not None and not isinstance(maxq, int):
-            maxq = as_int(maxq)
-            # if match := re.search(r"(\d{3,4})(p)?|(\d{2,4}(kpbs)?", maxq):
-            #     maxq = int(match.group(1))
-            if maxq is None:
-                self.logger.warning(
-                    f"Max quality setting \"{maxq}\" is incorrect. "
-                    "Defaulting to best video quality available."
-                )
+    #     if maxq is not None and not isinstance(maxq, int):
+    #         maxq = as_int(maxq)
+    #         # if match := re.search(r"(\d{3,4})(p)?|(\d{2,4}(kpbs)?", maxq):
+    #         #     maxq = int(match.group(1))
+    #         if maxq is None:
+    #             self.logger.warning(
+    #                 f"Max quality setting \"{maxq}\" is incorrect. "
+    #                 "Defaulting to best video quality available."
+    #             )
 
-        custom_filters = None
-        if maxq is not None and isinstance(maxq, int):
-            def filter_maxq(s):
-                res_int = as_int(s.resolution)
-                if res_int is None:
-                    return False
-                return res_int <= maxq
-            custom_filters = [filter_maxq]
+    #     custom_filters = None
+    #     if maxq is not None and isinstance(maxq, int):
+    #         def filter_maxq(s):
+    #             res_int = as_int(s.resolution)
+    #             if res_int is None:
+    #                 return False
+    #             return res_int <= maxq
+    #         custom_filters = [filter_maxq]
 
-        avail_streams = self.streams
-        if log:
-            self.print_available_streams(avail_streams)
-        video_streams = avail_streams.filter(file_extension=codec,
-            custom_filter_functions=custom_filters
-            ) \
-            .order_by('resolution') \
-            .desc()
+    #     avail_streams = self.streams
+    #     if log:
+    #         self.print_available_streams(avail_streams)
+    #     video_streams = avail_streams.filter(file_extension=codec,
+    #         custom_filter_functions=custom_filters
+    #         ) \
+    #         .order_by('resolution') \
+    #         .desc()
 
-        video_stream = video_streams.first()
-        if log:
-            self.logger.info(f"Selected video {video_stream}")
+    #     video_stream = video_streams.first()
+    #     if log:
+    #         self.logger.info(f"Selected video {video_stream}")
 
-        audio_streams = avail_streams.filter(
-            only_audio=True
-            ) \
-            .order_by('abr') \
-            .desc()
-        audio_stream = audio_streams.first()
-        if log:
-            self.logger.info(f"selected audio {audio_stream}")
+    #     audio_streams = avail_streams.filter(
+    #         only_audio=True
+    #         ) \
+    #         .order_by('abr') \
+    #         .desc()
+    #     audio_stream = audio_streams.first()
+    #     if log:
+    #         self.logger.info(f"selected audio {audio_stream}")
 
-        # FIXME need a fallback in case we didn't have an audio stream
-        # TODO need a strategy if progressive has better audio quality:
-        # use progressive stream's audio track only? Would that work with the
-        # DASH stream video?
-        if len(audio_streams) == 0:
-            self.streams.filter(
-                progressive=False,
-                file_extension=codec
-                ) \
-                .order_by('abr') \
-                .desc() \
-                .first()
+    #     # FIXME need a fallback in case we didn't have an audio stream
+    #     # TODO need a strategy if progressive has better audio quality:
+    #     # use progressive stream's audio track only? Would that work with the
+    #     # DASH stream video?
+    #     if len(audio_streams) == 0:
+    #         self.streams.filter(
+    #             progressive=False,
+    #             file_extension=codec
+    #             ) \
+    #             .order_by('abr') \
+    #             .desc() \
+    #             .first()
 
-        return (video_stream, audio_stream)
+    #     return (video_stream, audio_stream)
 
 
     # # TODO close but UNFINISHED, superceded by pytube. OBSOLETE
@@ -2261,45 +2054,45 @@ class YoutubeLiveBroadcast():
                     self.notifier.q.put(webhook)
 
 
-class MPD():
-    """Cache the URL to the manifest, but enable fetching it data if needed."""
-    def __init__(self, parent: YoutubeLiveStream, mpd_type: str = "dash") -> None:
-        self.parent = parent
-        self.url = None
-        self.content = None
-        # self.expires: Optional[float] = None
-        self.mpd_type = mpd_type  # dash or hls
+# class MPD():
+#     """Cache the URL to the manifest, but enable fetching it data if needed."""
+#     def __init__(self, parent: YoutubeLiveBroadcast, mpd_type: str = "dash") -> None:
+#         self.parent = parent
+#         self.url = None
+#         self.content = None
+#         # self.expires: Optional[float] = None
+#         self.mpd_type = mpd_type  # dash or hls
 
-    def update_url(self) -> Optional[str]:
-        mpd_type = "dashManifestUrl" if self.mpd_type == "dash" else "hlsManifestUrl"
+#     def update_url(self) -> Optional[str]:
+#         mpd_type = "dashManifestUrl" if self.mpd_type == "dash" else "hlsManifestUrl"
 
-        json = self.parent.json
+#         json = self.parent.json
 
-        if streamingData := json.get("streamingData", {}):
-            if ManifestUrl := streamingData.get(mpd_type):
-                self.url = ManifestUrl
-            else:
-                raise Exception(
-                    f"No URL found for MPD manifest of {self.parent.video_id}.")
-        else:
-            raise Exception("No streamingData in json. Cannot load MPD.")
+#         if streamingData := json.get("streamingData", {}):
+#             if ManifestUrl := streamingData.get(mpd_type):
+#                 self.url = ManifestUrl
+#             else:
+#                 raise Exception(
+#                     f"No URL found for MPD manifest of {self.parent.video_id}.")
+#         else:
+#             raise Exception("No streamingData in json. Cannot load MPD.")
 
-    def get_content(self, update=False):
-        if self.content is not None and not update:
-            return self.content
+#     def get_content(self, update=False):
+#         if self.content is not None and not update:
+#             return self.content
 
-        if not self.url:
-            self.update_url()
+#         if not self.url:
+#             self.update_url()
 
-        try:
-            self.content = self.parent.session.make_request(self.url)
-        except:
-            self.content = None
-        return self.content
+#         try:
+#             self.content = self.parent.session.make_request(self.url)
+#         except:
+#             self.content = None
+#         return self.content
 
 
 async def worker_retries(
-    stream: Stream,
+    stream: BaseStream,
     name: str,
     queue,
     loop: asyncio.AbstractEventLoop,
@@ -2343,7 +2136,7 @@ async def worker_retries(
 
 # pytube.Stream
 async def async_download(
-    self: Stream,
+    self: BaseStream,
     loop: asyncio.AbstractEventLoop,
     ):
     basecolor = BLUE if self.type == "video" else YELLOW
@@ -2519,7 +2312,7 @@ async def async_download(
 
 
 class Segment():
-    def __init__(self, num: int, stream: Stream) -> None:
+    def __init__(self, num: int, stream: BaseStream) -> None:
         self.num: int = num
         # Reference stream for any future URL updates
         self.stream = stream
@@ -2654,7 +2447,7 @@ class Segment():
 class DownloadHandler():
     """Keep track of downloaded segments and errors."""
     def __init__(
-        self, stream: Stream,
+        self, stream: BaseStream,
         start_seg: int, upto_seg: int,
         name: str, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop,
         events: dict[str, asyncio.Event]) -> None:
@@ -2741,26 +2534,6 @@ def write_to_file(logger, fsrc, fdst: Path, length: int = 0) -> bool:
     return True
 
 
-def remove_useless_keys(_dict: dict) -> None:
-    """Update _dict in place by removing keys we probably won't use to declutter
-    logs a big."""
-    for keyname in ['heartbeatParams', 'playerAds', 'adPlacements',
-    'playbackTracking', 'annotations', 'playerConfig', 'storyboards',
-    'trackingParams', 'attestation', 'messages', 'frameworkUpdates', 'captions']:
-        try:
-            _dict.pop(keyname)
-        except KeyError:
-            continue
-    # remove this annoying long list, although this could be useful to check
-    # for restricted region...
-    try:
-        _dict.get('microformat', {})\
-             .get('playerMicroformatRenderer', {})\
-             .pop('availableCountries')
-    except KeyError:
-        pass
-
-
 def setup_logger(
     output_path: Path, log_level: Union[int, str], video_id: str
 ) -> logging.Logger:
@@ -2809,7 +2582,7 @@ def setup_logger(
     return logger
 
 
-def collect_missing_segments(output_dir: Path, stream: Stream):
+def collect_missing_segments(output_dir: Path, stream: BaseStream):
     """Update stream objects properties in selected streams with output
     directory, starting segment, and mising segments if any."""
     stream_output_dir = output_dir / stream.dir_suffix

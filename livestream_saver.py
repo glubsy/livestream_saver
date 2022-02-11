@@ -428,7 +428,7 @@ def _get_target_params(
         "hooks": get_hooks_for_section(sub_cmd, config, "_command"),
         "webhooks": get_hooks_for_section(sub_cmd, config, "_webhook"),
         "cookie": config.get(sub_cmd, "cookie", vars=args, fallback=None),
-        "filters": {
+        "regex_filters": {
             "allow_regex": None,
             "block_regex": None
         }
@@ -631,7 +631,7 @@ def monitor_mode(config, args):
             logger.info(f"Finished downloading {_id}.")
             NOTIFIER.send_email(
                 subject=f"Finished downloading {ch.get_channel_name()} - \
-{live_broadcast.ptyt.title} {_id}",
+{live_broadcast.title} {_id}",
                 message_text=f""
             )
             if not config.getboolean("monitor", "no_merge", vars=args):

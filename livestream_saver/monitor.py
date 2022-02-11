@@ -34,7 +34,7 @@ class YoutubeChannel:
         self.hooks = hooks
         self._hooked_videos = []
         self.output_dir = output_dir
-        # self.logger = logger
+        self.logger = logger
 
     def get_channel_name(self):
         """Get the name of the channel from the community JSON (once retrieved).

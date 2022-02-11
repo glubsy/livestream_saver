@@ -221,6 +221,26 @@ def is_wanted_based_on_metadata(
     return wanted
 
 
+def remove_useless_keys(_dict: dict) -> None:
+    """Update _dict in place by removing keys we probably won't use to declutter
+    logs a big."""
+    for keyname in ['heartbeatParams', 'playerAds', 'adPlacements',
+    'playbackTracking', 'annotations', 'playerConfig', 'storyboards',
+    'trackingParams', 'attestation', 'messages', 'frameworkUpdates', 'captions']:
+        try:
+            _dict.pop(keyname)
+        except KeyError:
+            continue
+    # remove this annoying long list, although this could be useful to check
+    # for restricted region...
+    try:
+        _dict.get('microformat', {})\
+             .get('playerMicroformatRenderer', {})\
+             .pop('availableCountries')
+    except KeyError:
+        pass
+
+
 # Base name for each "event"
 event_props = [
     "on_upcoming_detected",
