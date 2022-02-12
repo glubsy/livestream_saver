@@ -4,6 +4,7 @@ from typing import List
 import pytube
 import pytube.exceptions
 from livestream_saver.extract import str_as_json
+from livestream_saver.util import do_async
 
 
 class PytubeYoutube(pytube.YouTube):
@@ -37,7 +38,8 @@ class PytubeYoutube(pytube.YouTube):
 
         # innertube = InnerTube(use_oauth=self.use_oauth, allow_cache=self.allow_oauth_cache)
         # innertube_response = innertube.player(self.video_id)
-        self._vid_info = str_as_json(self.session.make_api_request(self.video_id))
+        # self._vid_info = str_as_json(self.session.make_api_request(self.video_id))
+        self._vid_info = do_async(self.session.make_api_request(self.video_id))
 
         return self._vid_info
 

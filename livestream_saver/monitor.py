@@ -1,9 +1,11 @@
+import json
 from pathlib import Path
 from time import sleep
 from random import uniform
 import logging
 from typing import Optional, Any, List, Dict
 from livestream_saver import extract
+from livestream_saver.util import do_async
 from livestream_saver.hooks import HookCommand
 from livestream_saver.notifier import WebHookFactory
 
@@ -322,8 +324,10 @@ class YoutubeChannel:
 
         logger.info(f"Fetching video {videoId} info from API...")
         try:
-            json_string = self.session.make_api_request(videoId)
-            return extract.str_as_json(json_string)
+            return do_async(
+                self.session.make_api_request(videoId)
+            )
+            # return extract.str_as_json(json_string)
         except Exception as e:
             logger.warning(f"Error fetching metadata for video {videoId}: {e}")
 

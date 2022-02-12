@@ -14,13 +14,13 @@ from typing import Dict, Optional, Union
 import time
 import hashlib
 
-logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG)
+log = logging.getLogger(__name__)
+# log.setLevel(logging.DEBUG)
 import asyncio
 
 from urllib.request import Request, urlopen #, build_opener, HTTPCookieProcessor, HTTPHandler
 
-from livestream_saver.util import UA
+from livestream_saver.util import UA, do_async
 from livestream_saver.cookies import (
     CookieJar, get_netscape_cookie_jar, load_cookies_from_file, cookie_to_morsel
 )
@@ -31,10 +31,12 @@ from http import cookies as httpcookies
 from http import cookiejar as httpcookiejar
 
 from aiohttp import cookiejar as aiocookiejar
-from aiohttp import ClientSession
+from aiohttp import ClientSession, TraceConfig
 from aiohttp.typedefs import PathLike
 from aiohttp.hdrs import SET_COOKIE
 from yarl import URL
+
+API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
 
 
 class ASession:
@@ -50,17 +52,30 @@ class ASession:
         if cookie_path is not None:
             aiojar._cookie_path = load_cookies_from_file(aiojar, cookie_path)
         self.cookie_jar = aiojar
-        
-        # logger.debug(f"AIOJAR init len={len(aiojar)}")
+
+        async def on_request_end(session, trace_config_ctx, params):
+            log.debug(
+                f"{params.method} request for {params.url}. "
+                f"Sent headers: {params.response.request_info.headers}")
+            if len(params.response.history) > 1:
+                log.debug(f"History length (redirects) = {len(params.response.history)}.")
+                for resp in params.response.history:
+                    log.debug(f"History resp: {resp}")
+
+        trace_config = TraceConfig()
+        trace_config.on_request_end.append(on_request_end)
+
+        # log.debug(f"AIOJAR init len={len(aiojar)}")
         # aiojar.set_cookies_updated_callback(...)
         self.session = ClientSession(
             cookie_jar=aiojar,
             headers=self.headers,
             # cookies=netscape_cookie_jar._cookies
+            trace_configs=[trace_config]
         )
 
         # if user submitted, we know we need to save
-        # if cookie_path:  
+        # if cookie_path:
         #     aiojar.save(pickled_cookie_path)
 
         self._logged_in = False
@@ -72,27 +87,33 @@ class ASession:
         await self.session.close()
 
     async def initialize_consent(self):
-        logger.info(f"{WARNING}Initializing consent...{ENDC}")
-        async with self.session.get('https://www.youtube.com') as response:
-            
-            logger.debug(f"{WARNING}Response Headers:{ENDC}")
-            for hdr in response.headers.getall(SET_COOKIE, ()):
-                logger.debug(hdr)
-            logger.debug(f"{WARNING}Response Cookies:{ENDC}")
-            for _, morsel in response.cookies.items():
-                logger.debug(morsel.output())
-            
-            # TODO get the current API keys in case they have been changed
-            # in order to query the innertube API directly.
+        """
+        Set a consent cookie if not yet present in the cookie jar, and in the
+        request headers as a result.
+        If a pending consent cookie is there, accept it to avoid the blocking page.
+        """
+        # Make a first request to get initial cookies, in case none were passed
+        # as argument (or failed to load)
+        # TODO perhaps this needs to be done once in a while for very long
+        # running sessions.
+        log.info(f"{WARNING}Initializing consent...{ENDC}")
 
-                  
+        async with self.session.get('https://www.youtube.com') as response:
+
+            log.debug(f"{WARNING}Response Headers:{ENDC}")
+            for hdr in response.headers.getall(SET_COOKIE, ()):
+                log.debug(hdr)
+            log.debug(f"{WARNING}Response Cookies:{ENDC}")
+            for _, morsel in response.cookies.items():
+                log.debug(morsel.output())
+
             if self.cookie_path:  # user supplied cookies
                 self._ytcfg = await self.get_ytcfg(response)
 
             _cookies = self.session.cookie_jar.filter_cookies(
                 URL('https://www.youtube.com')
             )
-            logger.debug(
+            log.debug(
                 f"{BLUE}After request, filtered cookies "
                 f"{type(_cookies)} are:\n{_cookies}{ENDC}"
             )
@@ -131,8 +152,8 @@ class ASession:
             #                 {} # rest
             #             )
 
-            # if logger.isEnabledFor(logger.DEBUG):
-            #     logger.debug(f"Setting consent cookie: {cookie}")
+            # if log.isEnabledFor(log.DEBUG):
+            #     log.debug(f"Setting consent cookie: {cookie}")
 
             # New and simpler way of overwriting the consent cookie:
             for _, c in self.cookie_jar._cookies.items():
@@ -168,27 +189,22 @@ class ASession:
             # self.aiojar.update_cookies(cookies)
             # if self.aiojar.filename:
             #     self.aiojar.save(ignore_expires=True)
-        
+
     async def make_request_async(self, url):
-        print(f"Resquest async: {url}")
+        log.debug(f"make_request_async({url})")
         async with self.session.get(url) as response:
-            print(f"Response status: {response.status}")
+            log.debug(f"Response status: {response.status}")
             return await response.text()
-    
+
     # async def make_request_async_cb(self, url, future):
     #     print(f"running resquest async cb: {url}")
     #     async with self.session.get(url) as response:
     #         print(f"Got response status {response.status}")
     #         future.set_result(await response.text())
-    
+
     def make_request(self, url):
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(self.make_request_async(url))
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        
+        result = do_async(self.make_request_async(url))
+
         # result = self.make_request_async(url)
         # fut = asyncio.Future()
         # task = loop.create_task(self.make_request_async_cb(url, fut))
@@ -209,7 +225,7 @@ class ASession:
         # # finally:
         # #     loop.close()
         # result = fut.result()
-        logger.debug(f"{WARNING}Request result:{ENDC} {result[:150]}")
+        log.debug(f"{WARNING}Request result:{ENDC} {result[:150]}(...)")
         return result
 
     # TODO Place this in both monitor and download
@@ -228,12 +244,12 @@ class ASession:
         logged_out = self._check_logged_out(json_obj)
 
         if logged_out and self.cookie_path:
-            logger.critical(
+            log.critical(
                 "We are not logged in. Check the validity of your cookies!"
             )
 
         if logged_out and self._logged_in == True:
-            logger.critical(
+            log.critical(
                 "We are not logged in anymore! Are cookies still valid?"
             )
             if self.notify_h:
@@ -241,11 +257,11 @@ class ASession:
                     subject="Not logged in anymore",
                     message_text=f"We are logged out: {json_obj}"
                 )
-        
+
         self._logged_in = not logged_out
         return logged_out
 
-    def make_api_request(self, video_id) -> str:
+    async def make_api_request(self, video_id) -> Dict:
         """Make an innertube API call. Return response as string."""
         # Try to circumvent throttling with this workaround for now since
         # pytube is either broken or simply not up to date
@@ -277,8 +293,8 @@ class ASession:
                 headers["X-Goog-Visitor-Id"] = VisitorData
             if SessionIndex := self._ytcfg.get('SessionIndex'):
                 headers["X-Goog-AuthUser"] = SessionIndex
-        
-        logger.debug(f"Making API request with headers:{headers}")
+
+        log.debug(f"Making API request with headers:{headers}")
 
         data = {
             "context": {
@@ -291,20 +307,17 @@ class ASession:
             "videoId": video_id,
         }
 
-        req = Request(
-            "https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+        async with self.session.request(
+            method="POST",
+            url="https://www.youtube.com/youtubei/v1/player?key=" + API_KEY,
             headers=headers,
-            data=json.dumps(data).encode(),
-            method="POST"
-        )
-
-        # self.session.cookie_jar.add_cookie_header(req)
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"POST Request {req.full_url}")
-            logger.debug(f"POST Request headers: {req.header_items()}")
-
-        return self.get_html(req)
+            # data=json.dumps(data).encode(),
+            json=data,
+        ) as req:
+            # self.session.cookie_jar.add_cookie_header(req)
+            log.debug(f"POST Request {req.url}")
+            log.debug(f"POST Request headers: {req.headers}")
+            return await req.json()
 
     def get_html(self, req: Request) -> str:
         """
@@ -313,9 +326,9 @@ class ASession:
         # TODO get the DASH manifest (MPD) and parse that xml file instead
         # We could also use youtube-dl --dump-json instead
         with urlopen(req) as res:
-            logger.debug(f"REQUEST {req.full_url} -> response url: {res.url}")
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
+            log.debug(f"REQUEST {req.full_url} -> response url: {res.url}")
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug(
                     f"Response Status code: {res.status}.\n"
                     f"Response headers:\n{res.headers}")
 
@@ -329,7 +342,7 @@ class ASession:
                 content_page = str(res.read().decode('utf-8'))
                 return content_page
             except Exception as e:
-                logger.critical(f"Failed to load html: {e}")
+                log.critical(f"Failed to load html: {e}")
                 raise e
 
     async def get_ytcfg(self, data) -> Dict:
@@ -340,11 +353,11 @@ class ASession:
                 content = await data.read()
                 content_html = str(content.decode('utf-8'))
             except Exception as e:
-                logger.critical(f"Failed to load html for ytcfg: {e}")
+                log.critical(f"Failed to load html for ytcfg: {e}")
             return self.get_ytcfg_from_html(content_html)
 
         return self.get_ytcfg_from_html(data)
-    
+
     @staticmethod
     def get_ytcfg_from_html(html) -> Dict:
         # TODO only keep the keys we care about (that thing is huge)
@@ -354,11 +367,11 @@ class ASession:
             try:
                 return json.loads(objstr)
             except Exception as e:
-                logger.error(f"Error loading ytcfg as json: {e}.")
+                log.error(f"Error loading ytcfg as json: {e}.")
         return {}
 
     def _generate_sapisidhash_header(
-        self, 
+        self,
         origin: Optional[str] = 'https://www.youtube.com') -> Optional[str]:
         if not origin:
             return None
@@ -370,7 +383,6 @@ class ASession:
             cookies = {}
             keys = ("SAPISID", "__Secure-3PAPISID")
             for cookie in self.session.cookie_jar:
-                print(f"TYPE {cookie} {type(cookie)}")
                 if "youtube.com" in cookie.get("domain", ""):
                     for k in keys:
                         if k in cookie.key and cookie.value:
@@ -379,7 +391,7 @@ class ASession:
             if len(cookies.values()) > 0:
                 # Value should be the same for both of them
                 self._SAPISID = tuple(cookies.values())[-1].value
-                logger.info("Extracted SAPISID cookie.")
+                log.info("Extracted SAPISID cookie.")
                 # We still require SAPISID to be present anyway
                 if not cookies.get("SAPISID"):
                     _cookies = {}
@@ -394,12 +406,12 @@ class ASession:
                     })
                     _cookies['SAPISID'] = m
                     self.session.cookie_jar.update_cookies(_cookies)
-                    logger.info(f"Copied __Secure-3PAPISID to missing SAPISID.")
+                    log.info(f"Copied __Secure-3PAPISID to missing SAPISID.")
             else:
                 self._SAPISID = False
         if not self._SAPISID:
             return None
-        
+
         # SAPISIDHASH algorithm from https://stackoverflow.com/a/32065323
         time_now = round(time.time())
         sapisidhash = hashlib.sha1(
@@ -437,11 +449,11 @@ class Session:
             try:
                 content_html = str(data.read().decode('utf-8'))
             except Exception as e:
-                logger.critical(f"Failed to load html for ytcfg: {e}")
+                log.critical(f"Failed to load html for ytcfg: {e}")
             return self.get_ytcfg_from_html(content_html)
 
         return self.get_ytcfg_from_html(data)
-    
+
     @staticmethod
     def get_ytcfg_from_html(html) -> Dict:
         # TODO only keep the keys we care about (that thing is huge)
@@ -451,11 +463,11 @@ class Session:
             try:
                 return json.loads(objstr)
             except Exception as e:
-                logger.error(f"Error loading ytcfg as json: {e}.")
+                log.error(f"Error loading ytcfg as json: {e}.")
         return {}
 
     def _generate_sapisidhash_header(
-        self, 
+        self,
         origin: Optional[str] = 'https://www.youtube.com') -> Optional[str]:
         if not origin:
             return None
@@ -475,7 +487,7 @@ class Session:
             if len(cookies.values()) > 0:
                 # Value should be the same for both of them
                 self._SAPISID = tuple(cookies.values())[-1].value
-                logger.info("Extracted SAPISID cookie")
+                log.info("Extracted SAPISID cookie")
                 # We still require SAPISID to be present anyway
                 if not cookies.get("SAPISID"):
                     domain = '.youtube.com'
@@ -498,12 +510,12 @@ class Session:
                         {} # rest
                     )
                     self.cookie_jar.set_cookie(cookie)
-                    logger.debug(f"Copied __Secure-3PAPISID to missing SAPISID.")
+                    log.debug(f"Copied __Secure-3PAPISID to missing SAPISID.")
             else:
                 self._SAPISID = False
         if not self._SAPISID:
             return None
-        
+
         # SAPISIDHASH algorithm from https://stackoverflow.com/a/32065323
         time_now = round(time.time())
         sapisidhash = hashlib.sha1(
@@ -525,9 +537,9 @@ class Session:
 
         res = urlopen(req)
 
-        logger.debug(f"Initial req header items: {req.header_items()}")
-        logger.debug(f"Initial res headers: {res.headers}")
-      
+        log.debug(f"Initial req header items: {req.header_items()}")
+        log.debug(f"Initial res headers: {res.headers}")
+
         if self.user_supplied_cookies:
             self.ytcfg = self.get_ytcfg(res)
 
@@ -538,7 +550,7 @@ class Session:
         self.cookie_jar.add_cookie_header(req)
 
         _cookies = httpcookies.SimpleCookie(req.get_header('Cookie'))
-        logger.debug(f"Initial req cookies after extract: {_cookies}")
+        log.debug(f"Initial req cookies after extract: {_cookies}")
 
         if _cookies.get('__Secure-3PSID'):
             return
@@ -573,8 +585,8 @@ class Session:
                         {} # rest
                     )
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Setting consent cookie: {cookie}")
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"Setting consent cookie: {cookie}")
         self.cookie_jar.set_cookie(cookie)
 
         if self.cookie_jar.filename:
@@ -585,9 +597,9 @@ class Session:
         req = Request(url, headers=self.headers)
         self.cookie_jar.add_cookie_header(req)
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Request {req.full_url}")
-            logger.debug(f"Request headers: {req.header_items()}")
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"Request {req.full_url}")
+            log.debug(f"Request headers: {req.header_items()}")
 
         return self.get_html(req)
 
@@ -623,8 +635,8 @@ class Session:
                 headers["X-Goog-Visitor-Id"] = VisitorData
             if SessionIndex := self.ytcfg.get('SessionIndex'):
                 headers["X-Goog-AuthUser"] = SessionIndex
-        
-        logger.debug(f"Making API request with headers:{headers}")
+
+        log.debug(f"Making API request with headers:{headers}")
 
         data = {
             "context": {
@@ -646,9 +658,9 @@ class Session:
 
         self.cookie_jar.add_cookie_header(req)
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"POST Request {req.full_url}")
-            logger.debug(f"POST Request headers: {req.header_items()}")
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"POST Request {req.full_url}")
+            log.debug(f"POST Request headers: {req.header_items()}")
 
         return self.get_html(req)
 
@@ -669,12 +681,12 @@ class Session:
 
         if logged_out and self.user_supplied_cookies:
             self.user_supplied_cookies = 0
-            logger.critical(
+            log.critical(
                 "We are not logged in. Check the validity of your cookies!"
             )
 
         if logged_out and self._logged_in == True:
-            logger.critical(
+            log.critical(
                 "We are not logged in anymore! Are cookies still valid?"
             )
             if self.notify_h:
@@ -682,7 +694,7 @@ class Session:
                     subject="Not logged in anymore",
                     message_text=f"We are logged out: {json_obj}"
                 )
-        
+
         self._logged_in = not logged_out
         return logged_out
 
@@ -691,21 +703,21 @@ class Session:
         Update cookiejar with whatever Youtube send us in Set-Cookie headers.
         """
         # cookies = SimpleCookie(req.get_header('Cookie'))
-        # logger.debug(f"Req header cookie: \"{cookies}\".")
+        # log.debug(f"Req header cookie: \"{cookies}\".")
 
         ret_cookies = self.cookie_jar.make_cookies(res, req)
-        # if logger.isEnabledFor(logging.DEBUG):
-        #     logger.debug(f"make_cookies(): {ret_cookies}")
+        # if log.isEnabledFor(logging.DEBUG):
+        #     log.debug(f"make_cookies(): {ret_cookies}")
 
         for cook in ret_cookies:
             if cook.name == "SIDCC" and cook.value == "EXPIRED":
-                logger.critical("SIDCC expired. Renew your cookies.")
+                log.critical("SIDCC expired. Renew your cookies.")
                 #TODO send email to admin
                 return
 
         self.cookie_jar.extract_cookies(res, req)
 
-        # logger.debug(
+        # log.debug(
         #         f"CookieJar after extract_cookies(): {self.cookie_jar}")
 
     def get_html(self, req: Request) -> str:
@@ -715,9 +727,9 @@ class Session:
         # TODO get the DASH manifest (MPD) and parse that xml file instead
         # We could also use youtube-dl --dump-json instead
         with urlopen(req) as res:
-            logger.debug(f"REQUEST {req.full_url} -> response url: {res.url}")
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
+            log.debug(f"REQUEST {req.full_url} -> response url: {res.url}")
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug(
                     f"Response Status code: {res.status}.\n"
                     f"Response headers:\n{res.headers}")
 
@@ -732,5 +744,5 @@ class Session:
                 content_page = str(res.read().decode('utf-8'))
                 return content_page
             except Exception as e:
-                logger.critical(f"Failed to load {req.full_url}: {e}")
+                log.critical(f"Failed to load {req.full_url}: {e}")
                 raise e

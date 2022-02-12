@@ -9,7 +9,10 @@ import logging
 log = logging.getLogger(__name__)
 from livestream_saver.pytube import PytubeYoutube, PytubeStream
 from livestream_saver import extract
-from livestream_saver import util
+from livestream_saver.util import (
+    do_async, split_by_plus, check_available_tracks_from_itags,
+    remove_useless_keys
+)
 from livestream_saver.constants import *
 import pytube
 # import yt_dlp
@@ -87,7 +90,7 @@ class PytubeYoutubeVideo(BaseYoutubeVideo):
         user supplied parameters (itags, or max quality threshold)."""
         log.debug(f"Filtering streams: itag {itags}, maxq {maxq}")
 
-        submitted_itags = util.split_by_plus(itags)
+        submitted_itags = split_by_plus(itags)
 
         selected_streams: Set[pytube.Stream] = set()
         # If an itag is supposed to provide a video track, we assume
@@ -97,7 +100,7 @@ class PytubeYoutubeVideo(BaseYoutubeVideo):
 
         if submitted_itags is not None:
             wants_video, wants_audio, invalid_itags = \
-                util.check_available_tracks_from_itags(submitted_itags)
+                check_available_tracks_from_itags(submitted_itags)
             if invalid_itags:
                 # However, if we discarded an itag, we cannot be sure of what
                 # the user really wanted. We assume they wanted both.
@@ -372,11 +375,15 @@ class PytubeYoutubeVideo(BaseYoutubeVideo):
         try:
             # json_string = extract.initial_player_response(self.ptyt.watch_html)
             # API request with ANDROID client gives us a pre-signed URL
-            json_string = self._session.make_api_request(self._yt.video_id)
-            self._json = extract.str_as_json(json_string)
+            # json_string = self._session.make_api_request(self._yt.video_id)
+            self._json = do_async(
+                self._session.make_api_request(self._yt.video_id)
+            )
+
+            # self._json = extract.str_as_json(json_string)
             self._session.is_logged_out(self._json)
 
-            util.remove_useless_keys(self._json)
+            remove_useless_keys(self._json)
             if log.isEnabledFor(logging.DEBUG):
                 log.debug(
                     "Extracted JSON from html:\n"

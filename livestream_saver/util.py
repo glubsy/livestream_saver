@@ -1,4 +1,5 @@
 import re
+import asyncio
 from os import makedirs
 from platform import system
 from pathlib import Path
@@ -239,6 +240,21 @@ def remove_useless_keys(_dict: dict) -> None:
              .pop('availableCountries')
     except KeyError:
         pass
+
+
+def do_async(coro):
+    """
+    Spawn a temporary asyncio loop to run the given coroutine, then close it.
+    This is a band-aid function only meant to be used temporarily until the
+    entire program is asyncio compliant.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+    ret = loop.run_until_complete(coro)
+    loop.run_until_complete(loop.shutdown_asyncgens())
+    return ret
 
 
 # Base name for each "event"
