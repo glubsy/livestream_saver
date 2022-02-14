@@ -532,13 +532,6 @@ def monitor_mode(config, args):
         cookie_path=args.get("cookie"),
         notifier=NOTIFIER
     )
-
-    # try:
-    #     loop = asyncio.get_event_loop()
-    # except RuntimeError:
-    #     loop = asyncio.new_event_loop()
-    # loop.run_until_complete(session.initialize_consent())
-    # loop.run_until_complete(loop.shutdown_asyncgens())
     util.do_async(session.initialize_consent())
 
     URL = util.sanitize_channel_url(URL)
@@ -692,13 +685,6 @@ def download_mode(config, args):
         cookie_path=args.get("cookie"),
         notifier=NOTIFIER
     )
-
-    # try:
-    #     loop = asyncio.get_event_loop()
-    # except RuntimeError:
-    #     loop = asyncio.new_event_loop()
-    # loop.run_until_complete(session.initialize_consent())
-    # loop.run_until_complete(loop.shutdown_asyncgens())
     util.do_async(session.initialize_consent())
 
     try:

@@ -2,27 +2,22 @@
 # from platform import python_version_tuple
 import re
 import time
-from os import sep, makedirs
 from pathlib import Path
 import json
 from random import randint
 import logging
 from urllib.request import Request, urlopen #, build_opener, HTTPCookieProcessor, HTTPHandler
 import http.cookiejar
-from http.cookies import SimpleCookie
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, Any
 import time
 import hashlib
 
 log = logging.getLogger(__name__)
 # log.setLevel(logging.DEBUG)
-import asyncio
-
-from urllib.request import Request, urlopen #, build_opener, HTTPCookieProcessor, HTTPHandler
 
 from livestream_saver.util import UA, do_async
 from livestream_saver.cookies import (
-    CookieJar, get_netscape_cookie_jar, load_cookies_from_file, cookie_to_morsel
+    CookieJar, get_netscape_cookie_jar, load_cookies_from_file
 )
 from livestream_saver.constants import *
 
@@ -30,12 +25,12 @@ from livestream_saver.constants import *
 from http import cookies as httpcookies
 from http import cookiejar as httpcookiejar
 
-from aiohttp import cookiejar as aiocookiejar
 from aiohttp import ClientSession, TraceConfig
 from aiohttp.typedefs import PathLike
 from aiohttp.hdrs import SET_COOKIE
 from yarl import URL
 
+# This appears to be the public key used by Youtube website
 API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
 
 
@@ -132,29 +127,6 @@ class ASession:
                 # FIXME might be best to just force a random number here instead?
                 consent_id = consent_id.group(1)
 
-            # domain = '.youtube.com'
-            # cookie = http.cookiejar.Cookie(
-            #                 0, # version
-            #                 'CONSENT', # name
-            #                 'YES+cb.20210328-17-p0.en+F+%s' % consent_id, # value
-            #                 None, # port
-            #                 False, # port_specified
-            #                 domain, # domain
-            #                 True, # domain_specified
-            #                 domain.startswith('.'), # domain_initial_dot
-            #                 '/', # path
-            #                 True, # path_specified
-            #                 False, # secure
-            #                 None, # expires
-            #                 False, # discard
-            #                 None, # comment
-            #                 None, # comment_url
-            #                 {} # rest
-            #             )
-
-            # if log.isEnabledFor(log.DEBUG):
-            #     log.debug(f"Setting consent cookie: {cookie}")
-
             # New and simpler way of overwriting the consent cookie:
             for _, c in self.cookie_jar._cookies.items():
                 for _, morsel in c.items():
@@ -190,7 +162,7 @@ class ASession:
             # if self.aiojar.filename:
             #     self.aiojar.save(ignore_expires=True)
 
-    async def make_request_async(self, url):
+    async def make_request_async(self, url) -> str:
         log.debug(f"make_request_async({url})")
         async with self.session.get(url) as response:
             log.debug(f"Response status: {response.status}")
@@ -202,7 +174,7 @@ class ASession:
     #         print(f"Got response status {response.status}")
     #         future.set_result(await response.text())
 
-    def make_request(self, url):
+    def make_request(self, url) -> str:
         result = do_async(self.make_request_async(url))
 
         # result = self.make_request_async(url)
@@ -261,7 +233,7 @@ class ASession:
         self._logged_in = not logged_out
         return logged_out
 
-    async def make_api_request(self, video_id) -> Dict:
+    async def make_api_request(self, video_id) -> Dict[Any, Any]:
         """Make an innertube API call. Return response as string."""
         # Try to circumvent throttling with this workaround for now since
         # pytube is either broken or simply not up to date

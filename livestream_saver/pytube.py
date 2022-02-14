@@ -1,6 +1,6 @@
 import re
 # from json import loads
-from typing import List
+from typing import List, Optional, Dict, Any
 import pytube
 import pytube.exceptions
 from livestream_saver.extract import str_as_json
@@ -8,25 +8,31 @@ from livestream_saver.util import do_async
 
 
 class PytubeYoutube(pytube.YouTube):
-    """Wrapper to override some methods in order to bypass several restrictions
-    due to lacking features in pytube (most notably live stream support)."""
+    """
+    Wrapper to override some methods in order to bypass several restrictions
+    due to lacking features in pytube, most notably the lack of live stream 
+    support and passing cookies for members-only streams.
+    """
     def __init__(self, *args, **kwargs):
         # Keep a handle to update its status
         self.parent = kwargs["parent"]
         self.session = kwargs.get("session")
 
         super().__init__(*args)
+        
         # if "www" is omitted, it might force a redirect on YT's side
         # (with &ucbcb=1) and force us to update cookies again. YT is very picky
         # about that. Let's just avoid it.
         self.watch_url = f"https://www.youtube.com/watch?v={self.video_id}"
    
     def check_availability(self):
-        """Skip this check to avoid raising pytube exceptions."""
+        # Overwritten function.
+        # We skip this check to avoid raising pytube exceptions
+        # since live streams are not supported.
         pass
 
     @property
-    def vid_info(self):
+    def vid_info(self) -> Dict[Any, Any]:
         """Parse the raw vid info and return the parsed result.
 
         :rtype: Dict[Any, Any]
@@ -38,16 +44,13 @@ class PytubeYoutube(pytube.YouTube):
 
         # innertube = InnerTube(use_oauth=self.use_oauth, allow_cache=self.allow_oauth_cache)
         # innertube_response = innertube.player(self.video_id)
-        # self._vid_info = str_as_json(self.session.make_api_request(self.video_id))
+        
         self._vid_info = do_async(self.session.make_api_request(self.video_id))
-
         return self._vid_info
 
     @property
-    def watch_html(self):
-        """Override for livestream_saver. We have to make the request ourselves
-        in order to pass the cookies."""
-        # TODO get the DASH manifest (MPD) instead?
+    def watch_html(self) -> Optional[str]:
+        # Return the html from the page located at watch_url.
         if not self.session:
             return super().watch_html
         if self._watch_html:
@@ -60,9 +63,8 @@ class PytubeYoutube(pytube.YouTube):
         return self._watch_html
 
     @property
-    def embed_html(self):
-        """Override for livestream_saver. We have to make the request ourselves
-        in order to pass the cookies."""
+    def embed_html(self) -> str:
+        # This is mainly used to circumvent age-gate restriction.
         if not self.session:
             return super().embed_html
         if self._embed_html:
@@ -71,9 +73,10 @@ class PytubeYoutube(pytube.YouTube):
         return self._embed_html
 
     @property
-    def js(self):
-        """Override for livestream_saver. We have to make the request ourselves
-        in order to pass the cookies."""
+    def js(self) -> str:
+        """
+        Return the base.js javascript.
+        """
         if not self.session:
             return super().js
         if self._js:
@@ -198,4 +201,5 @@ pytube.cipher.Cipher.__init__ = patched__init__
 
 class PytubeStream(pytube.Stream):
     # Used for inheritance if we want a base class.
-    pass
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(args, kwargs)

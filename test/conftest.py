@@ -81,3 +81,20 @@ def stream_dict():
     with gzip.open(file_path, "rb") as f:
         content = json.loads(f.read().decode("utf-8"))
         return content['watch_html']
+
+
+@pytest.fixture
+def innertube_response():
+    """Innertube response for video_id -IftAV4_yIU."""
+    return load_playback_file("-IftAV4_yIU_innertube_resp.json.gz")
+
+
+@pytest.fixture
+def regular_mpd():
+    """MPD file for video_id Tbip17B0Ev4"""
+    cur_fp = os.path.realpath(__file__)
+    cur_dir = os.path.dirname(cur_fp)
+    fp = os.path.join(cur_dir, "mocks", "Tbip17B0Ev4.mpd.gz")
+    with gzip.open(fp, "rb") as fh:
+        content = fh.read().decode("utf-8")
+        return content

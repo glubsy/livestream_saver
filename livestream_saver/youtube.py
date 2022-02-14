@@ -1,11 +1,14 @@
-from typing import List, Optional, Set, Dict, Union
+from typing import List, Optional, Set, Dict, Union, Any, Tuple
 from queue import LifoQueue
 from types import MethodType
 from datetime import datetime
 from json import dumps
 import re
 import xml.etree.ElementTree as ET
+from collections import deque
 import logging
+
+from _pytest.fixtures import _ensure_immutable_ids
 log = logging.getLogger(__name__)
 from livestream_saver.pytube import PytubeYoutube, PytubeStream
 from livestream_saver import extract
@@ -22,23 +25,28 @@ class BaseYoutubeVideo():
     """Interface to get information about a video from Youtube."""
     def __init__(self, url, session) -> None:
         self._url = url
-        self._session = session
+        self.session = session
         self._scheduled_timestamp: Optional[int] = None
         self._start_time: Optional[str] = None
         self._author: Optional[str] = None
         self._publish_date: Optional[datetime] = None
         self._json: Optional[Dict] = {}
+        self._mpd: MPD = MPD(self)
 
     @property
     def title(self) -> str:
         raise NotImplementedError
-    
+
     @property
     def streams(self) -> List:
         raise NotImplementedError
 
     @property
     def json(self) -> Dict:
+        raise NotImplementedError
+
+    @property
+    def video_id(self):
         raise NotImplementedError
 
 
@@ -64,9 +72,9 @@ class PytubeYoutubeVideo(BaseYoutubeVideo):
 
     def _pytube_streams(self) -> pytube.StreamQuery:
         streams = self._yt.streams
-        # BUG in pytube, livestreams with resolution higher than 1080 do not 
-        # return descriptions for their available streams, except in the 
-        # DASH MPD manifest! These descriptions seem to re-appear after the 
+        # BUG in pytube, livestreams with available resolution higher than 1080
+        # do not return descriptions for their available streams, except in the
+        # DASH MPD manifest! These descriptions seem to re-appear after the
         # stream has been converted to a VOD though.
         if len(streams) == 0:
             if mpd_streams := self.get_streams_from_mpd():
@@ -77,7 +85,7 @@ class PytubeYoutubeVideo(BaseYoutubeVideo):
                 streams = pytube.StreamQuery(mpd_streams)
             else:
                 raise Exception("Failed to load stream descriptors!")
-        return streams 
+        return streams
 
     def filter_streams(
         self,
@@ -86,8 +94,10 @@ class PytubeYoutubeVideo(BaseYoutubeVideo):
         itags: Optional[str] = None,
         maxq: Optional[str] = None
     ) -> None:
-        """Sets the selected_streams property to a Set of streams selected from
-        user supplied parameters (itags, or max quality threshold)."""
+        """
+        Sets the selected_streams property to a Set of streams selected from
+        user supplied parameters (itags, or max quality threshold).
+        """
         log.debug(f"Filtering streams: itag {itags}, maxq {maxq}")
 
         submitted_itags = split_by_plus(itags)
@@ -298,73 +308,43 @@ class PytubeYoutubeVideo(BaseYoutubeVideo):
                 custom_filters = [resolution_filter]
         return custom_filters
 
-    def get_content_from_mpd(self):
-        content = None
-        if self.mpd is None:
-            mpd = MPD(self)
-            try:
-                content = mpd.get_content()
-            except Exception as e:
-                log.critical(e)
-                return None
-            self.mpd = mpd
-        else:
-            content = self.mpd.get_content(update=True)
-        return content
+    @property
+    def mpd(self):
+        return self._mpd
 
-    def get_streams_from_xml(self, data) -> List[pytube.Stream]:
-        """Parse MPD Dash manifest and return basic Stream objects from data found."""
-        # We could use the python-mpegdash package but that would be overkill
-        # https://www.brendanlong.com/the-structure-of-an-mpeg-dash-mpd.html
-        # https://www.brendanlong.com/common-informative-metadata-in-mpeg-dash.html
-        if not data:
-            return []
+    def d_to_streams(self, dicts: List[Dict[Any, Any]]) -> List[PytubeStream]:
+        """
+        Convert dictionaries to pytube.Stream objects.
+        """
         streams = []
-        try:
-            root = ET.fromstring(data)
-            # Strip namespaces for easier access (not necessary, let's use wildcards)
-            # it = ET.iterparse(StringIO(data))
-            # for _, el in it:
-            #     _, _, el.tag = el.tag.rpartition('}') # strip ns
-            # root = it.root
-        except Exception as e:
-            log.critical(f"Error loading XML of MPD: {e}")
-            return streams
-
-        for _as in root.findall("{*}Period/{*}AdaptationSet"):
-            mimeType = _as.attrib.get("mimeType")
-            for _rs in _as.findall("{*}Representation"):
-                url = _rs.find("{*}BaseURL")
-                if url is None:
-                    log.debug(f"No BaseURL found for {_rs.attrib}. Skipping.")
-                    continue
-                # Simulate what pytube does in a very basic way
-                # FIXME this can safely be removed in next pytube:
-                codec = _rs.get("codecs")
-                if not codec or not mimeType:
-                    log.debug(f"No codecs key found for {_rs.attrib}. Skipping")
-                    continue
-                streams.append(pytube.Stream(
-                        stream = {
-                            "url": PathURL(url.text),
-                            "mimeType": mimeType,
-                            "type": mimeType + "; codecs=\"" + codec + "\"",  # FIXME removed in next pytube
-                            "itag": _rs.get('id'),
-                            "is_otf": False,  # not used
-                            "bitrate": None, # not used,
-                            "content_length": None, # FIXME removed in next pytube
-                            "fps": _rs.get("frameRate") # FIXME removed in next pytube
-                        },
-                        monostate = {},
-                        player_config_args = {} # FIXME removed in next pytube
-                    )
+        for d in dicts:
+            streams.append(
+                PytubeStream(
+                    stream = d,
+                    monostate = self._yt.stream_monostate
                 )
+            )
         return streams
 
-    def get_streams_from_mpd(self) -> List[pytube.Stream]:
-        content = self.get_content_from_mpd()
-        # TODO for now we only care about the XML DASH MPD, but not the HLS m3u8.
-        return self.get_streams_from_xml(content)
+    def get_streams_from_mpd(self, update=False) -> List[PytubeStream]:
+        """
+        Return a list of pytube.Stream objects generated from the stream 
+        description found in the MPD file.
+        """
+        if update:
+            self.mpd.parse(update)
+        _dicts = self.mpd.streams
+        if _dicts is None:
+            return []
+        return self.d_to_streams(_dicts)
+
+    def get_segments_from_mpd(self, update=False) -> Optional[Tuple[Optional[int], Optional[int]]]:
+        """
+        Return the earliest and latest advertised segment from SegmentList.
+        """
+        if update:
+            self.mpd.parse(update)
+        return self.mpd.segments
 
     @property
     def json(self) -> Dict:
@@ -377,11 +357,11 @@ class PytubeYoutubeVideo(BaseYoutubeVideo):
             # API request with ANDROID client gives us a pre-signed URL
             # json_string = self._session.make_api_request(self._yt.video_id)
             self._json = do_async(
-                self._session.make_api_request(self._yt.video_id)
+                self.session.make_api_request(self._yt.video_id)
             )
 
             # self._json = extract.str_as_json(json_string)
-            self._session.is_logged_out(self._json)
+            self.session.is_logged_out(self._json)
 
             remove_useless_keys(self._json)
             if log.isEnabledFor(logging.DEBUG):
@@ -396,11 +376,11 @@ class PytubeYoutubeVideo(BaseYoutubeVideo):
         if not self._json:
             log.critical(
                 f"WARNING: invalid JSON for {self._yt.watch_url}: {self._json}")
-            
+
             # self._status &= ~Status.AVAILABLE
 
-        # HACK this function does the same as pytube.YouTube.vid_info() 
-        # (except we can use our cookies here) so the json can be cached in the same place,   
+        # HACK this function does the same as pytube.YouTube.vid_info()
+        # (except we can use our cookies here) so the json can be cached in the same place,
         self._vid_info = self._json
 
         return self._json
@@ -500,15 +480,21 @@ class BaseStream(PytubeStream):
 
 class MPD():
     """Cache the URL to the manifest, but enable fetching it data if needed."""
+    # TODO subclass for ytdlp, and other libraries if needed, as we won't
+    # need to same "stream" dict format.
     def __init__(self, parent: BaseYoutubeVideo, mpd_type: str = "dash") -> None:
         self.parent = parent
         self.url = None
-        self.content = None
+        self._content = None
         # self.expires: Optional[float] = None
-        self.mpd_type = mpd_type  # dash or hls
+        # TODO for now we only care about the XML DASH MPD, not the HLS m3u8
+        self._mpd_type = mpd_type  # dash or hls
+        self._et = None
+        self._streams: Optional[List[Dict[Any, Any]]] = None
+        self._segments: Optional[Tuple[Optional[int], Optional[int]]] = None
 
     def update_url(self) -> Optional[str]:
-        mpd_type = "dashManifestUrl" if self.mpd_type == "dash" else "hlsManifestUrl"
+        mpd_type = "dashManifestUrl" if self._mpd_type == "dash" else "hlsManifestUrl"
 
         json = self.parent.json
 
@@ -521,18 +507,119 @@ class MPD():
         else:
             raise Exception("No streamingData in json. Cannot load MPD.")
 
-    def get_content(self, update=False):
-        if self.content is not None and not update:
-            return self.content
+    def get_content(self, update=False) -> Optional[str]:
+        if self._content is not None and not update:
+            return self._content
+
+        # Invalidate cache
+        if update:
+            self._et = None
+            self._streams = None
+            self._segments = None
 
         if not self.url:
             self.update_url()
-
         try:
-            self.content = self.parent.session.make_request(self.url)
+            self._content = self.parent.session.make_request(self.url)
         except:
-            self.content = None
-        return self.content
+            self._content = None
+        return self._content
+
+    def parse(self, update=False) -> None:
+        if self._content is None:
+            self._content = self.get_content(update)
+        elif update:
+            self._content = self.get_content(update)
+
+        self._et = self.get_element_tree(self._content)
+        self._streams = self.get_streams(self._et)
+        self._segments = self.get_segments(self._et)
+
+    @property
+    def streams(self) -> Optional[List[Dict[Any, Any]]]:
+        if self._streams is not None:
+            return self._streams
+        self.parse()
+        return self._streams
+
+    @property
+    def segments(self) -> Optional[Tuple[Optional[int], Optional[int]]]:
+        if self._segments is not None:
+            return self._segments
+        self.parse()
+        return self._segments
+
+    def get_element_tree(self, data: Optional[str]) -> ET.Element:
+        """
+        Parse MPD Dash manifest and return a list of dicts representing
+        stream objects.
+        """
+        # We could use the python-mpegdash package but that would be overkill
+        # https://www.brendanlong.com/the-structure-of-an-mpeg-dash-mpd.html
+        # https://www.brendanlong.com/common-informative-metadata-in-mpeg-dash.html
+        if not data:
+            raise Exception("Data string missing from MPD")
+        root = ET.fromstring(data)
+        # Strip namespaces for easier access (not necessary, let's use wildcards
+        # instead of stripping them, see other methods below)
+        # it = ET.iterparse(StringIO(data))
+        # for _, el in it:
+        #     _, _, el.tag = el.tag.rpartition('}') # strip ns
+        # root = it.root
+        return root
+
+    def get_streams(self, root) -> List[Dict[Any, Any]]:
+        streams = []
+        for _as in root.findall("{*}Period/{*}AdaptationSet"):
+            mimeType = _as.attrib.get("mimeType")
+            for _rs in _as.findall("{*}Representation"):
+                url = _rs.find("{*}BaseURL")
+                if url is None:
+                    log.debug(f"No BaseURL found for {_rs.attrib}. Skipping.")
+                    continue
+                # Simulate what pytube does in a very basic way
+                # FIXME this can safely be removed in next pytube:
+                codec = _rs.get("codecs")
+                if not codec or not mimeType:
+                    log.debug(f"No codecs key found for {_rs.attrib}. Skipping")
+                    continue
+                d = {
+                    # pytube expects a string, but doesn't alter it anyway. Our
+                    # code requires dynamic increments of sequence number.
+                    "url": PathURL(url.text.strip()),
+                    "mimeType": mimeType + "; codecs=\"" + codec + "\"",  # expected by pytube.extract.mime_type_codec
+                    "itag": _rs.get('id'),
+                    "is_otf": False,  # not used but required
+                    "bitrate": None,  # not used but required
+                }
+                if fps := _rs.get("frameRate"):
+                    d["fps"] = fps
+                streams.append(d)
+        return streams
+
+    def get_segments(self, root) -> Tuple[Optional[int], Optional[int]]:
+        """
+        Return the earliest and latest segment advertised.
+        """
+        # This does not correspond to the SegmentURL nodes for some reason
+        # earliest = root.attrib.get("{*}earliestMediaSequence")
+        earliest = None
+        latest = None
+        if _sl := root.find(
+            "{*}Period/{*}AdaptationSet/{*}Representation/{*}SegmentList"
+        ):
+            # <SegmentURL media="sq/4955/lmt/1641675691485356" />
+            segurl_iter = _sl.iterfind("{*}SegmentURL")
+            # We want the first, and the last element in the list
+            first_elem = next(segurl_iter)
+            if earliest := first_elem.attrib.get("media"):
+                earliest = int(earliest.split("/")[1])
+            dd = deque(segurl_iter, maxlen=1)
+            last_elem = dd.pop()
+            if latest := last_elem.attrib.get("media"):
+                latest = int(latest.split("/")[1])
+
+        return earliest, latest
 
 
 class BaseURL(str):
