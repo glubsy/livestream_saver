@@ -130,8 +130,9 @@ class YoutubeChannel:
                 if vid.get("upcoming"):
                     self.trigger_hook('on_upcoming_detected', vid)
         else:
+            known_ids = [v["videoId"] for v in self._community_videos]
             new_comm_videos = [
-                v for v in community_videos if v not in self._community_videos
+                v for v in community_videos if v["videoId"] not in known_ids
             ]
             if new_comm_videos:
                 logger.info(
@@ -166,8 +167,9 @@ class YoutubeChannel:
                 if vid.get("upcoming"):
                     self.trigger_hook('on_upcoming_detected', vid)
         else:
+            known_ids = [v["videoId"] for v in self._public_videos]
             new_pub_videos = [
-                v for v in public_videos if v not in self._public_videos
+                v for v in public_videos if v["videoId"] not in known_ids
             ]
             if new_pub_videos:
                 logger.info(
@@ -217,8 +219,9 @@ class YoutubeChannel:
                 # if vid.get('upcoming') and vid.get('isLive'):
                 self.trigger_hook('on_upcoming_detected', vid)
         else:
+            known_ids = [v["videoId"] for v in self._upcoming_videos]
             new_upcoming_videos = [
-                v for v in upcoming_videos if v not in self._upcoming_videos
+                v for v in upcoming_videos if v["videoId"] not in known_ids
             ]
             if new_upcoming_videos:
                 logger.info(
