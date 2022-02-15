@@ -132,6 +132,10 @@ class YoutubeChannel:
                 if vid.get("upcoming"):
                     self.trigger_hook('on_upcoming_detected', vid)
         else:
+            # FIXME BUG
+            # Comparing dictionaries, this does not work. Need a class
+            # to compare against one property.
+            # This explains why the same videos are advertised multiple times.
             new_comm_videos = [
                 v for v in community_videos if v not in self._community_videos
             ]
@@ -168,6 +172,10 @@ class YoutubeChannel:
                 if vid.get("upcoming"):
                     self.trigger_hook('on_upcoming_detected', vid)
         else:
+            # FIXME BUG
+            # Comparing dictionaries, this does not work. Need a class
+            # to compare against one property.
+            # This explains why the same videos are advertised multiple times.
             new_pub_videos = [
                 v for v in public_videos if v not in self._public_videos
             ]
@@ -219,6 +227,10 @@ class YoutubeChannel:
                 # if vid.get('upcoming') and vid.get('isLive'):
                 self.trigger_hook('on_upcoming_detected', vid)
         else:
+            # FIXME BUG
+            # Comparing dictionaries, this does not work. Need a class
+            # to compare against one property.
+            # This explains why the same videos are advertised multiple times.
             new_upcoming_videos = [
                 v for v in upcoming_videos if v not in self._upcoming_videos
             ]

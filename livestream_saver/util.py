@@ -1,9 +1,9 @@
 import re
 import asyncio
-from os import makedirs
+from os import makedirs, listdir
 from platform import system
 from pathlib import Path
-from typing import Optional, Tuple, Iterable
+from typing import Optional, Tuple, Iterable, Union
 import logging
 
 logger = logging.getLogger(__name__)
@@ -54,8 +54,7 @@ def sanitize_channel_url(url: str) -> str:
 def create_output_dir(output_dir: Path, video_id: Optional[str]) -> Path:
     capture_dirpath = output_dir
     if video_id is not None:
-        capture_dirname = f"stream_capture_{video_id}"
-        capture_dirpath = output_dir / capture_dirname
+        capture_dirpath = output_dir /  f"stream_capture_{video_id}"
     logger.debug(f"Creating output_dir: {capture_dirpath}...")
     makedirs(capture_dirpath, 0o766, exist_ok=True)
     return capture_dirpath
@@ -255,6 +254,45 @@ def do_async(coro):
     ret = loop.run_until_complete(coro)
     loop.run_until_complete(loop.shutdown_asyncgens())
     return ret
+
+
+def get_latest_valid_segment(path: Union[str, Path]
+) -> tuple[int, list[int]]:
+    """
+    Return the latest segment number already downloaded, and a
+    list of missing segments (with inferior numbers) if any.
+    """
+    # FIXME only read files that match our filename pattern
+    # in case foreign files are in there too
+    top_seg = 0
+    missing: list[int] = []
+
+    if isinstance(path, str):
+        path = Path(path)
+    if not path.exists():
+        return top_seg, missing
+
+    def as_int(fname: str) -> int:
+        # FIXME This assumes file name format 00000001_[a|v].ts
+        return int(fname.split('_')[0])
+
+    num_list = [as_int(f) for f in listdir(path)]
+    num_list.sort()
+
+    if not num_list:
+        return top_seg, missing
+
+    top_seg = num_list[-1]
+
+    if num_list and num_list[-1] != len(num_list):
+        # Find missing segments
+        missing = [x for x in range(0, num_list[-1]) if x not in num_list]
+
+    # Step back one file just in case the latest segment got only partially
+    # downloaded (we want to overwrite it to avoid a corrupted segment)
+    if top_seg > 0:
+        top_seg -= 1
+    return top_seg, missing
 
 
 # Base name for each "event"

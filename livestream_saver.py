@@ -953,6 +953,7 @@ def main():
     log_enabled(config, args, sub_cmd)
 
     logfile_path = Path("")  # cwd by default
+
     if sub_cmd == "monitor":
         params = _get_target_params(
             config, args, sub_cmd=sub_cmd, override=args["section"])
@@ -975,14 +976,16 @@ def main():
         # because we use it to store our logs
         output_dir = Path(config.get("monitor", "output_dir", vars=args))
         if channel_name is not None:
-            output_dir = output_dir / channel_name
+            channel_dir = output_dir / channel_name
+        elif channel_id:
+            channel_dir = output_dir / channel_id
         else:
-            output_dir = output_dir / channel_id
+            channel_dir = output_dir
 
-        makedirs(output_dir, exist_ok=True)
-        args["output_dir"] = output_dir
+        makedirs(channel_dir, exist_ok=True)
+        args["output_dir"] = channel_dir
 
-        logfile_path = output_dir / f'monitor_{channel_id}.log'
+        logfile_path = channel_dir / f'monitor_{channel_id}.log'
 
         setup_logger(
             output_filepath=logfile_path,
@@ -990,6 +993,7 @@ def main():
         )
         logger.debug(f"Regex filters {[f'{k}: {v}' for k, v in args['regex_filters'].items()]}")
         args["logger"] = logger
+    
     elif sub_cmd  == "download":
         output_dir = Path(
             config.get(
@@ -1010,7 +1014,7 @@ def main():
         )
         args["output_dir"] = output_dir
 
-        logfile_path = output_dir / "download.log"
+        logfile_path = output_dir / f"download_{video_id}.log"
         setup_logger(
             output_filepath=logfile_path,
             loglevel=config.get(sub_cmd, "log_level", vars=args)

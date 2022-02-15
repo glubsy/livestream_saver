@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from os import path, makedirs, listdir
+from os import path, makedirs
 from sys import stderr
 from platform import system
 import logging
@@ -520,7 +520,10 @@ We assume a failed download attempt. Last segment available was {seg}.")
     #     return pytube.StreamQuery(self.fmt_streams)
 
 
-class YoutubeLiveBroadcast():
+class YoutubeVideo():
+    pass
+
+class YoutubeLiveBroadcast(YoutubeVideo):
     def __init__(
         self,
         url: str,
@@ -529,7 +532,7 @@ class YoutubeLiveBroadcast():
         notifier: NotificationDispatcher,
         video_id: Optional[str] = None,
         filter_args: Dict = {},
-        hooks: dict = {},
+        hooks: Dict = {},
         skip_download = False,
         regex_filters = {},
         log_level = logging.INFO
@@ -541,8 +544,7 @@ class YoutubeLiveBroadcast():
         self.filter_args = filter_args
         self.video_id = video_id if video_id is not None \
                                  else extract.get_video_id(url)
-        self._json: Dict = {}
-        # self.ptyt = PytubeYoutube(url, session=session, parent=self)
+        # self._json: Dict = {}
         self.yt = PytubeYoutubeVideo(url, session=session)
         self.download_start_triggered = False
         self.hooks = hooks
@@ -1278,10 +1280,22 @@ class YoutubeLiveBroadcast():
                     f"Audio base URL got changed from {previous_audio_base_url}"
                     f" to {self.audio_base_url}.")
 
-    def get_currently_broadcast_segment(self):
-        # TODO parse mpd manifest to get the currently broadcast segment
-        # self.yt.get_streams_from_mpd()
-        return 10
+    def get_currently_broadcast_segment(self) -> int:
+        """
+        Parse mpd manifest to get the currently broadcast segment.
+        """
+        seg = None
+        try:
+            seg = self.yt.get_streams_from_mpd()[1]
+        except Exception as e:
+            self.logger.warning(f"Error getting latest segment from MPD: {e}")
+        
+        if seg is None:
+            self.logger.warning(
+                "Error getting latest segment from MPD."
+                "Will start from the very first one.")
+            return 0
+        return seg
 
     def download(self, wait_delay: float = 2.0):
         """High level entry point to download selected streams separately.
@@ -1304,19 +1318,27 @@ class YoutubeLiveBroadcast():
             stream.async_download = MethodType(async_download, stream)
             stream.fname_suffix = stream.type[1:] if stream.is_adaptive else "a+v"
             stream.dir_suffix = "f" + str(stream.itag)
+            stream.output_dir = self.output_dir / stream.dir_suffix
 
         # In case we forgot to fetch them first, get the default
-        if not self.selected_streams:
+        if not self.yt.selected_streams:
             self.logger.warning(
                 "Missing selected streams, getting best available by default.")
             self.yt.filter_streams()
-            if not self.selected_streams:
+            if not self.yt.selected_streams:
                 raise Exception("No stream found")
 
         current_seg = self.get_currently_broadcast_segment()
 
-        for stream in self.selected_streams:
-            collect_missing_segments(self.output_dir, stream)
+        for stream in self.selected_streams: 
+            try:
+                makedirs(stream.output_dir, 0o766, exist_ok=False)
+            except OSError:
+                # Directory already exists, collect segments already downloaded
+                stream.start_seg, stream.missing_segs = \
+                    util.get_latest_valid_segment(stream.output_dir)
+            
+            # Keep track of where the stream is at currently 
             stream.current_seg = current_seg
 
         # DEBUG if not using a loop already:
@@ -2343,7 +2365,7 @@ def setup_logger(
     logger.setLevel(logging.DEBUG)
     # File output
     logfile = logging.FileHandler(
-        filename=output_path / "download.log", delay=True, encoding='utf-8'
+        filename=output_path / f"download_{video_id}.log", delay=True, encoding='utf-8'
     )
     logfile.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
@@ -2369,93 +2391,3 @@ def setup_logger(
     conhandler.addFilter(confilter)
     logger.addHandler(conhandler)
     return logger
-
-
-def collect_missing_segments(output_dir: Path, stream: BaseStream):
-    """Update stream objects properties in selected streams with output
-    directory, starting segment, and mising segments if any."""
-    stream_output_dir = output_dir / stream.dir_suffix
-    if stream_output_dir.exists():
-        stream.start_seg, stream.missing_segs = \
-            get_latest_valid_segment(stream_output_dir)
-    else:
-        makedirs(stream_output_dir, 0o766)
-
-
-def get_latest_valid_segment(path: Union[str, Path]
-) -> tuple[int, list[int]]:
-    """
-    Return the latest segment number already downloaded, and a
-    list of missing segments (with inferior numbers) if any.
-    """
-    # FIXME only read files that match our filename pattern
-    # in case foreign files are in there too
-    top_seg = 0
-    missing: list[int] = []
-
-    if isinstance(path, str):
-        path = Path(path)
-    if not path.exists():
-        return top_seg, missing
-
-    def as_int(fname: str) -> int:
-        # This assumes file name format 00000001_audio+video.ts
-        return int(fname.split('_')[0])
-
-    num_list = [as_int(f) for f in listdir(path)]
-    num_list.sort()
-
-    if not num_list:
-        return top_seg, missing
-
-    top_seg = num_list[-1]
-
-    if num_list and num_list[-1] != len(num_list):
-        def find_missing(lst):
-            return [x for x in range(0, lst[-1])
-                                    if x not in lst]
-
-        missing = find_missing(num_list)
-
-    # Step back one file just in case the latest segment got only partially
-    # downloaded (we want to overwrite it to avoid a corrupted segment)
-    if top_seg > 0:
-        top_seg -= 1
-    return top_seg, missing
-
-
-# def get_latest_segment(paths: Tuple) -> int:
-#     """
-#     Create each path in paths. If one already existed, return the last
-#     segment already downloaded, otherwise return 1.
-#     :param paths: tuple of pathlib.Path
-#     """
-#     # If one of the directories exists, assume we are resuming a previously
-#     # failed download attempt.
-#     dir_existed = False
-#     for path in paths:
-#         try:
-#             makedirs(path, 0o766)
-#         except FileExistsError:
-#             dir_existed = True
-
-#     # The sequence number to start downloading from (acually starts at 0).
-#     seg = 0
-
-#     if dir_existed:
-#         # Get the latest downloaded segment number,
-#         # unless one directory holds an earlier segment than the other.
-#         # video_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[0])])
-#         # audio_last_segment = max([int(f[:f.index('.')]) for f in listdir(paths[1])])
-#         # seg = min(video_last_segment, audio_last_segment)
-#         seg = min([
-#                 max([int(f[:f.index('.')].split('_')[0])
-#                 for f in listdir(p)], default=1)
-#                 for p in paths
-#             ])
-
-#         # Step back one file just in case the latest segment got only partially
-#         # downloaded (we want to overwrite it to avoid a corrupted segment)
-#         if seg > 0:
-#             seg -= 1
-#     return seg
