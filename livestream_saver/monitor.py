@@ -136,8 +136,9 @@ class YoutubeChannel:
             # Comparing dictionaries, this does not work. Need a class
             # to compare against one property.
             # This explains why the same videos are advertised multiple times.
+            known_ids = [v["videoId"] for v in self._community_videos]
             new_comm_videos = [
-                v for v in community_videos if v not in self._community_videos
+                v for v in community_videos if v["videoId"] not in known_ids
             ]
             if new_comm_videos:
                 logger.info(
@@ -176,8 +177,9 @@ class YoutubeChannel:
             # Comparing dictionaries, this does not work. Need a class
             # to compare against one property.
             # This explains why the same videos are advertised multiple times.
+            known_ids = [v["videoId"] for v in self._public_videos]
             new_pub_videos = [
-                v for v in public_videos if v not in self._public_videos
+                v for v in public_videos if v["videoId"] not in known_ids
             ]
             if new_pub_videos:
                 logger.info(
@@ -231,8 +233,9 @@ class YoutubeChannel:
             # Comparing dictionaries, this does not work. Need a class
             # to compare against one property.
             # This explains why the same videos are advertised multiple times.
+            known_ids = [v["videoId"] for v in self._upcoming_videos]
             new_upcoming_videos = [
-                v for v in upcoming_videos if v not in self._upcoming_videos
+                v for v in upcoming_videos if v["videoId"] not in known_ids
             ]
             if new_upcoming_videos:
                 logger.info(
