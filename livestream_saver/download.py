@@ -117,6 +117,7 @@ class YoutubeLiveStream():
         self.done = False
         self.error = None
         self.mpd = None
+        self._description = ""
 
         self.output_dir = output_dir
         if not self.output_dir.exists():
@@ -1869,9 +1870,15 @@ class YoutubeLiveBroadcast(YoutubeVideo):
 
     def get_metadata_dict(self) -> Dict:
         # TODO add more data, refresh those that got stale
-        thumbnails = self.player_response.get("videoDetails", {})\
-            .get("thumbnail", {})
-
+        thumbnails = {}
+        try:
+            thumbnails = self.yt.json.get("videoDetails", {})\
+                .get("thumbnail", {})
+        except Exception as e:
+            # This might occur if we invalidated the cache but the stream is not 
+            # live anymore, and "streamingData" key is missing from the json
+            self.logger.warning(f"Error getting thumbnail metadata value: {e}")
+        
         return {
                 "url": self.url,
                 "videoId": self.video_id,
@@ -1879,8 +1886,8 @@ class YoutubeLiveBroadcast(YoutubeVideo):
                 "logger": self.logger,
                 "output_dir": self.output_dir,
                 "title": self.title,
-                "description": self.ptyt.description,
-                "author": self.author,
+                "description": self.yt.description,
+                "author": self.yt.author,
                 "isLive": Status.LIVE | Status.VIEWED_LIVE in self.status,
                 # We'll expect to get an array of thumbnails here
                 "thumbnail": thumbnails

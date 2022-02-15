@@ -56,6 +56,7 @@ class PytubeYoutubeVideo(BaseYoutubeVideo):
         super().__init__(url, session)
         self._yt = PytubeYoutube(url, parent=self, session=session)
         self.selected_streams: set[pytube.Stream] = set()
+        self._description = None
 
     @property
     def watch_url(self):
@@ -446,7 +447,13 @@ class PytubeYoutubeVideo(BaseYoutubeVideo):
 
     @property
     def description(self):
-        return self._yt.description
+        desc = self._yt.description
+        if desc is not None:
+            self._description = desc
+        else:
+            # Return the previous value
+            return self._description
+        return desc
 
     def clear_attr(self, attrs: Union[List, str], value = None) -> None:
         """Reset attributes in the wrapper pytube object."""

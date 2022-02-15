@@ -123,6 +123,7 @@ def replace_values(json_dict: dict, args: dict) -> Dict:
             json_dict[k] = interpolated(k, v, args)
     return json_dict
 
+
 def parse_and_replace(json_str: Optional[str], args: Dict) -> bytes:
     """Return a copy of the string with placeholders replaced with
     corresponding variables"""
@@ -138,6 +139,7 @@ def parse_and_replace(json_str: Optional[str], args: Dict) -> bytes:
     # logger.debug(f"Loaded dict after replace:\n{json_d}")
     # pop_invalid_values(json_d)
     return dumps(json_d).encode()
+
 
 class WebHook():
     def __init__(self, url: str, payload: bytes, headers: Dict) -> None:
