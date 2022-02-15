@@ -228,6 +228,7 @@ class YoutubeLiveStream():
         self.done = False
         self.error = None
         self.mpd = None
+        self._description = ""
 
         self.output_dir = output_dir
         if not self.output_dir.exists():
@@ -592,8 +593,12 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
         :rtype: str
         """
-        return self.player_response.get("videoDetails", {}).get("shortDescription")
-
+        desc = self.player_response.get("videoDetails", {}).get("shortDescription")
+        if desc is not None:
+            # Keep at least the last description in cache just in case we end
+            # up overwriting it with nothing.
+            self._description = desc
+        return desc
 
     # # NOT USED
     # def populate_info(self):
@@ -1401,9 +1406,15 @@ playability status is: {status} \
 
     def get_metadata_dict(self) -> Dict:
         # TODO add more data, refresh those that got stale
-        thumbnails = self.player_response.get("videoDetails", {})\
-            .get("thumbnail", {})
-
+        thumbnails = {}
+        try:
+            thumbnails = self.player_response.get("videoDetails", {})\
+                .get("thumbnail", {})
+        except Exception as e:
+            # This might occur if we invalidated the cache but the stream is not 
+            # live anymore, and "streamingData" key is missing from the json
+            self.logger.warning(f"Error getting thumbnail metadata value: {e}")
+        
         return {
                 "url": self.url,
                 "videoId": self.video_id,
@@ -1411,7 +1422,7 @@ playability status is: {status} \
                 "logger": self.logger,
                 "output_dir": self.output_dir,
                 "title": self.title,
-                "description": self.description,
+                "description": self._description,
                 "author": self.author,
                 "isLive": Status.LIVE | Status.VIEWED_LIVE in self.status,
                 # We'll expect to get an array of thumbnails here
