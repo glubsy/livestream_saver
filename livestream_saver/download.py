@@ -35,6 +35,7 @@ COPY_BUFSIZE = 1024 * 1024 if ISWINDOWS else 64 * 1024
 # logger.setLevel(logging.DEBUG)
 
 # Temporary backport from pytube 11.0.1
+# and also https://github.com/pytube/pytube/issues/1281
 def get_throttling_function_name(js: str) -> str:
     """Extract the name of the function that computes the throttling parameter.
 
@@ -52,7 +53,7 @@ def get_throttling_function_name(js: str) -> str:
         # Bpa.length || iha("")) }};
         # In the above case, `iha` is the relevant function name
         r'a\.[a-zA-Z]\s*&&\s*\([a-z]\s*=\s*a\.get\("n"\)\)\s*&&\s*'
-        r'\([a-z]\s*=\s*([a-zA-Z0-9$]{3})(\[\d+\])?\([a-z]\)'
+        r'\([a-z]\s*=\s*([a-zA-Z0-9$]+)(\[\d+\])?\([a-z]\)'
     ]
     # print('Finding throttling function name')
     for pattern in function_patterns:
@@ -67,7 +68,7 @@ def get_throttling_function_name(js: str) -> str:
                 idx = idx.strip("[]")
                 array = re.search(
                     r'var {nfunc}\s*=\s*(\[.+?\]);'.format(
-                        nfunc=function_match.group(1)), 
+                        nfunc=re.escape(function_match.group(1))), 
                     js
                 )
                 if array:
