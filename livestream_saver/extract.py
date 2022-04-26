@@ -53,7 +53,7 @@ def get_video_id_re(url_pattern: str) -> str:
     return results.group(1)
 
 
-def initial_player_response(html: str=None) -> str:
+def initial_player_response(html: Optional[str] = None) -> str:
     if not html:
         raise ValueError(f"Invalid html: {html}")
 
@@ -62,13 +62,13 @@ def initial_player_response(html: str=None) -> str:
     # logger.debug(f"Raw response:\n{content_page}")
     if "ytInitialPlayerResponse =" in html:
         _json = html.split("ytInitialPlayerResponse = ")[1]\
-                            .split(";var meta = document.")[0]
+                            .split(";var meta = document.createElement('meta');")[0]
     # HACK This a bit wonky, as this has to be tested _after_ the
     # ytInitialPlayerResponse, as in some pages both are present.
     # Might need some refactoring.
     elif "var ytInitialData =" in html:
         _json = html.split("var ytInitialData = ")[1]\
-                            .split(';</script><link rel="canonical')[0]
+                            .split(';</script><script nonce="')[0]
     else:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"JSON after split:\n{_json}")
