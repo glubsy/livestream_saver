@@ -70,6 +70,12 @@ class ConcatMethod():
             ext = "mp4"
         else:
             ext = "m4a" if datatype == "audio" else "mp4"
+        
+        if not output_dir:
+            logger.warning(
+                f"{__class__.name} got empty output_dir arg! Falling back to CWD."
+            )
+            output_dir = Path()
         self._final_file: Path = output_dir / \
             f"{video_id}_{datatype}_ffmpeg.{ext}"
 

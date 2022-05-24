@@ -54,6 +54,7 @@ def create_output_dir(output_dir: Path, video_id: Optional[str]) -> Path:
     return capture_dirpath
 
 def get_system_ua():
+    # TODO dynamically generate instead of static strings
     SYSTEM = system()
     if SYSTEM == 'Windows':
         return 'Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0'
@@ -63,8 +64,8 @@ def get_system_ua():
 
 def is_wanted_based_on_metadata(
     data: Iterable[Optional[str]], 
-    allow_re: re.Pattern = None,
-    block_re: re.Pattern = None
+    allow_re: Optional[re.Pattern] = None,
+    block_re: Optional[re.Pattern] = None
     ) -> bool:
     """Test each RE against each item in data (title, description...)"""
     if allow_re is None and block_re is None:
