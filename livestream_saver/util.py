@@ -50,7 +50,7 @@ def create_output_dir(output_dir: Path, video_id: Optional[str]) -> Path:
         capture_dirname = f"stream_capture_{video_id}"
         capture_dirpath = output_dir / capture_dirname
     logger.debug(f"Creating output_dir: {capture_dirpath}...")
-    makedirs(capture_dirpath, 0o766, exist_ok=True)
+    makedirs(capture_dirpath, 0o777, exist_ok=True)
     return capture_dirpath
 
 def get_system_ua():
