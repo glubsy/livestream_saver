@@ -384,6 +384,7 @@ def _get_target_params(
         "channel_name": args.get("channel_name", None),
         "scan_delay": config.getfloat(sub_cmd, "scan_delay", vars=args),
         "skip_download": config.getboolean(sub_cmd, "skip_download", vars=args),
+        "ignore_quality_change": config.getboolean(sub_cmd, "ignore_quality_change", vars=args),
         "hooks": get_hooks_for_section(sub_cmd, config, "_command"),
         "webhooks": get_hooks_for_section(sub_cmd, config, "_webhook"),
         "cookie": config.get(sub_cmd, "cookie", vars=args, fallback=None),
@@ -436,6 +437,10 @@ def _get_target_params(
             params["skip_download"] = config.getboolean(
                 section, "skip_download", vars=args,
                 fallback=params["skip_download"]
+            )
+            params["ignore_quality_change"] = config.getboolean(
+                section, "ignore_quality_change", vars=args,
+                fallback=params["ignore_quality_change"]
             )
 
             # Update any hook already present with those defined in that section
