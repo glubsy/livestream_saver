@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from email.mime import audio
 from os import sep, path, makedirs, listdir
 from sys import stderr
 from platform import system
@@ -177,6 +178,7 @@ class YoutubeLiveStream():
         hooks: Dict = {},
         skip_download = False,
         filters: Dict[str, re.Pattern] = {},
+        ignore_quality_change: bool = False,
         log_level = logging.INFO
     ) -> None:
 
@@ -196,6 +198,7 @@ class YoutubeLiveStream():
 
         self.hooks = hooks
         self.skip_download = skip_download
+        self.ignore_quality_change = ignore_quality_change
 
         # NOTE if "www" is omitted, it might force a redirect on YT's side
         # (with &ucbcb=1) and force us to update cookies again. YT is very picky
@@ -875,7 +878,12 @@ playability status is: {status} \
                 f"Previous video itag: {self.video_itag}. New: {video_quality}.\n"
                 f"Previous audio itag: {self.audio_itag}. New: {audio_quality}"
             )
-            raise Exception("Format mismatch after update of base URL.")
+            
+            # If the codec is too different, abort download:
+            if not self.ignore_quality_change or \
+            ((self.audio_itag.mime_type != audio_quality.mime_type) 
+            or (self.video_itag.mime_type != video_quality.mime_type)):
+                raise Exception("Stream format mismatch after update of base URL.")
 
         self.video_itag = video_quality
         self.audio_itag = audio_quality

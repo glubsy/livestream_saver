@@ -15,6 +15,11 @@
 # (This can be set in each individual sections):
 # delete_source = True
 
+# If quality of video or audio stream changes during broadcast, ignore this 
+# change and keep downloading anyway. This may result in errors during the final
+# segments merge step. 
+# ignore_quality_change = False
+
 [common]
 # These variables can be re-used in other sections through interpolation. 
 # This section does nothing else.

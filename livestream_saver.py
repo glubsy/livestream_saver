@@ -134,6 +134,13 @@ merging of streams has been successful. Only useful for troubleshooting.'
         help='Skip the download phase (useful to run hook scripts instead).'\
             f' (Default: {config.getboolean("monitor", "skip_download")})'
     )
+    monitor_parser.add_argument('--ignore-quality-change',
+        action='store_true',
+        default=argparse.SUPPRESS,
+        help='If stream resolution changes during live-stream, keep downloading anyway.'\
+            f' (Default: {config.getboolean("monitor", "ignore_quality_change")})'
+    )
+
 
     # Sub-command "download"
     download_parser = subparsers.add_parser('download',
@@ -195,6 +202,12 @@ streams has been successful. Only useful for troubleshooting.'
         default=argparse.SUPPRESS,
         help='Skip the download phase (useful to run hook scripts instead).'\
             f' (Default: {config.getboolean("download", "skip_download")})'
+    )
+    download_parser.add_argument('--ignore-quality-change',
+        action='store_true',
+        default=argparse.SUPPRESS,
+        help='If stream resolution changes during live-stream, keep downloading anyway.'\
+            f' (Default: {config.getboolean("download", "ignore_quality_change")})'
     )
 
     # Sub-command "merge"
@@ -512,6 +525,8 @@ def monitor_mode(config, args):
                 hooks=args["hooks"],
                 skip_download=args.get("skip_download", False),
                 filters=args["filters"],
+                ignore_quality_change=config.getboolean(
+                    "monitor", "ignore_quality_change", vars=args, fallback=False),
                 log_level=config.get("monitor", "log_level", vars=args)
             )
         except ValueError as e:
@@ -605,6 +620,8 @@ def download_mode(config, args):
             ),
             # no filters in this mode, we assume the user knows what they're doing
             filters={},
+            ignore_quality_change=config.getboolean(
+                "download", "ignore_quality_change", vars=args, fallback=False),
             log_level=config.get("download", "log_level", vars=args)
         )
     except ValueError as e:
@@ -709,6 +726,7 @@ def init_config() -> ConfigParser:
         "no_merge": "False",
         "skip_download": "False",
         "email_notifications": "False",
+        "ignore_quality_change": "False",
     }
     other_defaults = {
         "email": {
@@ -832,6 +850,7 @@ def main():
         args["hooks"] = params.get("hooks")
         args["cookie"] = params.get("cookie")
         args["skip_download"] = params.get("skip_download")
+        args["ignore_quality_change"] = params.get("ignore_quality_change")
         args["filters"] = params.get("filters", {})
 
         channel_id = get_channel_id(args["URL"], service_name="youtube")
@@ -865,6 +884,8 @@ def main():
         URL = args.get("URL", "")  # pass empty string for get_video_id()
         args["hooks"] = get_hooks_for_section(sub_cmd, config, "_command")
         args["cookie"] = config.get(sub_cmd, "cookie", vars=args, fallback=None)
+        args["ignore_quality_change"] = config.get(
+            "ignore_quality_change", vars=args, fallback=False)
 
         NOTIFIER.webhooks = get_hooks_for_section(sub_cmd, config, "_webhook")
         NOTIFIER.setup(config, args)
