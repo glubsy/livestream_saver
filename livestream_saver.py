@@ -890,7 +890,7 @@ def main():
         args["hooks"] = get_hooks_for_section(sub_cmd, config, "_command")
         args["cookie"] = config.get(sub_cmd, "cookie", vars=args, fallback=None)
         args["ignore_quality_change"] = config.get(
-            "ignore_quality_change", vars=args, fallback=False)
+            sub_cmd, "ignore_quality_change", vars=args, fallback=False)
 
         NOTIFIER.webhooks = get_hooks_for_section(sub_cmd, config, "_webhook")
         NOTIFIER.setup(config, args)
