@@ -931,7 +931,7 @@ playability status is: {status} \
             dir_existed = False
             for path in (self.video_outpath, self.audio_outpath):
                 try:
-                    makedirs(path, 0o766)
+                    makedirs(path, 0o770)
                 except FileExistsError:
                     dir_existed = True
 
