@@ -986,12 +986,14 @@ playability status is: {status} \
             while True:
                 try:
                     self.do_download()
-                except (exceptions.EmptySegmentException,
-                        exceptions.ForbiddenSegmentException,
-                        IncompleteRead,
-                        ValueError,
-                        ConnectionError  # ConnectionResetError - Connection reset by peer
-                    ) as e:
+                except (
+                    exceptions.EmptySegmentException,
+                    exceptions.ForbiddenSegmentException,
+                    IncompleteRead,
+                    ValueError,
+                    ConnectionError,  # ConnectionResetError - Connection reset by peer
+                    urllib.error.HTTPError # typically 404 errors, need refresh
+                ) as e:
                     self.logger.info(e)
                     # force update
                     self._watch_html = None
@@ -1035,7 +1037,7 @@ playability status is: {status} \
         if self.error:
             self.logger.critical(f"Some kind of error occured during download? {self.error}")
 
-    def download_seg(self, baseurl, seg, type):
+    def download_seg(self, baseurl: BaseURL, seg, type):
         segment_url: str = baseurl.add_seg(seg)
 
         # To have zero-padded filenames (not compatible with
@@ -1069,8 +1071,8 @@ playability status is: {status} \
 
         last_check_time = datetime.now()
         wait_sec = 3
-        max_attempt = 10
-        attempt = 0
+        max_attempts = 10
+        attempts_left = max_attempts
         while True:
             try:
                 self.print_progress(self.seg)
@@ -1084,32 +1086,36 @@ playability status is: {status} \
 
                 if not self.download_seg(self.video_base_url, self.seg, "video") \
                 or not self.download_seg(self.audio_base_url, self.seg, "audio"):
-                    attempt += 1
-                    if attempt <= max_attempt:
+                    attempts_left -= 1
+                    if attempts_left >= 0:
                         self.logger.warning(
-                            f"Waiting for {wait_sec} seconds before retrying... "
-                            f"(attempt {attempt}/{max_attempt})")
+                            f"Waiting for {wait_sec} seconds before retrying "
+                            f"segment {self.seg} (attempt {max_attempts - attempts_left}/{max_attempts})")
                         sleep(wait_sec)
                         continue
                     else:
                         self.logger.warning(
                             f"Skipping segment {self.seg} due to too many attempts.")
-                attempt = 0
+                # Resetting error counter and moving on to next segment
+                attempts_left = max_attempts
                 self.seg_attempt = 0
                 self.seg += 1
 
             except urllib.error.URLError as e:
                 self.logger.critical(f'{type(e)}: {e}')
+                if e.reason == "Not Found":
+                    # Try to refresh immediately
+                    raise
                 if e.reason == 'Forbidden':
                     # Usually this means the stream has ended and parts
                     # are now unavailable.
                     raise exceptions.ForbiddenSegmentException(e.reason)
-                if attempt > max_attempt:
+                if attempts_left < 0:
                     raise e
-                attempt += 1
+                attempts_left -= 1
                 self.logger.warning(
                     f"Waiting for {wait_sec} seconds before retrying... "
-                    f"(attempt {attempt}/{max_attempt})")
+                    f"(attempt {max_attempts - attempts_left}/{max_attempts})")
                 sleep(wait_sec)
                 continue
             except (IncompleteRead, ValueError) as e:
