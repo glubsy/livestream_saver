@@ -18,18 +18,21 @@ class YoutubeChannel:
         self.id = channel_id
         self.channel_name = "N/A"
         self.videos_json = None
-        self._community_videos = None
         self._public_videos = None
         self._upcoming_videos = None
+        self._community_videos = None
+        self._membership_videos = None
 
-        self._community_videos_html = None
         self._public_videos_html = None
         self._upcoming_videos_html = None
+        self._community_videos_html = None
+        self._membership_videos_html = None
 
-        self._community_json = None
         self._public_json = None
         self._upcoming_json = None
-
+        self._community_json = None
+        self._membership_json = None
+        
         self.notifier = notifier
         self.hooks = hooks
         self._hooked_videos = []
@@ -71,6 +74,16 @@ class YoutubeChannel:
         return self._public_videos_html
 
     @property
+    def membership_videos_html(self):
+        if self._membership_videos_html:
+            return self._membership_videos_html
+
+        self._membership_videos_html = self.session.make_request(
+            self.url + '/membership'
+        )
+        return self._membership_videos_html
+
+    @property
     def upcoming_videos_html(self):
         if self._upcoming_videos_html:
             return self._upcoming_videos_html
@@ -89,6 +102,18 @@ class YoutubeChannel:
             )
         )
         return self._community_json
+
+    @property
+    def membership_json(self) -> Dict:
+        if self._membership_json:
+            return self._membership_json
+
+        self._membership_json = extract.str_as_json(
+            extract.initial_player_response(
+                self.membership_videos_html
+            )
+        )
+        return self._membership_json
 
     @property
     def public_json(self):
@@ -150,6 +175,43 @@ class YoutubeChannel:
                     self.trigger_hook('on_video_detected', vid)
         self._community_videos = community_videos
         return self._community_videos
+
+    @property
+    def membership_videos(self):
+        membership_videos = self.update_membership_videos()
+
+        # Occurs on the first time
+        if self._membership_videos is None:
+            logger.info(
+                "Currently listed membership videos: {}\n{}".format(
+                    len(membership_videos),
+                    format_list_output(membership_videos)
+                )
+            )
+            for vid in membership_videos:
+                if vid.get("upcoming"):
+                    self.trigger_hook('on_upcoming_detected', vid)
+        else:
+            known_ids = [v["videoId"] for v in self._membership_videos]
+            new_membership_videos = [
+                v for v in membership_videos if v["videoId"] not in known_ids
+            ]
+            if new_membership_videos:
+                logger.info(
+                    "Newly added membership video: {}\n{}".format(
+                        len(new_membership_videos),
+                        format_list_output(new_membership_videos)
+                    )
+                )
+                for vid in new_membership_videos:
+                    if vid.get("upcoming"):
+                        self.trigger_hook('on_upcoming_detected', vid)
+                    if vid.get("isLiveNow") or vid.get("isLive"):
+                        continue
+                    # Although rare, this should trigger for VODs only
+                    self.trigger_hook('on_video_detected', vid)
+        self._membership_videos = membership_videos
+        return self._membership_videos
 
     @property
     def public_videos(self):
@@ -363,12 +425,31 @@ class YoutubeChannel:
         for vid in self.community_videos:
             if vid.get(filter_type):
                 live_videos.append(vid)
+        for vid in self.membership_videos:
+            if vid.get(filter_type):
+                live_videos.append(vid)
         # No need to check for "upcoming_videos" because live videos should appear
         # in the public videos list:
         for vid in self.public_videos:
             if vid.get(filter_type):
                 live_videos.append(vid)
         return live_videos
+
+    def update_membership_videos(self):
+        """Returns list of Dict with urls to videos attached to membership posts.
+        """
+        self._membership_json = self._membership_videos_html = None # force update
+
+        membership_json = {}
+        try:
+            membership_json = self.membership_json
+            self.session.is_logged_out(membership_json)
+        except Exception as e:
+            # TODO send email here?
+            logger.critical(f"Got an invalid membership JSON: {e}")
+
+        tabs = get_tabs_from_json(membership_json)
+        return get_videos_from_tab(tabs, 'Membership')
 
     def update_community_videos(self):
         """Returns list of Dict with urls to videos attached to community posts.
@@ -385,6 +466,22 @@ class YoutubeChannel:
 
         tabs = get_tabs_from_json(community_json)
         return get_videos_from_tab(tabs, 'Community')
+
+    def update_membership_videos(self):
+        """Returns list of Dict with urls to videos attached to membership posts.
+        """
+        self._membership_json = self._membership_videos_html = None # force update
+
+        membership_json = {}
+        try:
+            membership_json = self.membership_json
+            self.session.is_logged_out(membership_json)
+        except Exception as e:
+            # TODO send email here?
+            logger.critical(f"Got an invalid membership JSON: {e}")
+
+        tabs = get_tabs_from_json(membership_json)
+        return get_videos_from_tab(tabs, 'Membership')
 
     def update_public_videos(self):
         """Returns list of videos from "videos" or "featured" tabs."""
@@ -440,7 +537,7 @@ class YoutubeChannel:
 def get_videos_from_tab(tabs, tabtype) -> List[Dict]:
     """
     Returns videos attached to posts in available "tab" section in JSON response.
-    tabtype is either "Videos" "Community", "Home" etc.
+    tabtype is either "Videos" "Community", "Membership", "Home" etc.
     """
     videos = []
     for tab in tabs:
@@ -452,7 +549,7 @@ def get_videos_from_tab(tabs, tabtype) -> List[Dict]:
                       .get('contents', [])
         for _item in sectionList_contents:
             for __item in _item.get('itemSectionRenderer', {}).get('contents', []):
-                if tabtype == "Community":
+                if tabtype == "Community" or tabtype == "Membership":
                     post = __item.get('backstagePostThreadRenderer', {})\
                                  .get('post', {})
                     if post:
