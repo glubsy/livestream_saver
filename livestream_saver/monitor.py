@@ -435,22 +435,6 @@ class YoutubeChannel:
                 live_videos.append(vid)
         return live_videos
 
-    def update_membership_videos(self):
-        """Returns list of Dict with urls to videos attached to membership posts.
-        """
-        self._membership_json = self._membership_videos_html = None # force update
-
-        membership_json = {}
-        try:
-            membership_json = self.membership_json
-            self.session.is_logged_out(membership_json)
-        except Exception as e:
-            # TODO send email here?
-            logger.critical(f"Got an invalid membership JSON: {e}")
-
-        tabs = get_tabs_from_json(membership_json)
-        return get_videos_from_tab(tabs, 'Membership')
-
     def update_community_videos(self):
         """Returns list of Dict with urls to videos attached to community posts.
         """
