@@ -458,6 +458,7 @@ class YoutubeChannel:
 
         membership_json = {}
         try:
+            # TODO will have to fetch from innertube API at some point (more reliable)
             membership_json = self.membership_json
             self.session.is_logged_out(membership_json)
         except Exception as e:
@@ -533,6 +534,7 @@ def get_videos_from_tab(tabs, tabtype) -> List[Dict]:
                       .get('contents', [])
         for _item in sectionList_contents:
             for __item in _item.get('itemSectionRenderer', {}).get('contents', []):
+                # These tabs appear to share the same architecture
                 if tabtype == "Community" or tabtype == "Membership":
                     post = __item.get('backstagePostThreadRenderer', {})\
                                  .get('post', {})
@@ -546,6 +548,11 @@ def get_videos_from_tab(tabs, tabtype) -> List[Dict]:
                                 if vid_metadata.get('videoId'):
                                     # some posts don't have attached videos
                                     videos.append(vid_metadata)
+                    # In some cases the video is directly listed as its own item:
+                    if videoRenderer := __item.get('videoRenderer', {}):
+                        vid_metadata = get_video_from_post(videoRenderer)
+                        if vid_metadata.get('videoId'):
+                            videos.append(vid_metadata)
                 elif tabtype == "Videos":
                     griditems = __item.get('gridRenderer', {})\
                                       .get('items', [])
