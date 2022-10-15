@@ -49,10 +49,13 @@ def segname_to_int(path: Path) -> int:
 
 class ConcatMethod():
     def __init__(
-        self, segment_list: List[Path], datatype: str,
-        video_id: str, output_dir: Path,
+        self, segment_list: List[Path],
+        datatype: str,
+        video_id: str,
+        output_dir: Path,
         missing_ints: List = [],
-        corrupt_segs: Optional[List] = None) -> None:
+        corrupt_segs: Optional[List] = None
+    ) -> None:
         self.datatype = datatype
         self.segment_list = segment_list
         self._missing_seg_ints = missing_ints
@@ -70,7 +73,7 @@ class ConcatMethod():
             ext = "mp4"
         else:
             ext = "m4a" if datatype == "audio" else "mp4"
-        
+
         if not output_dir:
             logger.warning(
                 f"{__class__.name} got empty output_dir arg! Falling back to CWD."
@@ -213,12 +216,12 @@ class ConcatMethod():
             ".")
         return False
 
-        def make(self, *args, **kwargs) -> None:
-            raise NotImplementedError()
+    def make(self, *args, **kwargs) -> None:
+        raise NotImplementedError()
 
-        def setup_command(self, *args, **kwargs) -> List:
-            """Setup command for ffmpeg."""
-            raise NotImplementedError()
+    def setup_command(self, *args, **kwargs) -> List:
+        """Setup command for ffmpeg."""
+        raise NotImplementedError()
 
 
 class ConcatDemuxer(ConcatMethod):
@@ -246,17 +249,20 @@ class ConcatDemuxer(ConcatMethod):
                 raise DurationMismatchError()
         except CorruptPacketError:
             corrupt = self.corrupt_segments
-            if not corrupt:
+            if corrupt:
+                # Doing f for f in segment_list if f not in corrupt
+                corrupt_ints = list(path_list_to_int(corrupt))
+                self.segment_list = list(
+                    filter(lambda f: segname_to_int(f) not in corrupt_ints,
+                    self.segment_list))
+                cmd = self.setup_command()
+                logger.info(f"Re-Muxing {self.datatype} track file...")
+                self.run_ffmpeg(cmd)
+            elif not self._final_file.exists():
                 # Something else is wrong. Bail out.
                 raise
-            # Doing f for f in segment_list if f not in corrupt
-            corrupt_ints = list(path_list_to_int(corrupt))
-            self.segment_list = list(
-                filter(lambda f: segname_to_int(f) not in corrupt_ints,
-                self.segment_list))
-            cmd = self.setup_command()
-            logger.info(f"Re-Muxing {self.datatype} track file...")
-            self.run_ffmpeg(cmd)
+            else:
+                logger.warning("No corrupt segment detected. File might be alright.")
         finally:
             if self.list_file_path is not None:
                 # self.list_file_path.unlink(missing_ok=True)
@@ -322,29 +328,34 @@ class NativeConcatFile(ConcatMethod):
                 raise DurationMismatchError()
 
         except (CorruptPacketError, DurationMismatchError):
+            logger.warning(
+                "We encountered corrupt packets during first muxing.")
             corrupt = self.corrupt_segments
-            if not corrupt:
-                # no corrupt packet, something else is wrong.
+            if corrupt:
+                # Recreate the list of segments minus the corrupted ones
+                # f for f in segment_list if f not in corrupt
+                corrupt_ints = list(path_list_to_int(corrupt))
+                self.segment_list = list(
+                    filter(lambda f: segname_to_int(f) not in corrupt_ints,
+                    self.segment_list))
+                self.native_concat(overwrite=True)
+
+                # cmd = self.setup_ts_command()
+                # logger.info("Fixing mpeg-ts container with ffmpeg...")
+                # self.run_ffmpeg(cmd)
+
+                cmd = self.setup_command()
+                logger.info(f"Re-Muxing {self.datatype} track file...")
+                self.run_ffmpeg(cmd)
+
+                duration = probe(self._final_file).get("duration", 0.0)
+                if not self.is_valid_duration(self._final_file, duration):
+                    raise DurationMismatchError()
+            elif not self._final_file.exists():
+                # no corrupt packet, but something else is wrong.
                 raise
-
-            # f for f in segment_list if f not in corrupt
-            corrupt_ints = list(path_list_to_int(corrupt))
-            self.segment_list = list(
-                filter(lambda f: segname_to_int(f) not in corrupt_ints,
-                self.segment_list))
-            self.native_concat(overwrite=True)
-
-            # cmd = self.setup_ts_command()
-            # logger.info("Fixing mpeg-ts container with ffmpeg...")
-            # self.run_ffmpeg(cmd)
-
-            cmd = self.setup_command()
-            logger.info(f"Re-Muxing {self.datatype} track file...")
-            self.run_ffmpeg(cmd)
-
-            duration = probe(self._final_file).get("duration", 0.0)
-            if not self.is_valid_duration(self._final_file, duration):
-                raise DurationMismatchError()
+            else:
+                logger.warning("No corrupt segment detected. File might be alright.")
         except NonMonotonousDTSError as e:
             logger.warning(e)
             self.error = e
