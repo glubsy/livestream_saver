@@ -192,11 +192,6 @@ class YoutubeUrllibSession:
         """Make a request with cookies applied."""
         req = Request(url, headers=self.headers)
         self.cookie_jar.add_cookie_header(req)
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Request {req.full_url}")
-            logger.debug(f"Request headers: {req.header_items()}")
-
         return self.get_html(req)
 
     def make_api_request(self, video_id) -> str:
@@ -232,7 +227,7 @@ class YoutubeUrllibSession:
             if SessionIndex := self.ytcfg.get('SessionIndex'):
                 headers["X-Goog-AuthUser"] = SessionIndex
         
-        logger.debug(f"Making API request with headers:{headers}")
+        logger.debug(f"Making API request... {headers=}")
 
         data = {
             "context": {
@@ -253,10 +248,6 @@ class YoutubeUrllibSession:
         )
 
         self.cookie_jar.add_cookie_header(req)
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"POST Request {req.full_url}")
-            logger.debug(f"POST Request headers: {req.header_items()}")
 
         return self.get_html(req)
 
@@ -323,15 +314,18 @@ class YoutubeUrllibSession:
         # TODO get the DASH manifest (MPD) and parse that xml file instead
         # We could also use youtube-dl --dump-json instead
         with urlopen(req) as res:
-            logger.debug(f"REQUEST {req.full_url} -> response url: {res.url}")
-            if logger.isEnabledFor(logging.DEBUG):
+            status = res.status
+            
+            if status >= 204:
+                logger.debug(f"Request {req.full_url} -> response url: {res.url}")
+                logger.debug(f"POST Request headers were {req.header_items()}")
                 logger.debug(
-                    f"Response Status code: {res.status}.\n"
+                    f"Response {status=}.\n"
                     f"Response headers:\n{res.headers}")
 
             self.update_cookies(req, res)
 
-            if res.status == 429:
+            if status == 429:
                 raise Exception(
                     "Error 429. Too many requests? Please try again later "
                     "or get a new IP (also a new cookie?).")
