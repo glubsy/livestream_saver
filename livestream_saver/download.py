@@ -1051,7 +1051,7 @@ playability status is: {status} \
         with closing(urlopen(segment_url)) as in_stream:
             headers = in_stream.headers
             status = in_stream.status
-            if self.logger.isEnabledFor(logging.DEBUG):
+            if status >= 204:
                 self.logger.debug(f"Seg {self.seg} {type} URL: {segment_url}")
                 self.logger.debug(f"Seg status: {status}")
                 self.logger.debug(f"Seg headers:\n{headers}")
