@@ -491,24 +491,24 @@ class YoutubeChannel:
 
         logger.info(f"Fetching extra info from API for {videoId=} ...")
         try:
-            json_string = self.session.make_api_request(
+            return self.session.make_api_request(
                 endpoint="https://www.youtube.com/youtubei/v1/player",
                 payload={
                     "videoId": videoId
                 }
             )
-            return extract.str_as_json(json_string)
         except Exception as e:
-            logger.warning(f"Error fetching metadata for video {videoId}: {e}")
+            logger.warning(f"Error fetching metadata for {videoId=}: {e}")
 
         # Fallback: fetch from regular HTML page
-        if vid.get("url"):
-            logger.info(f"Fetching video {videoId} info from HTML page...")
+        if url := vid.get("url"):
+            logger.warning(
+                f"Fetching {videoId=} info from HTML page because it failed through the API...")
             try:
-                html_page = self.session.make_request(vid.get("url"))
+                html_page = self.session.make_request(url)
                 return extract.initial_player_response(html_page)
             except Exception as e:
-                logger.warning(f"Error fetching metadata for video {videoId}: {e}")
+                logger.error(f"Error fetching metadata for video {videoId}: {e}")
 
     def is_hooked_video(self, videoId: Optional[str]):
         """Keep track of the last few videos for which we have triggered a hook
