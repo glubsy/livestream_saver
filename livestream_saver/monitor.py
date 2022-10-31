@@ -508,7 +508,7 @@ class YoutubeChannel:
                 if vid.get(filter_type):
                     live_videos.append(vid)
         except TabNotFound as e:
-            self.log.warning("No membership tab available.")
+            self.log.debug("No membership tab available.")
 
         # No need to check for "upcoming_videos" because live videos should
         # appear in the public videos list.
@@ -532,15 +532,17 @@ class YoutubeChannel:
                 _json = self.get_upcoming_json(update=True)
                 return get_videos_from_tab(get_tabs_from_json(_json), "Videos")
             except Exception as e:
-                self.log.warning(e)
+                self.log.debug(
+                    f"Failed to get upcoming videos from Videos tab: {e}")
 
             # If no upcoming json from Videos tab, try to grab from Live tab
             # since this is where they are supposed to be listed from now on.
             try:
                 _json = self.get_live_json()
                 return get_videos_from_tab(get_tabs_from_json(_json), "Live")
-            except TabNotFound as e:
-                self.log.critical("Failed to get Live tab for upcoming videos!")
+            except Exception as e:
+                self.log.debug(
+                    f"Failed to get upcoming videos from Live tab: {e}")
             return []
 
         elif tab_type == "live":
@@ -594,7 +596,7 @@ class YoutubeChannel:
         """
         endpoint = self._endpoints.get("Upcoming")
         if not endpoint and "Live" in self._endpoints.keys():
-            raise TabNotFound("Use Live tab instead for upcoming livestreams.")
+            raise TabNotFound("No Upcoming endpoint found, but Live tab found")
 
         browseEndpoint = endpoint.get("browseEndpoint")
         canonicalBaseUrl = browseEndpoint.get("canonicalBaseUrl", "")

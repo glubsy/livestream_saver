@@ -337,10 +337,9 @@ class YoutubeUrllibSession:
 
     # TODO Place this in both monitor and download
     def _check_logged_out(self, json_obj):
-        logged_out = json_obj.get("responseContext", {}) \
+        return json_obj.get("responseContext", {}) \
                 .get("mainAppWebResponseContext", {}) \
                 .get("loggedOut", True)
-        return logged_out
 
     def is_logged_out(self, json_obj):
         """Take a json object and return if we detect logged out status

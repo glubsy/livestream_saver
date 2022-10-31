@@ -472,6 +472,7 @@ def _get_target_params(
         )
     return params
 
+TIME_VARIANCE = 3.0  # in minutes
 
 def monitor_mode(config, args):
     URL = args["URL"]
@@ -506,11 +507,11 @@ def monitor_mode(config, args):
             )
         except Exception as e:
             # Handle urllib.error.URLError <urlopen error [Errno -3] Temporary failure in name resolution>
-            logger.exception(e)
+            logger.exception(f"Error while getting live videos: {e}")
             pass
 
         if len(live_videos) == 0:
-            wait_block(min_minutes=scan_delay, variance=3.5)
+            wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
             continue
 
         target_live = live_videos[0]
@@ -537,7 +538,7 @@ def monitor_mode(config, args):
         except ValueError as e:
             # Constructor may throw
             logger.critical(e)
-            wait_block(min_minutes=scan_delay, variance=3.5)
+            wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
             continue
 
         logger.info(
@@ -600,7 +601,7 @@ def monitor_mode(config, args):
             logger.critical("Error during stream download! Resuming monitoring...")
             pass
 
-        wait_block(min_minutes=scan_delay, variance=3.5)
+        wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
     return 1
 
 
