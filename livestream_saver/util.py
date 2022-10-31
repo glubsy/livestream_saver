@@ -3,7 +3,8 @@ import re
 from os import makedirs
 from platform import system
 from pathlib import Path
-from typing import Optional, Iterable
+from typing import Optional, Iterable, Dict
+from json import loads
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -102,3 +103,14 @@ event_props = [
 ]
 
 UA = get_system_ua()
+
+
+def str_as_json(string: str) -> Dict:
+    try:
+        j = loads(string)
+    except Exception as e:
+        logger.critical(f"Error loading JSON from string: {e}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"get_json_from_string: {string}")
+        raise
+    return j

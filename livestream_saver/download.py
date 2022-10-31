@@ -69,7 +69,7 @@ def get_throttling_function_name(js: str) -> str:
                 idx = idx.strip("[]")
                 array = re.search(
                     r'var {nfunc}\s*=\s*(\[.+?\]);'.format(
-                        nfunc=re.escape(function_match.group(1))), 
+                        nfunc=re.escape(function_match.group(1))),
                     js
                 )
                 if array:
@@ -377,7 +377,6 @@ We assume a failed download attempt. Last segment available was {seg}.")
         self._embed_html = pytube.request.get(url=self.embed_url)
         return self._embed_html
 
-
     @property
     def json(self):
         if self._json:
@@ -385,8 +384,10 @@ We assume a failed download attempt. Last segment available was {seg}.")
         try:
             # json_string = extract.initial_player_response(self.watch_html)
             # API request with ANDROID client gives us a pre-signed URL
-            json_string = self.session.make_api_request(self.video_id)
-            self._json = extract.str_as_json(json_string)
+            self._json = self.session.make_api_request(
+                endpoint="https://www.youtube.com/youtubei/v1/player",
+                payload={"videoId": self.video_id}
+            )
             self.session.is_logged_out(self._json)
 
             remove_useless_keys(self._json)
@@ -499,9 +500,9 @@ We assume a failed download attempt. Last segment available was {seg}.")
         """
         # self.update_status()
         query = pytube.StreamQuery(self.fmt_streams)
-        # BUG in pytube, livestreams with resolution higher than 1080 do not 
-        # return descriptions for their available streams, except in the 
-        # DASH MPD manifest! These descriptions seem to re-appear after the 
+        # BUG in pytube, livestreams with resolution higher than 1080 do not
+        # return descriptions for their available streams, except in the
+        # DASH MPD manifest! These descriptions seem to re-appear after the
         # stream has been converted to a VOD though.
         if len(query) == 0:
             if mpd_streams := self.get_streams_from_mpd():
@@ -878,10 +879,10 @@ playability status is: {status} \
                 f"Previous video itag: {self.video_itag}. New: {video_quality}.\n"
                 f"Previous audio itag: {self.audio_itag}. New: {audio_quality}"
             )
-            
+
             # If the codec is too different, abort download:
             if not self.ignore_quality_change or \
-            ((self.audio_itag.mime_type != audio_quality.mime_type) 
+            ((self.audio_itag.mime_type != audio_quality.mime_type)
             or (self.video_itag.mime_type != video_quality.mime_type)):
                 raise Exception("Stream format mismatch after update of base URL.")
 
@@ -1426,10 +1427,10 @@ playability status is: {status} \
             thumbnails = self.player_response.get("videoDetails", {})\
                 .get("thumbnail", {})
         except Exception as e:
-            # This might occur if we invalidated the cache but the stream is not 
+            # This might occur if we invalidated the cache but the stream is not
             # live anymore, and "streamingData" key is missing from the json
             self.logger.warning(f"Error getting thumbnail metadata value: {e}")
-        
+
         return {
                 "url": self.url,
                 "videoId": self.video_id,

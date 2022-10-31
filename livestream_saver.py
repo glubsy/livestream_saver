@@ -488,22 +488,22 @@ def monitor_mode(config, args):
     ch = YoutubeChannel(
         URL, channel_id, session,
         output_dir=args["output_dir"], hooks=args["hooks"], notifier=NOTIFIER)
-
-    logger.info(f"Monitoring channel: {ch.id}")
+    ch.load_params()
+    logger.info(f"Monitoring channel: {ch._id}")
 
     while True:
         live_videos = []
         try:
             # Get the list of upcoming videos. This is done separately because
             # detection is flaky right now.
-            ch.upcoming_videos
+            ch.get_upcoming_videos(update=True)
             live_videos = ch.filter_videos('isLiveNow')  # get the actual live stream
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "Live videos found for channel "
-                    f"\"{ch.get_channel_name()}\": "
-                    f"{live_videos if len(live_videos) else None}"
-                )
+            # TODO print to stdout and overwrite line
+            logger.debug(
+                "Live videos found for channel "
+                f"\"{ch.get_channel_name()}\": "
+                f"{live_videos if len(live_videos) else None}"
+            )
         except Exception as e:
             # Handle urllib.error.URLError <urlopen error [Errno -3] Temporary failure in name resolution>
             logger.exception(e)

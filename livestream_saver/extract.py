@@ -1,11 +1,24 @@
 import logging
 import re
 from datetime import datetime
-from json import loads
 from typing import Dict, Optional
+from livestream_saver.util import str_as_json
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+
+def get_browseId_from_json(json: Dict) -> Optional[str]:
+    """
+    Return the browseId for this channel. Useful if we only know the vanity url.
+    Eg. https://www.youtube.com/c/dokuganP -> UC_HrzgYmapddmGSfn2UMHTA
+    """
+    serviceTrackingParams = json.get("responseContext", {}).get("serviceTrackingParams", [])
+    for service in serviceTrackingParams:
+        if params := service.get("params", []):
+            for param in params:
+                if param.get("key") == "browse_id":
+                    return param.get("value")
 
 
 def get_base_url_from_itag(_json: Dict, itag: int) -> str:
@@ -57,8 +70,6 @@ def initial_player_response(html: Optional[str] = None) -> str:
     if not html:
         raise ValueError(f"Invalid html: {html}")
 
-    _json: str = ""
-
     # logger.debug(f"Raw response:\n{content_page}")
     if "ytInitialPlayerResponse =" in html:
         _json = html.split("ytInitialPlayerResponse = ")[1]\
@@ -70,23 +81,11 @@ def initial_player_response(html: Optional[str] = None) -> str:
         _json = html.split("var ytInitialData = ")[1]\
                             .split(';</script><script nonce="')[0]
     else:
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"JSON after split:\n{_json}")
-        raise Exception("Could not find ytInitialData nor \
-ytInitialPlayerResponse in the GET request!")
-    return _json
-
-
-def str_as_json(string: str) -> Dict:
-    """Return :param string str as a python json object."""
-    try:
-        j = loads(string)
-    except Exception as e:
-        logger.critical(f"Error loading JSON from string: {e}")
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"get_json_from_string: {string}")
-        raise
-    return j
+        logger.critical(f"Failed to extract JSON. HTML content:\n{_json}")
+        raise Exception(
+            "Could not find ytInitialData nor ytInitialPlayerResponse in HTML."
+        )
+    return str_as_json(_json)
 
 
 # from pytube.extract, with some modifications

@@ -1,21 +1,76 @@
 import logging
-# from sys import version_info
-# from platform import python_version_tuple
 import re
 import json
 from random import randint
 from urllib.request import Request, urlopen #, build_opener, HTTPCookieProcessor, HTTPHandler
+from urllib.parse import urlencode
 import http.cookiejar
 from http.cookies import SimpleCookie
 from typing import Dict, Optional, Union
 import time
 import hashlib
 
-from livestream_saver.util import UA
+from livestream_saver.util import UA, str_as_json
 from livestream_saver.cookies import get_cookie
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
+
+
+# TODO Copy clients from yt-dlp project
+# TODO do not hardcode timezone
+# TODO assign dynamic User-Agent to Web client
+INNERTUBE_CLIENTS = {
+    "web_linux": {
+        "INNERTUBE_API_KEY": "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+        "INNERTUBE_CONTEXT": {
+            "context": {
+                "client": {
+                    # "acceptHeader": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    # "browserName": "Firefox",
+                    # "browserVersion": "103.0",
+                    # "clientFormFactor": "UNKNOWN_FORM_FACTOR",
+                    "clientName": "WEB",
+                    "clientVersion": "2.20221026.05.00",
+                    # "deviceMake": "",
+                    # "deviceModel": "",
+                    # "gl": "EN",
+                    # "hl": "en",
+                    # "mainAppWebInfo": {
+                    #     "isWebNativeShareAvailable": "false",
+                    #     "webDisplayMode": "WEB_DISPLAY_MODE_BROWSER"
+                    # },
+                    # "osName": "X11",
+                    # "osVersion": "",
+                    # "platform": "DESKTOP",
+                    # "timeZone": "Europe/Madrid",
+                    # "userAgent": "Mozilla/5.0 (X11; Linux x86_64; rv:103.0) Gecko/20100101 Firefox/103.0,gzip(gfe)",
+                    # "userInterfaceTheme": "USER_INTERFACE_THEME_DARK",
+                    # "utcOffsetMinutes": 60,
+                },
+                # "user": {
+                #     "lockedSafetyMode": False
+                # }
+            }
+        },
+        "INNERTUBE_CONTEXT_CLIENT_NAME": "1"
+    },
+    "android": {
+        "INNERTUBE_API_KEY": "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
+        "INNERTUBE_CONTEXT": {
+            "context": {
+                "client": {
+                    "clientName": "ANDROID",
+                    "clientVersion": "17.31.35",
+                    "androidSdkVersion": 30,
+                    "userAgent": "com.google.android.youtube/17.31.35 (Linux; U; Android 11) gzip",
+                    "hl": "en"
+                }
+            }
+        },
+        "INNERTUBE_CONTEXT_CLIENT_NAME": "3"
+    }
+}
 
 
 class YoutubeUrllibSession:
@@ -28,9 +83,10 @@ class YoutubeUrllibSession:
         self.cookie_path = cookie_path
         self.cookie_jar = get_cookie(cookie_path)
         # TODO add proxies
+        # TODO could use fake-useragent package here for an up-to-date string
         self.headers = {
-            'user-agent': UA, # TODO could use fake-useragent package here for an up-to-date string
-            'accept-language': 'en-US,en' # ensure messages in english from the API
+            'User-Agent': UA, 
+            'Accept-Language': 'en-US,en'  # ensure messages in english from the API
         }
         self._initialize_consent()
         self._logged_in = False
@@ -188,14 +244,31 @@ class YoutubeUrllibSession:
         if self.cookie_jar.filename:
             self.cookie_jar.save(ignore_expires=True)
 
-    def make_request(self, url):
+    def make_request(self, url) -> str:
         """Make a request with cookies applied."""
         req = Request(url, headers=self.headers)
         self.cookie_jar.add_cookie_header(req)
-        return self.get_html(req)
+        return self.get_response_as_str(req)
 
-    def make_api_request(self, video_id) -> str:
-        """Make an innertube API call. Return response as string."""
+    def make_api_request(
+        self, endpoint: str, payload: Optional[Dict],
+        custom_headers: Optional[Dict] = None, client: str = "android"
+    ) -> Dict:
+        """
+        Make an innertube API call. Return response as string.
+        Args:
+            endpoint: the endpoint to send request to.
+            Example: "https://www.youtube.com/youtubei/v1/player"
+            or "https://www.youtube.com/youtubei/v1/browse"
+            
+            custom_headers: mapping of custom headers.
+
+            payload: a mapping of params for the payload. 
+            Example: {"videoId": video_id}
+
+            client: key to INNERTUBE_CLIENTS mapping. Defaults to android to
+            bypass youtube throttling.
+        """
         # Try to circumvent throttling with this workaround for now since
         # pytube is either broken or simply not up to date
         # as per https://code.videolan.org/videolan/vlc/-/issues/26174#note_286445
@@ -204,8 +277,10 @@ class YoutubeUrllibSession:
             {
                 'Content-Type': 'application/json',
                 'Origin': 'https://www.youtube.com',
-                'X-YouTube-Client-Name': '3',
-                'X-YouTube-Client-Version': '16.20',
+                'X-YouTube-Client-Name': INNERTUBE_CLIENTS[client][
+                    "INNERTUBE_CONTEXT_CLIENT_NAME"],
+                'X-YouTube-Client-Version': INNERTUBE_CLIENTS[client][
+                    "INNERTUBE_CONTEXT"]["context"]["client"]["clientVersion"],
                 # 'Accept': 'text/plain'
             }
         )
@@ -216,6 +291,10 @@ class YoutubeUrllibSession:
                     'Authorization': auth
                 }
             )
+        if custom_headers:
+            headers.update(custom_headers)
+        # headers["User-Agent"] = INNERTUBE_CLIENTS[client]["INNERTUBE_CONTEXT"][
+        #     "context"]["client"]["userAgent"]
 
         if self.ytcfg:
             if IdToken := self.ytcfg.get('IdToken'):
@@ -226,30 +305,35 @@ class YoutubeUrllibSession:
                 headers["X-Goog-Visitor-Id"] = VisitorData
             if SessionIndex := self.ytcfg.get('SessionIndex'):
                 headers["X-Goog-AuthUser"] = SessionIndex
-        
-        logger.debug(f"Making API request... {headers=}")
 
-        data = {
-            "context": {
-                "client": {
-                    "clientName": "ANDROID",
-                    "clientVersion": "16.20",
-                    "hl": "en"
-                }
-            },
-            "videoId": video_id,
-        }
+        data: Dict = INNERTUBE_CLIENTS[client]["INNERTUBE_CONTEXT"].copy()
+        # Hack to avoid overwriting our default context/client
+        if payload:
+            if custom_client := payload.get("context", {}).get("client"):
+                # update the "client" key instead of overwriting it
+                data["context"]["client"].update(custom_client)
+                # remove the context (hopefully there is nothing else under context...)
+                payload.pop("context")
+            # update the rest of the payload
+            data.update(payload)
 
+        endpoint = endpoint + '?' + urlencode(
+            {
+                "key": INNERTUBE_CLIENTS[client]["INNERTUBE_API_KEY"],
+                "prettyPrint": "false"
+            }
+        )
+        logger.debug(f"Making API request... {endpoint=}\n{data=}\n{headers=}")
         req = Request(
-            "https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+            endpoint,
             headers=headers,
             data=json.dumps(data).encode(),
-            method="POST"
+            method="POST",
         )
 
         self.cookie_jar.add_cookie_header(req)
 
-        return self.get_html(req)
+        return str_as_json(self.get_response_as_str(req))
 
     # TODO Place this in both monitor and download
     def _check_logged_out(self, json_obj):
@@ -307,12 +391,13 @@ class YoutubeUrllibSession:
         # logger.debug(
         #         f"CookieJar after extract_cookies(): {self.cookie_jar}")
 
-    def get_html(self, req: Request) -> str:
+    def get_response_as_str(self, req: Request) -> str:
         """
-        Return the HTML page, or throw exception. Update cookies if needed.
+        Return an HTML page from a request as str. 
+        Also update cookies in cookie jar if necessary.
         """
         # TODO get the DASH manifest (MPD) and parse that xml file instead
-        # We could also use youtube-dl --dump-json instead
+        # We could also use youtube-dl --dump-json
         with urlopen(req) as res:
             status = res.status
             
@@ -326,13 +411,12 @@ class YoutubeUrllibSession:
             self.update_cookies(req, res)
 
             if status == 429:
-                raise Exception(
-                    "Error 429. Too many requests? Please try again later "
-                    "or get a new IP (also a new cookie?).")
+                # FIXME need some sort of raise_for_status here
+                # We should raise urllib.request.URLError instead
+                raise Exception("Error 429. Too many requests?")
 
             try:
-                content_page = str(res.read().decode('utf-8'))
-                return content_page
+                return str(res.read().decode('utf-8'))
             except Exception as e:
                 logger.critical(f"Failed to load {req.full_url}: {e}")
                 raise e
