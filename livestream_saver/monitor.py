@@ -81,16 +81,31 @@ class YoutubeChannel:
         return self.channel_name
 
     def get_public_videos_html(self, update=False) -> str:
+        # NOTE active livestreams are also displayed in /featured tab:
+        # https://www.youtube.com/c/kamikokana/videos?view=2&live_view=501
+        # NOTE this also seems to be equivalent to /streams
         if update or self._cached_html_tab != "public":
-            self._cached_html = self.get_public_livestreams_html('current')
+            self._cached_html = self.session.make_request(
+                self.url + '/videos?view=2&live_view=501')
             self._cached_html_tab = "public"
         return self._cached_html
 
     def get_upcoming_videos_html(self, update=False) -> str:
+        # https://www.youtube.com/c/kamikokana/videos\?view\=2\&live_view\=502
+        # https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g/videos?view=2&live_view=502
+        # This video tab filtered list, returns public upcoming livestreams (with scheduled times)
+        # BUG it seems there is a redirect to the public videos if there is
+        # no scheduled upcoming live stream listed on the page.
         if update or self._cached_html_tab != "upcoming":
-            self._cached_html = self.get_public_livestreams_html('upcoming')
+            self._cached_html = self.session.make_request(
+                self.url + '/videos?view=2&live_view=502')
             self._cached_html_tab = "upcoming"
         return self._cached_html
+
+    def get_featured_html(self, update=False) -> str:
+        # NOTE "/live" virtual tab is a redirect to the current live broadcast
+        # NOTE "featured" tab is ONLY reliable to get active live streams
+        return self.session.make_request(self.url + '/featured')
 
     def get_community_videos_html(self, update=False) -> str:
         if update or self._cached_html_tab != "community":
@@ -463,16 +478,25 @@ class YoutubeChannel:
         return vid
 
     def fetch_video_metadata(self, vid: Optional[Dict]) -> Optional[Dict]:
-        """Fetch more details about a particular video ID."""
+        """
+        Fetch more details about a particular video Id.
+        This is necessary for videos that we only know the Id of, but need the
+        description to match some regex rules in order to trigger hooks.
+        """
         if not vid:
             return None
         videoId = vid.get("videoId")
         if not videoId:
             return None
 
-        logger.info(f"Fetching video {videoId} info from API...")
+        logger.info(f"Fetching extra info from API for {videoId=} ...")
         try:
-            json_string = self.session.make_api_request(videoId)
+            json_string = self.session.make_api_request(
+                endpoint="https://www.youtube.com/youtubei/v1/player",
+                payload={
+                    "videoId": videoId
+                }
+            )
             return extract.str_as_json(json_string)
         except Exception as e:
             logger.warning(f"Error fetching metadata for video {videoId}: {e}")
@@ -722,35 +746,6 @@ class YoutubeChannel:
             },
             client="web_linux"
         )
-
-    def get_public_livestreams_html(self, filtertype):
-        """
-        Fetch publicly available streams from the channel pages.
-        Returns a html page.
-        This method should be considered unreliable from now on, prefer using
-        the innertube API instead since Youtube redesign seems to rely on the API.
-        """
-        if filtertype == 'upcoming':
-            # https://www.youtube.com/c/kamikokana/videos\?view\=2\&live_view\=502
-            # https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g/videos?view=2&live_view=502
-            # This video tab filtered list, returns public upcoming livestreams (with scheduled times)
-            # BUG it seems there is a redirect to the public videos if there is
-            # no scheduled upcoming live stream listed on the page.
-            return self.session.make_request(
-                self.url + '/videos?view=2&live_view=502')
-        if filtertype == 'current':
-            # NOTE active livestreams are also displays in /featured tab:
-            # https://www.youtube.com/c/kamikokana/videos?view=2&live_view=501
-            # NOTE this also seems to be equivalent to /streams
-            return self.session.make_request(
-                self.url + '/videos?view=2&live_view=501')
-        if filtertype == 'featured':
-            # NOTE "featured" tab is ONLY reliable for CURRENT live streams
-            return self.session.make_request(
-                self.url + '/featured'
-            )
-        # NOTE "/live" virtual tab is a redirect to the current live broadcast
-        raise Exception(f"A method to retrieve HTML for {filtertype} tab is not yet implemented")
 
 
 def _get_content_from_grid_renderer(contents: List, tabtype: str) -> List[Dict]:

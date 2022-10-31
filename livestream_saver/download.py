@@ -386,7 +386,9 @@ We assume a failed download attempt. Last segment available was {seg}.")
             # API request with ANDROID client gives us a pre-signed URL
             self._json = self.session.make_api_request(
                 endpoint="https://www.youtube.com/youtubei/v1/player",
-                payload={"videoId": self.video_id}
+                payload={
+                    "videoId": self.video_id
+                }
             )
             self.session.is_logged_out(self._json)
 
