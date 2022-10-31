@@ -268,7 +268,7 @@ class YoutubeChannel:
             # Live tab not yet available in this channel, livestreams are most
             # likely only listed in the Videos tab
             self.log.debug("No Live tab available for this channel.")
-            return [] 
+            return []
 
         public_streams = []
         if update or self._public_streams is None:
@@ -601,8 +601,11 @@ class YoutubeChannel:
         since livestreams should be listed there from now on.
         """
         endpoint = self._endpoints.get("Upcoming")
-        if not endpoint and "Live" in self._endpoints.keys():
-            raise TabNotFound("No Upcoming endpoint found, but Live tab found")
+        if not endpoint:
+            raise TabNotFound("No Upcoming endpoint found{}".format(
+                ", but Live tab found"
+                if "Live" in self._endpoints.keys() else "")
+            )
 
         browseEndpoint = endpoint.get("browseEndpoint")
         canonicalBaseUrl = browseEndpoint.get("canonicalBaseUrl", "")
