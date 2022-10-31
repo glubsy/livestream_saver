@@ -264,6 +264,12 @@ class YoutubeChannel:
         """
         Return the currently listed videos from the Live tab.
         """
+        if not self._endpoints.get("Live"):
+            # Live tab not yet available in this channel, livestreams are most
+            # likely only listed in the Videos tab
+            self.log.debug("No Live tab available for this channel.")
+            return [] 
+
         public_streams = []
         if update or self._public_streams is None:
             public_streams = self.update_videos(tab_type="live")
