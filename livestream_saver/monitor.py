@@ -534,14 +534,14 @@ class YoutubeChannel:
         Usually there is only one live video active at a time.
         """
         live_videos = []
-
+        missing_endpoint = []
         try:
             for vid in self.get_community_videos(update=update):
                 if vid.get(filter_type):
                     live_videos.append(vid)
         except TabNotFound as e:
             # self.log.debug(f"No Community tab available for this channel: {e}")
-            pass
+            missing_endpoint.append("Community")
 
         try:
             for vid in self.get_membership_videos(update=update):
@@ -549,6 +549,8 @@ class YoutubeChannel:
                     live_videos.append(vid)
         except TabNotFound as e:
             # self.log.debug(f"No membership tab available for this channel: {e}")
+            # This tab might also be missing if logged in user is simply not a member
+            # TODO use this in conjunction with cookies to warn user if logged out?
             pass
 
         public_videos = []
@@ -557,14 +559,19 @@ class YoutubeChannel:
         except TabNotFound as e:
             # Some channels do no have a Videos tab (only Live tab).
             # self.log.debug(f"No Videos tab available for this channel: {e}")
-            pass
+            missing_endpoint.append("Videos")
 
         public_streams = []
         try:
             public_streams = self.get_public_streams(update=update)
         except TabNotFound as e:
-            # Reload endpoints in case the Live tab has been added since last check
-            self.log.debug(f"No Live tab found: {e}. Reloading endpoints...")
+            # self.log.debug(f"No Live tab available for this channel: {e}")
+            missing_endpoint.append("Live")
+
+        if missing_endpoint:
+            self.log.debug(
+                f"Reloading endpoints because \"{', '.join(missing_endpoint)}\""
+                " tab data was missing...")
             self.load_endpoints()
 
         # No need to check for "upcoming_videos" because live videos should
