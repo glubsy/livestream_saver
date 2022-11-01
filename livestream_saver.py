@@ -496,7 +496,10 @@ def monitor_mode(config, args):
         live_videos = []
         try:
             live_videos = ch.filter_videos('isLiveNow')  # get the actual live stream
-            ch.get_upcoming_videos(update=True)
+
+            # Calling this might trigger hooks twice for upcoming videos
+            # will probably become obsolete soon.
+            # ch.get_upcoming_videos(update=False)
 
             # TODO print to stdout and overwrite line
             logger.debug(

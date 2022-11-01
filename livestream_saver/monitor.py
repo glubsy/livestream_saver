@@ -127,53 +127,34 @@ class YoutubeChannel:
         that returned the HTML page.
         This is probably similar to the /featured tab?
         """
-        if update or self._cached_json_tab != "home":
+        if update or self._cached_json_tab != "Home":
             try:
                 self._cached_json = extract.initial_player_response(
                     self.session.make_request(self.url))
                 # Probably similar to doing:
                 # self.session.make_request(self.url + '/featured')
-                self._cached_json_tab = "home"
+                self._cached_json_tab = "Home"
                 # TODO we could check if we are logged in here
             except Exception as e:
                 self.log.warning(f"Failed to get Home json from initial html: {e}")
                 raise e
         return self._cached_json
 
-    def get_public_json(self, update=False) -> Dict:
-        if update or self._cached_json_tab != "public":
-            self._cached_json = self.get_current_videos_response()
-            self._cached_json_tab = "public"
-        return self._cached_json
-
-    def get_upcoming_json(self, update=False) -> Dict:
-        # This may throw if the upcoming streams are supposed to be fetched from
-        # the Live tab instead.
-        if update or self._cached_json_tab != "upcoming":
-            self._cached_json = self.get_upcoming_response()
-            self._cached_json_tab = "upcoming"
-        return self._cached_json
-
-    def get_live_json(self, update=False) -> Dict:
-        if update or self._cached_json_tab != "streams":
-            self._cached_json = self.get_live_response()
-            self._cached_json_tab = "streams"
-        return self._cached_json
-
-    def get_community_json(self, update=False) -> Dict:
-        if update or self._cached_json_tab != "community":
-            # self._community_json = extract.initial_player_response(
-            #     self.community_videos_html)
-            self._cached_json = self.get_community_response()
-            self._cached_json_tab = "community"
-        return self._cached_json
-
-    def get_membership_json(self, update=False) -> Dict:
-        if update or self._cached_json_tab != "membership":
+    def get_json_and_cache(self, tab_name: str, update=False) -> Dict:
+        """
+        Return the parsed JSON response for a specified tab. The cache is
+        overwritten on each request.
+        Args:
+            tab_name: either of "Videos", "Community", "Upcoming", etc.
+            update: to force updating, otherwise will use the cached data
+            unless it has been overwritten by a request for another tab prior.
+        """
+        if update or self._cached_json_tab != tab_name:
+            # In the past we got it from the HTML page:
             # self._cached_json = extract.initial_player_response(
             #     self.membership_videos_html)
-            self._cached_json = self.get_membership_response()
-            self._cached_json_tab = "membership"
+            self._cached_json = self.get_tab_json_from_api(tab_name)
+            self._cached_json_tab = tab_name
         return self._cached_json
 
     def get_public_videos(self, update=False) -> List[Dict]:
@@ -183,7 +164,11 @@ class YoutubeChannel:
         """
         public_videos = []
         if update or self._public_videos is None:
-            public_videos = self.update_videos(tab_type="public")
+            public_videos = get_videos_from_tab(
+                get_tabs_from_json(
+                    self.get_json_and_cache("Videos", update=True)),
+                'Videos'
+            )
 
         # Occurs on the first time
         if self._public_videos is None:
@@ -222,14 +207,29 @@ class YoutubeChannel:
         """
         Supposed to return upcoming Live Streams (or Premieres?),
         but the site will redirect to public videos if there is none found.
+
+        This is probably about to become useless since it is made redundant by
+        the fact that upcoming streams are also listed in the /streams tab, so
+        getting those specifically could be done by filtering all videos
+        in the filter_videos() method.
+        This is not a filter method that returns all upcoming videos from all
+        tabs combined!
         """
+        # TODO make this method into a filter over videos from all tabs combined?
         upcoming_videos = []
         if update or self._upcoming_videos is None:
-            # We need two methods here since upcoming videos are either listed
-            # in the Videos tab, or the Live tab depending on Youtube update
-            # TODO request both on Videos tab (with live_view=502) and Live tab
-            # no need to 502, simply look for upcoming somewhere I don't know...
-            upcoming_videos: List[Dict] = self.update_videos(tab_type="upcoming")
+            try:
+                # We can force update this one since it does not depend on any
+                # other cached data
+                upcoming_videos = get_videos_from_tab(
+                    get_tabs_from_json(
+                        self.get_json_and_cache("Upcoming", update=True)),
+                    "Videos"
+                )
+            except Exception as e:
+                self.log.debug(
+                    f"Failed to get upcoming videos from Videos tab: {e}")
+                return upcoming_videos
 
         # Make sure we only list upcoming videos and not public VODs due to redirect
         upcoming_videos_filtered = []
@@ -287,7 +287,11 @@ class YoutubeChannel:
 
         public_streams = []
         if update or self._public_streams is None:
-            public_streams = self.update_videos(tab_type="live")
+            public_streams = get_videos_from_tab(
+                get_tabs_from_json(
+                    self.get_json_and_cache("Live", update=True)),
+                "Live"
+            )
 
         # Occurs on the first time
         if self._public_streams is None:
@@ -325,7 +329,11 @@ class YoutubeChannel:
     def get_community_videos(self, update=False) -> List[Dict]:
         community_videos = []
         if update or self._community_videos is None:
-            community_videos = self.update_videos(tab_type="community")
+            community_videos = get_videos_from_tab(
+                get_tabs_from_json(
+                    self.get_json_and_cache("Community", update=True)),
+                "Community"
+            )
 
         # Occurs on the first time
         if self._community_videos is None:
@@ -363,7 +371,10 @@ class YoutubeChannel:
     def get_membership_videos(self, update=False) -> List[Dict]:
         membership_videos = []
         if update or self._membership_videos is None:
-            membership_videos = self.update_videos(tab_type="membership")
+            _json = self.get_json_and_cache("Membership", update=True)
+            self.session.is_logged_out(_json)
+            membership_videos = get_videos_from_tab(
+                get_tabs_from_json(_json), "Membership")
 
         # Occurs on the first time
         if self._membership_videos is None:
@@ -567,121 +578,21 @@ class YoutubeChannel:
                 live_videos.append(vid)
         return live_videos
 
-    def update_videos(self, tab_type: str) -> List:
+    def get_tab_json_from_api(self, tab_name: str) -> Optional[Dict]:
         """
-        Fetch videos for a specific tab type.
-        Args:
-            tab_type: either "public", "upcoming", "live", "community", "membership".
+        Return the parsed JSON response (as dict) for a specific endpoint,
+        which shouldd be dereferenced by its tab name in most cases
+        (ie. Home, Videos, Live, Community, Membership)
         """
-        if tab_type == "public":  # Videos tab
-            _json = self.get_public_json(update=True)
-            return get_videos_from_tab(get_tabs_from_json(_json), 'Videos')
-
-        elif tab_type == "upcoming":
-            try:
-                _json = self.get_upcoming_json(update=True)
-                return get_videos_from_tab(get_tabs_from_json(_json), "Videos")
-            except Exception as e:
-                self.log.debug(
-                    f"Failed to get upcoming videos from Videos tab: {e}")
-
-            # If no upcoming json from Videos tab, try to grab from Live tab
-            # since this is where they are supposed to be listed from now on.
-            try:
-                _json = self.get_live_json()
-                return get_videos_from_tab(get_tabs_from_json(_json), "Live")
-            except Exception as e:
-                self.log.debug(
-                    f"Failed to get upcoming videos from Live tab: {e}")
-            return []
-
-        elif tab_type == "live":
-            _json = self.get_live_json(update=True)
-            return get_videos_from_tab(get_tabs_from_json(_json), "Live")
-
-        elif tab_type == "community":
-            _json = self.get_community_json(update=True)
-            return get_videos_from_tab(get_tabs_from_json(_json), "Community")
-
-        elif tab_type == "membership":
-            _json = self.get_membership_json(update=True)
-            self.session.is_logged_out(_json)
-            return get_videos_from_tab(get_tabs_from_json(_json), "Membership")
-
-        raise Exception("Invalid tab type.")
-
-    def get_current_videos_response(self) -> Optional[Dict]:
-        """
-        Return the parsed JSON response for public VOD from the Videos tab.
-        """
-        endpoint = self._endpoints.get("Videos")
+        endpoint = self._endpoints.get(tab_name)
         if not endpoint:
-            raise TabNotFound("Missing Videos tab endpoint data.")
-
-        browseEndpoint = endpoint.get("browseEndpoint")
-        canonicalBaseUrl = browseEndpoint.get("canonicalBaseUrl", "")
-        webCommandMetadata = endpoint.get("commandMetadata", {})\
-                                        .get("webCommandMetadata", {})
-        apiUrl = webCommandMetadata.get("apiUrl")
-        # url = webCommandMetadata.get("url")
-        self.log.info("Getting Videos tab data...")
-
-        return self.session.make_api_request(
-            endpoint=f"https://www.youtube.com{apiUrl}",
-            custom_headers={
-                "referer": f"https://www.youtube.com{canonicalBaseUrl}/videos"
-            },
-            payload={
-                "browseId": browseEndpoint.get("browseId"),
-                "params": browseEndpoint.get("params")
-            },
-            client="web_linux"
-        )
-
-    def get_upcoming_response(self) -> Optional[Dict]:
-        """
-        Return the parsed JSON response for upcoming livestreams from the
-        Videos tab. This might not return anything if the Live tab is active
-        since livestreams should be listed there from now on.
-        """
-        endpoint = self._endpoints.get("Upcoming")
-        if not endpoint:
-            raise TabNotFound("No Upcoming endpoint found{}".format(
-                ", but Live tab found"
-                if "Live" in self._endpoints.keys() else "")
-            )
-
-        browseEndpoint = endpoint.get("browseEndpoint")
-        canonicalBaseUrl = browseEndpoint.get("canonicalBaseUrl", "")
-        webCommandMetadata = endpoint.get("commandMetadata", {})\
-                                        .get("webCommandMetadata", {})
-        apiUrl = webCommandMetadata.get("apiUrl")
-        # url = webCommandMetadata.get("url")
-        self.log.info("Getting upcoming videos from the Videos tab data...")
-
-        return self.session.make_api_request(
-            endpoint=f"https://www.youtube.com{apiUrl}",
-            custom_headers={
-                "referer": f"https://www.youtube.com{canonicalBaseUrl}/videos"
-            },
-            payload={
-                "browseId": browseEndpoint.get("browseId"),
-                "params": browseEndpoint.get("params")
-            },
-            client="web_linux"
-        )
-
-    def get_live_response(self) -> Optional[Dict]:
-        """
-        Return the parsed JSON response for VOD + upcoming livestreams in the
-        Live tab.
-        """
-        # NOTE active livestreams are also displays in /featured tab
-        # https://www.youtube.com/c/kamikokana/videos?view=2&live_view=501
-        # NOTE this also seems to be equivalent to /streams
-        endpoint = self._endpoints.get("Live")
-        if not endpoint:
-            raise TabNotFound("Live tab seems to be missing.")
+            if tab_name == "Upcoming":
+                raise TabNotFound("No Upcoming endpoint found{}".format(
+                    ", but Live tab found"
+                    if "Live" in self._endpoints.keys() else "")
+                )
+            else:
+                raise TabNotFound(f"No endpoint found for tab named {tab_name}")
 
         browseEndpoint = endpoint.get("browseEndpoint")
         canonicalBaseUrl = browseEndpoint.get("canonicalBaseUrl", "")
@@ -689,8 +600,7 @@ class YoutubeChannel:
                                         .get("webCommandMetadata", {})
         apiUrl = webCommandMetadata.get("apiUrl")
         url = webCommandMetadata.get("url")
-        # The Live tab is up, we may only find upcoming videos in there
-        self.log.info("Getting Live tab data...")
+        self.log.info(f"Getting videos from the {tab_name} tab data...")
 
         return self.session.make_api_request(
             endpoint=f"https://www.youtube.com{apiUrl}",
@@ -705,62 +615,6 @@ class YoutubeChannel:
                         }
                     }
                 },
-                "browseId": browseEndpoint.get("browseId"),
-                "params": browseEndpoint.get("params")
-            },
-            client="web_linux"
-        )
-
-    def get_community_response(self) -> Optional[Dict]:
-        """
-        Return the parsed JSON response for the Community tab.
-        """
-        endpoint = self._endpoints.get("Community")
-        if not endpoint:
-            raise TabNotFound("Missing Community tab endpoint data.")
-
-        browseEndpoint = endpoint.get("browseEndpoint")
-        canonicalBaseUrl = browseEndpoint.get("canonicalBaseUrl", "")
-        webCommandMetadata = endpoint.get("commandMetadata", {})\
-                                        .get("webCommandMetadata", {})
-        apiUrl = webCommandMetadata.get("apiUrl")
-        # url = webCommandMetadata.get("url")
-        self.log.info("Getting Community tab data...")
-
-        return self.session.make_api_request(
-            endpoint=f"https://www.youtube.com{apiUrl}",
-            custom_headers={
-                "referer": f"https://www.youtube.com{canonicalBaseUrl}/videos"
-            },
-            payload={
-                "browseId": browseEndpoint.get("browseId"),
-                "params": browseEndpoint.get("params")
-            },
-            client="web_linux"
-        )
-
-    def get_membership_response(self) -> Optional[Dict]:
-        """
-        Return the parsed JSON response for the Membership tab.
-        """
-        endpoint = self._endpoints.get("Membership")
-        if not endpoint:
-            raise TabNotFound("Missing Membership tab endpoint data.")
-
-        browseEndpoint = endpoint.get("browseEndpoint")
-        canonicalBaseUrl = browseEndpoint.get("canonicalBaseUrl", "")
-        webCommandMetadata = endpoint.get("commandMetadata", {})\
-                                        .get("webCommandMetadata", {})
-        apiUrl = webCommandMetadata.get("apiUrl")
-        # url = webCommandMetadata.get("url")
-        self.log.info("Getting Membership tab data...")
-
-        return self.session.make_api_request(
-            endpoint=f"https://www.youtube.com{apiUrl}",
-            custom_headers={
-                "referer": f"https://www.youtube.com{canonicalBaseUrl}/videos"
-            },
-            payload={
                 "browseId": browseEndpoint.get("browseId"),
                 "params": browseEndpoint.get("params")
             },
