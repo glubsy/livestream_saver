@@ -489,7 +489,7 @@ class YoutubeChannel:
         if not videoId:
             return None
 
-        logger.info(f"Fetching extra info from API for {videoId=} ...")
+        logger.debug(f"Fetching extra info from API for {videoId=} ...")
         try:
             return self.session.make_api_request(
                 endpoint="https://www.youtube.com/youtubei/v1/player",
@@ -524,17 +524,17 @@ class YoutubeChannel:
         if len(self._hooked_videos) >= 40:
             self._hooked_videos.pop(0)
 
-    def filter_videos(self, filter_type: str = 'isLiveNow') -> List:
+    def filter_videos(self, filter_type: str = 'isLiveNow', update=True) -> List:
         """Returns a list of videos that are live, from all channel tabs combined.
         Usually there is only one live video active at a time.
         """
         live_videos = []
-        for vid in self.get_community_videos():
+        for vid in self.get_community_videos(update=update):
             if vid.get(filter_type):
                 live_videos.append(vid)
 
         try:
-            for vid in self.get_membership_videos():
+            for vid in self.get_membership_videos(update=update):
                 if vid.get(filter_type):
                     live_videos.append(vid)
         except TabNotFound as e:
@@ -542,7 +542,8 @@ class YoutubeChannel:
 
         # No need to check for "upcoming_videos" because live videos should
         # appear in the public videos list.
-        for vid in self.get_public_videos() + self.get_public_streams():
+        for vid in self.get_public_videos(update=update)\
+        + self.get_public_streams(update=update):
             if vid.get(filter_type):
                 live_videos.append(vid)
         return live_videos
