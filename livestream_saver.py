@@ -489,16 +489,15 @@ def monitor_mode(config, args):
     ch = YoutubeChannel(
         URL, channel_id, session,
         output_dir=args["output_dir"], hooks=args["hooks"], notifier=NOTIFIER)
-    ch.load_params()
+    ch.load_endpoints()
     logger.info(f"Monitoring channel: {ch._id}")
 
     while True:
         live_videos = []
         try:
-            # Get the list of upcoming videos. This is done separately because
-            # detection is flaky right now.
-            ch.get_upcoming_videos(update=True)
             live_videos = ch.filter_videos('isLiveNow')  # get the actual live stream
+            ch.get_upcoming_videos(update=True)
+
             # TODO print to stdout and overwrite line
             logger.debug(
                 "Live videos found for channel "

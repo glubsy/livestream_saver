@@ -45,7 +45,7 @@ class YoutubeChannel:
         self.output_dir = output_dir
         self.log = logger
 
-    def load_params(self) -> None:
+    def load_endpoints(self) -> None:
         """
         Load params values to navigate through the innertube API.
         This essentially gets the values from the Home tab json.
@@ -529,21 +529,40 @@ class YoutubeChannel:
         Usually there is only one live video active at a time.
         """
         live_videos = []
-        for vid in self.get_community_videos(update=update):
-            if vid.get(filter_type):
-                live_videos.append(vid)
+
+        try:
+            for vid in self.get_community_videos(update=update):
+                if vid.get(filter_type):
+                    live_videos.append(vid)
+        except TabNotFound as e:
+            # self.log.debug(f"No Community tab available for this channel: {e}")
+            pass
 
         try:
             for vid in self.get_membership_videos(update=update):
                 if vid.get(filter_type):
                     live_videos.append(vid)
         except TabNotFound as e:
-            self.log.debug("No membership tab available.")
+            # self.log.debug(f"No membership tab available for this channel: {e}")
+            pass
+
+        public_videos = []
+        try:
+            public_videos = self.get_public_videos(update=update)
+        except TabNotFound as e:
+            # self.log.debug(f"No Videos tab available for this channel: {e}")
+            pass
+
+        public_streams = []
+        try:
+            public_streams = self.get_public_streams(update=update)
+        except TabNotFound as e:
+            # self.log.debug(f"No Live tab available for this channel: {e}")
+            pass
 
         # No need to check for "upcoming_videos" because live videos should
         # appear in the public videos list.
-        for vid in self.get_public_videos(update=update)\
-        + self.get_public_streams(update=update):
+        for vid in public_videos + public_streams:
             if vid.get(filter_type):
                 live_videos.append(vid)
         return live_videos
@@ -597,7 +616,7 @@ class YoutubeChannel:
         """
         endpoint = self._endpoints.get("Videos")
         if not endpoint:
-            raise Exception("Missing Videos tab endpoint data.")
+            raise TabNotFound("Missing Videos tab endpoint data.")
 
         browseEndpoint = endpoint.get("browseEndpoint")
         canonicalBaseUrl = browseEndpoint.get("canonicalBaseUrl", "")
