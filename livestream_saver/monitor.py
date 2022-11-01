@@ -279,12 +279,6 @@ class YoutubeChannel:
         """
         Return the currently listed videos from the Live tab.
         """
-        if not self._endpoints.get("Live"):
-            # Live tab not yet available in this channel, livestreams are most
-            # likely only listed in the Videos tab
-            self.log.debug("No Live tab available for this channel.")
-            return []
-
         public_streams = []
         if update or self._public_streams is None:
             public_streams = get_videos_from_tab(
@@ -561,6 +555,7 @@ class YoutubeChannel:
         try:
             public_videos = self.get_public_videos(update=update)
         except TabNotFound as e:
+            # Some channels do no have a Videos tab (only Live tab).
             # self.log.debug(f"No Videos tab available for this channel: {e}")
             pass
 
@@ -568,8 +563,9 @@ class YoutubeChannel:
         try:
             public_streams = self.get_public_streams(update=update)
         except TabNotFound as e:
-            # self.log.debug(f"No Live tab available for this channel: {e}")
-            pass
+            # Reload endpoints in case the Live tab has been added since last check
+            self.log.debug(f"No Live tab found: {e}. Reloading endpoints...")
+            self.load_endpoints()
 
         # No need to check for "upcoming_videos" because live videos should
         # appear in the public videos list.
