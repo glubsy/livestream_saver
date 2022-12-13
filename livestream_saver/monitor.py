@@ -20,6 +20,7 @@ class YoutubeChannel:
         self._id = channel_id
         self.channel_name = "N/A"
 
+        self._home_videos = None
         self._public_videos = None
         self._upcoming_videos = None
         self._public_streams = None
@@ -31,13 +32,16 @@ class YoutubeChannel:
         self._cached_html_tab = None
 
         # Keep only one json in memory at a time
-        self._cached_json = None
-        # Shows the last type of json (Home tab, Community tab, etc.)
-        # We could also check the "selected" field in the json to detect what
-        # tab was last retrieved.
-        self._cached_json_tab = None
+        self._cached_json: Optional[Dict] = None
 
-        self._endpoints = None
+        # Shows the last type of json (Home tab, Community tab, etc.)
+        # TODO We could also check the "selected" field in the json to detect
+        # which tab was last retrieved.
+        self._cached_json_tab: Optional[str] = None
+
+        # These values define values to pass to the API in order to navigate
+        # around the innertube API.
+        self._endpoints: Optional[Dict] = None
 
         self.notifier = notifier
         self.hooks = hooks
@@ -45,22 +49,35 @@ class YoutubeChannel:
         self.output_dir = output_dir
         self.log = logger
 
-    def load_endpoints(self) -> None:
+    @property
+    def cached_json(self) -> Dict:
         """
-        Load params values to navigate through the innertube API.
-        This essentially gets the values from the Home tab json.
+        The currently tab data as JSON currently kept in memory.
+        Initially, this gets data from the "Home" tab json.
         """
-        if not self._cached_json:
-            self.get_home_json()
-        self._endpoints = get_endpoints_from_json(self._cached_json)
+        if self._cached_json is None:
+            self._cached_json = self.get_home_json(update=True)
+        return self._cached_json
+
+    def load_endpoints(self, reset=False) -> Dict[str, Any]:
+        """
+        Load various values from whatever cached json is in memory currently.
+        If reset is True, the Home tab will be fetched and cached in memory.
+        This relies on the cached_json property to return the Home tab JSON
+        if none other are in memory.
+        """
+        if reset:
+            self._cached_json = None
+        self._endpoints = get_endpoints_from_json(self.cached_json)
+        return self._endpoints
 
     @property
     def id(self) -> str:
-        if self._cached_json is None:
-            cached_json = self.get_home_json(update=True)
-        _id = extract.get_browseId_from_json(cached_json)
+        _id = extract.get_browseId_from_json(self.cached_json)
+
         if self._id != _id:
             self.log.warning(f"Replacing channel id \"{self._id}\" with \"{_id}\".")
+
         self._id = _id
         return _id
 
@@ -71,11 +88,8 @@ class YoutubeChannel:
         # FIXME this method pre-fetches the json if called before
         # TODO handle channel names which are not IDs
         # => get "videos" tab html page and grab externalId value from it?
-        if not self._cached_json:
-            self.get_home_json()
-
-        if self._cached_json:
-            self.channel_name = self._cached_json.get('metadata', {})\
+        if _cached_json := self.cached_json:
+            self.channel_name = _cached_json.get('metadata', {})\
                 .get('channelMetadataRenderer', {})\
                 .get('title')
         return self.channel_name
@@ -125,7 +139,8 @@ class YoutubeChannel:
         """
         Fetch and cache the Home tab's json, grabbed from an initial request
         that returned the HTML page.
-        This is probably similar to the /featured tab?
+        This is probably similar to the /featured tab.
+        This does not make an API request, only a simple GET.
         """
         if update or self._cached_json_tab != "Home":
             try:
@@ -157,20 +172,65 @@ class YoutubeChannel:
             self._cached_json_tab = tab_name
         return self._cached_json
 
+    def get_home_videos(self, update=False) -> List[Dict]:
+        """
+        Return the currently listed videos from the Home tab.
+        Note that Upcoming videos might both get listed in Home and the Live
+        tab (for livestreams) and possibly the Videos tab (for premieres?).
+        Note also that active Livestreams seem to be listed only in this tab,
+        and not in the Live tab anymore.
+        """
+        home_videos = []
+        if update or self._home_videos is None:
+            home_videos = get_videos_from_tab(
+                get_tabs_from_json(
+                    self.get_json_and_cache("Home", update=True)),
+                "Home"
+            )
+
+        # Occurs only the first time
+        if self._home_videos is None:
+            logger.info(
+                "Currently listed Featured videos: {}\n{}".format(
+                    len(home_videos),
+                    format_list_output(home_videos)
+                )
+            )
+        else:
+            known_ids = [v["videoId"] for v in self._home_videos]
+            new_home_videos = [
+                v for v in home_videos if v["videoId"] not in known_ids
+            ]
+            if new_home_videos:
+                logger.info(
+                    "Newly added Featured video: {}\n{}".format(
+                        len(new_home_videos),
+                        format_list_output(new_home_videos)
+                    )
+                )
+                for vid in new_home_videos:
+                    if vid.get("isLiveNow") or vid.get("isLive"):
+                        continue
+                    # This should only trigger for VOD (non-live) videos
+                    self.trigger_hook('on_video_detected', vid)
+        self._home_videos = home_videos
+        return self._home_videos
+
     def get_public_videos(self, update=False) -> List[Dict]:
         """
         Return the currently listed videos from the Videos tab (VOD).
-        Not super useful right now, but could be in the future.
+        Not super useful right now, but could be in the future if we ever wanted
+        to scrape VOD, or record premiering videos as they are first streamed.
         """
         public_videos = []
         if update or self._public_videos is None:
             public_videos = get_videos_from_tab(
                 get_tabs_from_json(
                     self.get_json_and_cache("Videos", update=True)),
-                'Videos'
+                "Videos"
             )
 
-        # Occurs on the first time
+        # Occurs only the first time
         if self._public_videos is None:
             logger.info(
                 "Currently listed public videos: {}\n{}".format(
@@ -290,7 +350,7 @@ class YoutubeChannel:
         # Occurs on the first time
         if self._public_streams is None:
             logger.info(
-                "Currently listed public streams: {}\n{}".format(
+                "Currently listed public Live streams: {}\n{}".format(
                     len(public_streams),
                     format_list_output(public_streams)
                 )
@@ -305,7 +365,7 @@ class YoutubeChannel:
             ]
             if new_pub_videos:
                 logger.info(
-                    "Newly added public streams: {}\n{}".format(
+                    "Newly added public Live streams: {}\n{}".format(
                         len(new_pub_videos),
                         format_list_output(new_pub_videos)
                     )
@@ -533,53 +593,69 @@ class YoutubeChannel:
         """Returns a list of videos that are live, from all channel tabs combined.
         Usually there is only one live video active at a time.
         """
-        live_videos = []
-        missing_endpoint = []
+        if not self._endpoints:
+            self.load_endpoints()
+
+        filtered_videos = []
+        missing_endpoints = []
+
+        # We should call this first since we probably have the Home tab in memory
+        # as the first cached json data
         try:
-            for vid in self.get_community_videos(update=update):
-                if vid.get(filter_type):
-                    live_videos.append(vid)
+            for home_vid in self.get_home_videos(update=update):
+                if home_vid.get(filter_type):
+                    filtered_videos.append(home_vid)
         except TabNotFound as e:
-            # self.log.debug(f"No Community tab available for this channel: {e}")
-            missing_endpoint.append("Community")
+            # Doubt this would ever happen
+            missing_endpoints.append("Home")
 
         try:
-            for vid in self.get_membership_videos(update=update):
-                if vid.get(filter_type):
-                    live_videos.append(vid)
+            for comm_vid in self.get_community_videos(update=update):
+                if comm_vid.get(filter_type):
+                    filtered_videos.append(comm_vid)
+        except TabNotFound as e:
+            # self.log.debug(f"No Community tab available for this channel: {e}")
+            missing_endpoints.append("Community")
+
+        try:
+            for memb_vid in self.get_membership_videos(update=update):
+                if memb_vid.get(filter_type):
+                    filtered_videos.append(memb_vid)
         except TabNotFound as e:
             # self.log.debug(f"No membership tab available for this channel: {e}")
             # This tab might also be missing if logged in user is simply not a member
             # TODO use this in conjunction with cookies to warn user if logged out?
             pass
 
+        # TODO this should be removed if filter is isLiveNow since Youtube does not
+        # list livestreams in the Videos tab anymore. Keep for now just in case.
         public_videos = []
         try:
             public_videos = self.get_public_videos(update=update)
         except TabNotFound as e:
             # Some channels do no have a Videos tab (only Live tab).
             # self.log.debug(f"No Videos tab available for this channel: {e}")
-            missing_endpoint.append("Videos")
+            missing_endpoints.append("Videos")
 
         public_streams = []
         try:
             public_streams = self.get_public_streams(update=update)
         except TabNotFound as e:
             # self.log.debug(f"No Live tab available for this channel: {e}")
-            missing_endpoint.append("Live")
+            missing_endpoints.append("Live")
 
-        if missing_endpoint:
+        if missing_endpoints:
             self.log.debug(
-                f"Reloading endpoints because \"{', '.join(missing_endpoint)}\""
-                " tab data was missing...")
+                f"Reloading endpoints because \"{', '.join(missing_endpoints)}\""
+                " tab data was missing, hoping it will appear at some point...")
             self.load_endpoints()
 
         # No need to check for "upcoming_videos" because live videos should
         # appear in the public videos list.
-        for vid in public_videos + public_streams:
-            if vid.get(filter_type):
-                live_videos.append(vid)
-        return live_videos
+        for video in public_videos + public_streams:
+            if video.get(filter_type):
+                filtered_videos.append(video)
+        return filtered_videos
 
     def get_tab_json_from_api(self, tab_name: str) -> Optional[Dict]:
         """
@@ -603,7 +679,7 @@ class YoutubeChannel:
                                         .get("webCommandMetadata", {})
         apiUrl = webCommandMetadata.get("apiUrl")
         url = webCommandMetadata.get("url")
-        self.log.info(f"Getting videos from the {tab_name} tab data...")
+        self.log.debug(f"Getting videos from the {tab_name} tab data...")
 
         return self.session.make_api_request(
             endpoint=f"https://www.youtube.com{apiUrl}",
@@ -676,6 +752,14 @@ def _get_content_from_list_renderer(contents: List, tabtype: str) -> List[Dict]:
                     )
                     if vid_metadata.get('videoId'):
                         videos.append(vid_metadata)
+            elif tabtype == "Home":
+                cfcRenderer = __item.get(
+                    'channelFeaturedContentRenderer', {}).get('items', [])
+                for cfcItem in cfcRenderer:
+                    if videoRenderer := cfcItem.get('videoRenderer'):
+                        if vid_metadata := get_video_from_post(videoRenderer):
+                            videos.append(vid_metadata)
+
             # elif tabtype == "Live":
     return videos
 
@@ -697,8 +781,7 @@ def get_videos_from_tab(tabs, tabtype) -> List[Dict]:
             return _get_content_from_grid_renderer(
                 richGridRenderer.get('contents', []), tabtype)
 
-        # Fallback: this is the previous way of rendering tabs, keeping it
-        # just in case they are still used somewhere
+        # This is the way the Home tab renders
         if sectionListRenderer := tab.get('tabRenderer')\
                       .get('content', {})\
                       .get('sectionListRenderer'):
@@ -715,6 +798,8 @@ def get_video_from_post(attachment: Dict) -> Dict[str, Any]:
     video_post = {}
     video_post['videoId'] = attachment.get('videoId')
     video_post['thumbnail'] = attachment.get('thumbnail', {})
+    video_post['isLiveNow'] = attachment.get('isLiveNow', False)
+    video_post['isLive'] = attachment.get('isLive', False)
 
     badges = attachment.get('badges', [])
     if len(badges) and isinstance(badges[0], dict):
@@ -811,7 +896,7 @@ def format_list_output(vid_list: List[Dict]) -> str:
     return "\n".join(strs)
 
 
-def get_endpoints_from_json(json: Dict) -> Dict:
+def get_endpoints_from_json(json: Dict) -> Dict[str, Any]:
     """
     Retrieve the endpoints (browseId+params) to navigate the innertube API.
     Typically the endpoints should look like this:

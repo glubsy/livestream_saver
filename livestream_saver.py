@@ -489,13 +489,13 @@ def monitor_mode(config, args):
     ch = YoutubeChannel(
         URL, channel_id, session,
         output_dir=args["output_dir"], hooks=args["hooks"], notifier=NOTIFIER)
-    ch.load_endpoints()
     logger.info(f"Monitoring channel: {ch._id}")
 
     while True:
         live_videos = []
         try:
-            live_videos = ch.filter_videos('isLiveNow')  # get the actual live stream
+            # Filter and get only current live streams 
+            live_videos = ch.filter_videos('isLiveNow')
 
             # Calling this might trigger hooks twice for upcoming videos
             # will probably become obsolete soon.
@@ -515,7 +515,8 @@ def monitor_mode(config, args):
         if len(live_videos) == 0:
             wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
             continue
-
+        
+        # FIXME there might be more than one active live stream!
         target_live = live_videos[0]
         _id = target_live.get('videoId')
         sub_output_dir = args["output_dir"] / f"stream_capture_{_id}"
