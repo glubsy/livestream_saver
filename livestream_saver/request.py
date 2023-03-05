@@ -31,7 +31,7 @@ INNERTUBE_CLIENTS = {
                     # "browserVersion": "103.0",
                     # "clientFormFactor": "UNKNOWN_FORM_FACTOR",
                     "clientName": "WEB",
-                    "clientVersion": "2.20221026.05.00",
+                    "clientVersion": "2.20230301.09.00",
                     # "deviceMake": "",
                     # "deviceModel": "",
                     # "gl": "EN",

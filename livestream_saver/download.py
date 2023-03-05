@@ -388,7 +388,8 @@ We assume a failed download attempt. Last segment available was {seg}.")
                 endpoint="https://www.youtube.com/youtubei/v1/player",
                 payload={
                     "videoId": self.video_id
-                }
+                },
+                client="android"  # "android" seems to partially work around throttling
             )
             self.session.is_logged_out(self._json)
 
@@ -495,7 +496,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
         return self.get_streams_from_xml(content)
 
     @property
-    def streams(self):
+    def streams(self) -> pytube.StreamQuery:
         """Interface to query both adaptive (DASH) and progressive streams.
 
         :rtype: :class:`StreamQuery <StreamQuery>`.
@@ -1261,15 +1262,17 @@ playability status is: {status} \
             custom_filters = [filter_maxq]
 
         avail_streams = self.streams
+
         if log:
             self.print_available_streams(avail_streams)
+
         video_streams = avail_streams.filter(file_extension=codec,
             custom_filter_functions=custom_filters
             ) \
             .order_by('resolution') \
             .desc()
-
         video_stream = video_streams.first()
+
         if log:
             self.logger.info(f"Selected video {video_stream}")
 
@@ -1279,6 +1282,7 @@ playability status is: {status} \
             .order_by('abr') \
             .desc()
         audio_stream = audio_streams.first()
+
         if log:
             self.logger.info(f"selected audio {audio_stream}")
 
@@ -1464,7 +1468,7 @@ playability status is: {status} \
 
 
 class MPD():
-    """Cache the URL to the manifest, but enable fetching it data if needed."""
+    """Cache the URL to the manifest, but enable fetching if data is needed."""
     def __init__(self, parent: YoutubeLiveStream, mpd_type: str = "dash") -> None:
         self.parent = parent
         self.url = None
