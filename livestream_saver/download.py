@@ -502,17 +502,23 @@ We assume a failed download attempt. Last segment available was {seg}.")
         :rtype: :class:`StreamQuery <StreamQuery>`.
         """
         # self.update_status()
-        query = pytube.StreamQuery(self.fmt_streams)
+        query = None
+        try:
+            query = pytube.StreamQuery(self.fmt_streams)
+        except Exception as e:
+            self.logger.error(e, exc_info=1)
+            self.logger.warning("Failed to get streams from fmt_streams (pytube error).")
+
         # BUG in pytube, livestreams with resolution higher than 1080 do not
         # return descriptions for their available streams, except in the
         # DASH MPD manifest! These descriptions seem to re-appear after the
         # stream has been converted to a VOD though.
-        if len(query) == 0:
+        if query is None or len(query) == 0:
+            self.logger.info("Getting stream descriptors from MPD...")
+
             if mpd_streams := self.get_streams_from_mpd():
-                self.logger.warning(
-                    "Could not find any stream descriptor in the response!"
-                    f" Loaded streams from MPD instead.")
                 self.logger.debug(f"Streams from MPD: {mpd_streams}.")
+                # HACK but it works for now
                 query = pytube.StreamQuery(mpd_streams)
             else:
                 raise Exception("Failed to load stream descriptors!")
@@ -1300,103 +1306,6 @@ playability status is: {status} \
                 .first()
 
         return (video_stream, audio_stream)
-
-
-    # # TODO close but UNFINISHED, superceded by pytube. OBSOLETE
-    # def get_best_quality(self, datatype, maxq=None, codec="mp4", fps="60"):
-    #     # Select the best possible quality, with maxq (str) as the highest possible
-    #     label = 'qualityLabel' if datatype == 'video' else 'audioQuality'
-    #     streamingData = self.json.get('streamingData', {})
-    #     adaptiveFormats = streamingData.get('adaptiveFormats', {})
-
-    #     if not streamingData or not adaptiveFormats:
-    #         raise Exception(f"Could not get {datatype} quality format. \
-    # Missing streamingData or adaptiveFormats.")
-
-    #     available_stream_by_itags = []
-    #     for stream in adaptiveFormats:
-    #         if stream.get(label, None) is not None:
-    #             available_stream_by_itags.append(stream)
-    #             self.print_found_quality(stream, datatype)
-
-    #     if maxq is not None and isinstance(maxq, str):
-    #         if match := re.search(r"(\d{3,4})p?", maxq):
-    #             maxq = int(match.group(1))
-    #         else:
-    #             self.logger.warning(
-    #                 f"Max quality setting \"{maxq}\" is incorrect."
-    #                 " Defaulting to best video quality available."
-    #             )
-    #             maxq = None
-
-    #     ranked_profiles = []
-    #     for stream in available_stream_by_itags:
-    #         i_itag = int(stream.get("itag"))
-    #         itag_profile = pytube.itags.get_format_profile(i_itag)
-    #         itag_profile["itag"] = i_itag
-
-    #         # Filter None values, we don't know what bitrate they represent.
-    #         if datatype == "audio" and itag_profile.get("abr"):
-    #             ranked_profiles.append(itag_profile)
-    #             # strip kpbs for sorting. Not really necessary anymore since
-    #             # None values are filtered already.
-    #             # audio_streams[-1]["abr"] = abr.split("kpbs")[0]
-    #         elif datatype == "video" and (res := itag_profile.get("resolution")):
-    #             if maxq:
-    #                 res_int = int(res.split("p")[0])
-    #                 if res_int > maxq:
-    #                     continue
-    #             ranked_profiles.append(itag_profile)
-
-    #     if datatype == "audio":
-    #         ranked_profiles.sort(key=lambda s: s.get("abr"))
-    #     else:
-    #         ranked_profiles.sort(key=lambda s: s.get("resolution"))
-
-    #     # Add back information from the json for further ranking
-    #     # because pytube doesn't keep track of those
-    #     if datatype == "video":
-    #         for avail in adaptiveFormats:
-    #             itag = avail.get("itag")
-    #             for profile in ranked_profiles:
-    #                 if profile.get("itag") == itag:
-    #                     # fps: 60/30
-    #                     profile["fps"] = avail.get("fps", "")
-    #                     # mimeType: video/mp4; codecs="avc1.42c00b"
-    #                     # mimeType: video/webm; codecs="vp9"
-    #                     profile["mimeType"] = avail.get("mimeType", "").split(";")[0]
-    #                     continue
-    #         ranked_profiles.sort(key=lambda s: s.get("fps"))
-
-    #     # select mp4 or webm depending on "mimeType" container type
-    #     ranked_profiles.sort(key=lambda s: s.get("mimeType"))
-
-    #     filters = []
-
-
-    #     best_itag = ranked_streams[0].get('itag')
-
-    #     chosen_itag = None
-    #     chosen_quality_labels = ""
-    #     for i in ranked_streams:
-    #         if i in available_itags:
-    #             chosen_itag = i
-    #             for s in adaptiveFormats:
-    #                 if chosen_itag == s.get('itag'):
-    #                     if datatype == "video":
-    #                         chosen_quality_labels = f"{d.get('qualityLabel')} \
-    # type: {d.get('mimeType')} bitrate: {d.get('bitrate')} codec: {d.get('codecs')}"
-    #                     else:
-    #                         chosen_quality_labels = f"{d.get('audioQuality')} \
-    # type: {d.get('mimeType')} bitrate: {d.get('bitrate')} codec: {d.get('codecs')}"
-    #             break
-
-    #     self.logger.warning(f"Chosen {datatype} quality: \
-    # itag {chosen_itag}; height: {chosen_quality_labels}")
-
-    #     if chosen_itag is None:
-    #         raise Exception(f"Failed to get chosen quality from adaptiveFormats.")
-    #     return chosen_itag
 
 
     def write_to_file(self, fsrc, fdst, length=0):
