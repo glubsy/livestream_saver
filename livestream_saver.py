@@ -24,10 +24,7 @@ logger.setLevel(logging.DEBUG)
 
 NOTIFIER = NotificationDispatcher()
 
-def parse_args(config) -> Dict[str, Any]:
-    """
-    Return a dict view of the argparse.Namespace.
-    """
+def parse_args(config) -> argparse.Namespace:
     parent_parser = argparse.ArgumentParser(
         description='Monitor a Youtube channel for any active live stream and \
 record live streams from the first segment.',
@@ -244,8 +241,7 @@ streams has been successful. This is only useful for debugging.'
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         parents=[parent_parser]
     )
-
-    return vars(parser.parse_args())
+    return parser.parse_args()
 
 
 # def parse_regex_str(regex_str) -> Optional[re.Pattern]:
@@ -474,7 +470,7 @@ def _get_target_params(
 
 TIME_VARIANCE = 3.0  # in minutes
 
-def monitor_mode(config, args):
+def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
     URL = args["URL"]
     channel_id = args["channel_id"]
     scan_delay = args["scan_delay"]
@@ -775,10 +771,12 @@ def init_config() -> ConfigParser:
     return config
 
 
-def update_config(config, args) -> None:
-    """Load the configuration file specified as argument into config object.
+def update_config(config: ConfigParser, args: Dict[str, Any]) -> None:
+    """
+    Load the configuration file specified as argument into config object.
     If none is specified, load the configuration file located in the current
-    working directory if possible."""
+    working directory if possible.
+    """
     conf_file = args.get("config_file")
     if conf_file:
         if not Path(conf_file).is_file():
@@ -827,7 +825,8 @@ def main():
         env_vars = { "env": found_vars }
         config.read_dict(env_vars)
 
-    args = parse_args(config)
+    # We'll need to mutate args further down
+    args: Dict[str, Any] = vars(parse_args(config))
     update_config(config, args)
 
     # DEBUG
