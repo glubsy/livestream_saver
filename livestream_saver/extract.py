@@ -46,8 +46,9 @@ def get_video_id(url: str) -> str:
         video_id = video_id.split("&pp=")[0]
 
     if len(video_id) != 11:
-        raise ValueError(f"Invalid video ID length for \
-\"{video_id}\": {len(video_id)}. Expected 11.")
+        raise ValueError(
+            f"Invalid video ID length for \"{video_id}\": {len(video_id)}. Expected 11."
+        )
     return video_id
 
 

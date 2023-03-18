@@ -19,8 +19,8 @@ from livestream_saver.request import YoutubeUrllibSession
 from livestream_saver.notifier import NotificationDispatcher, WebHookFactory
 from livestream_saver.hooks import HookCommand
 
-logger = logging.getLogger('livestream_saver')
-logger.setLevel(logging.DEBUG)
+log = logging.getLogger('livestream_saver')
+log.setLevel(logging.DEBUG)
 
 NOTIFIER = NotificationDispatcher()
 
@@ -284,13 +284,13 @@ def _get_hook_from_config(
     try:
         allow_regex = _get_regex_from_config(section, config, full_hook_name + "_allow_regex")
     except EmptyRegexException:
-        logger.debug(f"Empty value in [{section}] {full_hook_name + '_allow_regex'}")
+        log.debug(f"Empty value in [{section}] {full_hook_name + '_allow_regex'}")
         allow_regex = None
 
     try:
         block_regex = _get_regex_from_config(section, config, full_hook_name + "_block_regex")
     except EmptyRegexException:
-        logger.debug(f"Empty value in [{section}] {full_hook_name + '_block_regex'}")
+        log.debug(f"Empty value in [{section}] {full_hook_name + '_block_regex'}")
         block_regex = None
 
     # allow_regex = None
@@ -336,7 +336,7 @@ def get_hooks_for_section(section: str, config: ConfigParser, hooktype: str) -> 
             config, section, hook_name, hooktype):
                 cmds[hook_name] = hookcommand
         except Exception:
-            logger.exception(
+            log.exception(
                 f"Error parsing config [{section}] \"{hook_name + hooktype}\"")
     return cmds
 
@@ -350,7 +350,7 @@ def _get_regex_from_config(
     section: str, config: ConfigParser, regex: str) -> Optional[re.Pattern]:
     if regex_str := config.get(section, regex, fallback=None):
         regex_str = regex_str.strip("\"\'")
-        logger.debug(f"For \"{regex}\" found \"{regex_str}\" from section {section}")
+        log.debug(f"For \"{regex}\" found \"{regex_str}\" from section {section}")
         if regex_str in (r'""', r"''"):
             raise EmptyRegexException
         pattern = re.compile(regex_str, re.I|re.M)
@@ -398,7 +398,7 @@ def _get_target_params(
                     sub_cmd, config, regex_str
                 )
             except EmptyRegexException:
-                logger.debug(f"Empty value in {sub_cmd} section for {regex_str}")
+                log.debug(f"Empty value in {sub_cmd} section for {regex_str}")
                 pass
 
     # The user already has explicitly passed this argument, so we can ignore
@@ -415,7 +415,7 @@ def _get_target_params(
         if len(section) <= len("monitor "):
             continue
         if override is None or override == section[len("monitor "):]:
-            logger.info(f"Using custom monitor section \"{section}\".")
+            log.info(f"Using custom monitor section \"{section}\".")
             params["URL"] = config.get(
                 section, "URL", fallback=None
             )
@@ -452,7 +452,7 @@ def _get_target_params(
                     if re := _get_regex_from_config(section, config, regex_str):
                         params["filters"][regex_str] = re
                 except EmptyRegexException:
-                    logger.debug(f"Empty value in {section} section for {regex_str}.")
+                    log.debug(f"Empty value in {section} section for {regex_str}.")
                     # In case of empty string, remove any regex that could have
                     # been set from the monitor section.
                     params["filters"][regex_str] = None
@@ -485,12 +485,12 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
     ch = YoutubeChannel(
         URL, channel_id, session,
         output_dir=args["output_dir"], hooks=args["hooks"], notifier=NOTIFIER)
-    logger.info(f"Monitoring channel: {ch._id}")
+    log.info(f"Monitoring channel: {ch._id}")
 
     while True:
         live_videos = []
         try:
-            # Filter and get only current live streams 
+            # Filter and get only current live streams
             live_videos = ch.filter_videos('isLiveNow')
 
             # Calling this might trigger hooks twice for upcoming videos
@@ -498,78 +498,81 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
             # ch.get_upcoming_videos(update=False)
 
             # TODO print to stdout and overwrite line
-            logger.debug(
+            log.debug(
                 "Live videos found for channel "
                 f"\"{ch.get_channel_name()}\": "
                 f"{live_videos if len(live_videos) else None}"
             )
         except Exception as e:
             # Handle urllib.error.URLError <urlopen error [Errno -3] Temporary failure in name resolution>
-            logger.exception(f"Error while getting live videos: {e}")
+            log.exception(f"Error while getting live videos: {e}")
             pass
 
         if len(live_videos) == 0:
             wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
             continue
-        
-        # FIXME there might be more than one active live stream!
-        target_live = live_videos[0]
-        _id = target_live.get('videoId')
-        sub_output_dir = args["output_dir"] / f"stream_capture_{_id}"
-        livestream = None
-        try:
-            livestream = YoutubeLiveStream(
-                url=f"https://www.youtube.com{target_live.get('url')}", # /watch?v=...
-                output_dir=sub_output_dir,
-                session=ch.session,
-                notifier=NOTIFIER,
-                video_id=_id,
-                max_video_quality=config.getint(
-                    "monitor", "max_video_quality", vars=args, fallback=None
-                ),
-                hooks=args["hooks"],
-                skip_download=args.get("skip_download", False),
-                filters=args["filters"],
-                ignore_quality_change=config.getboolean(
-                    "monitor", "ignore_quality_change", vars=args, fallback=False),
-                log_level=config.get("monitor", "log_level", vars=args)
-            )
-        except ValueError as e:
-            # Constructor may throw
-            logger.critical(e)
-            wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
-            continue
 
-        logger.info(
-            f"Found live: {_id} title: {target_live.get('title')}. "
-            "Downloading...")
+        # TODO there might be more than one active live stream at a time
+        target_live = live_videos[0]
+
+        video_id = target_live.get("videoId")
+        video_url = f"https://www.youtube.com{target_live.get('url')}" # "/watch?v=..."
+
+        if not video_id:
+            try:
+                video_id = extract.get_video_id(video_url)
+            except ValueError as e:
+                log.critical(e)
+                wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
+                continue
+
+        log.info(
+            f"Found live: {video_id}. Title: \"{target_live.get('title')}\".")
+
+        sub_output_dir = args["output_dir"] / f"stream_capture_{video_id}"
+
+        livestream = YoutubeLiveStream(
+            video_id=video_id,
+            url=video_url,
+            output_dir=sub_output_dir,
+            session=ch.session,
+            notifier=NOTIFIER,
+            max_video_quality=config.getint(
+                "monitor", "max_video_quality", vars=args, fallback=None
+            ),
+            hooks=args["hooks"],
+            skip_download=args.get("skip_download", False),
+            filters=args["filters"],
+            ignore_quality_change=config.getboolean(
+                "monitor", "ignore_quality_change", vars=args, fallback=False),
+            log_level=config.get("monitor", "log_level", vars=args)
+        )
 
         try:
             livestream.download()
         except Exception as e:
-            logger.exception(
-                f"Got error in stream download but continuing...\n {e}"
-            )
+            log.exception(
+                f"Got error in stream download but continuing...\n {e}")
             pass
 
         if livestream.skip_download:
             NOTIFIER.send_email(
                 subject=(
                     f"Skipped download of {ch.get_channel_name()} - "
-                    f"{livestream.title} {_id}"
+                    f"{livestream.title} {video_id}"
                 ),
                 message_text=f"Hooks scheduled to run were: {args.get('hooks')}"
             )
 
         if livestream.done:
-            logger.info(f"Finished downloading {_id}.")
+            log.info(f"Finished downloading {video_id}.")
             NOTIFIER.send_email(
                 subject=f"Finished downloading {ch.get_channel_name()} - \
-{livestream.title} {_id}",
+{livestream.title} {video_id}",
                 message_text=f""
             )
             if not config.getboolean("monitor", "no_merge", vars=args):
-                logger.info("Merging segments...")
+                log.info("Merging segments...")
                 # TODO in a separate thread?
                 merged = None
                 try:
@@ -584,7 +587,7 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
                         )
                     )
                 except Exception as e:
-                    logger.error(e)
+                    log.error(e)
 
                 # TODO pass arguments about successful merge
                 livestream.trigger_hooks("on_merge_done")
@@ -597,58 +600,54 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
                 message_text=f"Error was: {livestream.error}\n"
                               "Resuming monitoring..."
             )
-            logger.critical("Error during stream download! Resuming monitoring...")
+            log.critical("Error during stream download! Resuming monitoring...")
             pass
 
         wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
     return 1
 
 
-def download_mode(config, args):
+def download_mode(config: ConfigParser, args: Dict[str, Any]):
     session = YoutubeUrllibSession(
-        cookie_path=args.get("cookie"),
-        notifier=NOTIFIER
+        cookie_path=args.get("cookie"), notifier=NOTIFIER
     )
-    try:
-        dl = YoutubeLiveStream(
-            url=args.get("URL"),
-            output_dir=args["output_dir"],
-            session=session,
-            notifier=NOTIFIER,
-            video_id=args["video_id"],
-            max_video_quality=config.getint(
-                "download", "max_video_quality", vars=args, fallback=None
-            ),
-            hooks=args["hooks"],
-            skip_download=config.getboolean(
-                "download", "skip_download", vars=args, fallback=False
-            ),
-            # no filters in this mode, we assume the user knows what they're doing
-            filters={},
-            ignore_quality_change=config.getboolean(
-                "download", "ignore_quality_change", vars=args, fallback=False),
-            log_level=config.get("download", "log_level", vars=args)
-        )
-    except ValueError as e:
-        logger.critical(e)
-        return 1
 
-    dl.download(config.getfloat("download", "scan_delay", vars=args))
+    livestream = YoutubeLiveStream(
+        video_id=args["video_id"],
+        url=args.get("URL"),
+        output_dir=args["output_dir"],
+        session=session,
+        notifier=NOTIFIER,
+        max_video_quality=config.getint(
+            "download", "max_video_quality", vars=args, fallback=None
+        ),
+        hooks=args["hooks"],
+        skip_download=config.getboolean(
+            "download", "skip_download", vars=args, fallback=False
+        ),
+        # no filters in this mode, we assume the user knows what they're doing
+        filters={},
+        ignore_quality_change=config.getboolean(
+            "download", "ignore_quality_change", vars=args, fallback=False),
+        log_level=config.get("download", "log_level", vars=args)
+    )
 
-    if dl.done and not config.getboolean("download", "no_merge", vars=args):
-        logger.info("Merging segments...")
+    livestream.download(config.getfloat("download", "scan_delay", vars=args))
+
+    if livestream.done and not config.getboolean("download", "no_merge", vars=args):
+        log.info("Merging segments...")
         try:
             merge(
-                info=dl.video_info,
-                data_dir=dl.output_dir,
+                info=livestream.video_info,
+                data_dir=livestream.output_dir,
                 keep_concat=config.getboolean("download", "keep_concat", vars=args),
                 delete_source=config.getboolean("download", "delete_source", vars=args)
             )
         except Exception as e:
-            logger.error(e)
+            log.error(e)
 
         # TODO pass arguments about successful merge
-        dl.trigger_hooks("on_merge_done")
+        livestream.trigger_hooks("on_merge_done")
     return 0
 
 
@@ -664,7 +663,7 @@ def merge_mode(config, args):
     )
 
     if not written_file:
-        logger.critical("Something failed. Please report the issue with logs.")
+        log.critical("Something failed. Please report the issue with logs.")
         return 1
     return 0
 
@@ -683,8 +682,8 @@ def log_enabled(config, args, mode_str):
 def setup_logger(*, output_filepath, loglevel, log_to_file=True) -> logging.Logger:
     # This uses the global variable "logger"
     if loglevel is None:
-        logger.disabled = True
-        return logger
+        log.disabled = True
+        return log
 
     if isinstance(loglevel, str):
         loglevel = str.upper(loglevel)
@@ -700,14 +699,14 @@ def setup_logger(*, output_filepath, loglevel, log_to_file=True) -> logging.Logg
         # FIXME DEBUG by default for file
         logfile.setLevel(logging.DEBUG)
         logfile.setFormatter(formatter)
-        logger.addHandler(logfile)
+        log.addHandler(logfile)
 
     # Console stdout handler
     conhandler = logging.StreamHandler()
     conhandler.setLevel(loglevel)
     conhandler.setFormatter(formatter)
-    logger.addHandler(conhandler)
-    return logger
+    log.addHandler(conhandler)
+    return log
 
 
 def init_config() -> ConfigParser:
@@ -841,7 +840,7 @@ def main():
         print("No sub-command used. Exiting.")
         return
 
-    global logger
+    global log
     log_enabled(config, args, sub_cmd)
 
     logfile_path = Path("")  # cwd by default
@@ -877,12 +876,12 @@ def main():
 
         logfile_path = output_dir / f'monitor_{channel_id}.log'
 
-        logger = setup_logger(
+        log = setup_logger(
             output_filepath=logfile_path,
             loglevel=config.get(sub_cmd, "log_level", vars=args)
         )
-        logger.debug(f"Regex filters {[f'{k}: {v}' for k, v in args['filters'].items()]}")
-        args["logger"] = logger
+        log.debug(f"Regex filters {[f'{k}: {v}' for k, v in args['filters'].items()]}")
+        args["logger"] = log
     elif sub_cmd  == "download":
         output_dir = Path(
             config.get(
@@ -906,11 +905,11 @@ def main():
         args["output_dir"] = output_dir
 
         logfile_path = output_dir / "download.log"
-        logger = setup_logger(
+        log = setup_logger(
             output_filepath=logfile_path,
             loglevel=config.get(sub_cmd, "log_level", vars=args)
         )
-        args["logger"] = logger
+        args["logger"] = log
     elif sub_cmd == "merge":
         logfile_path = Path(args["PATH"]) / "merge.log"
         setup_logger(
@@ -994,7 +993,7 @@ def main():
         error = 1
         from sys import exc_info
         exc_type, exc_value, exc_traceback = exc_info()
-        logger.exception(e)
+        log.exception(e)
         NOTIFIER.send_email(
             subject=f"{argv[0].split(sep)[-1]} crashed!",
             message_text=f"Mode: {args.get('sub-command', '').split('_')[0]}\n" \

@@ -589,7 +589,7 @@ class YoutubeChannel:
         if len(self._hooked_videos) >= 40:
             self._hooked_videos.pop(0)
 
-    def filter_videos(self, filter_type: str = 'isLiveNow', update=True) -> List:
+    def filter_videos(self, filter_type: str = 'isLiveNow', update=True) -> List[Dict]:
         """Returns a list of videos that are live, from all channel tabs combined.
         Usually there is only one live video active at a time.
         """

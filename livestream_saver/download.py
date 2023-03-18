@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from email.mime import audio
+from typing import Optional, Dict, List, Any
 from os import sep, path, makedirs, listdir
 from sys import stderr
 from platform import system
@@ -9,7 +9,6 @@ from time import time, sleep
 from json import dumps, dump, loads
 from contextlib import closing
 from enum import Flag, auto
-from typing import Optional, Dict, List
 from pathlib import Path
 import re
 from urllib.request import urlopen
@@ -169,11 +168,11 @@ class PathURL(BaseURL):
 class YoutubeLiveStream():
     def __init__(
         self,
-        url: str,
+        video_id: str,
         output_dir: Path,
         session: YoutubeUrllibSession,
         notifier: NotificationDispatcher,
-        video_id: Optional[str] = None,
+        url: Optional[str] = None,
         max_video_quality: Optional[str] = None,
         hooks: Dict = {},
         skip_download = False,
@@ -181,12 +180,10 @@ class YoutubeLiveStream():
         ignore_quality_change: bool = False,
         log_level = logging.INFO
     ) -> None:
-
         self.session = session
-        self.url = url
+        self.video_id = video_id
+        self.url = url if url else f"https://www.youtube.com/watch?v={video_id}"
         self.max_video_quality = max_video_quality
-        self.video_id = video_id if video_id is not None \
-                                 else extract.get_video_id(url)
 
         self._js: Optional[str] = None  # js fetched by js_url
         self._js_url: Optional[str] = None  # the url to the js, parsed from watch html
@@ -240,12 +237,6 @@ class YoutubeLiveStream():
                 output_dir=output_dir, video_id=None
             )
 
-        # self.output_dir = output_dir \
-        #     if output_dir.exists() \
-        #     else util.create_output_dir(
-        #         output_dir=output_dir, video_id=None
-        #     )
-
         self.logger = self.setup_logger(self.output_dir, log_level)
         self.notifier = notifier
 
@@ -255,7 +246,7 @@ class YoutubeLiveStream():
         self.allow_regex: Optional[re.Pattern] = filters.get("allow_regex")
         self.block_regex: Optional[re.Pattern] = filters.get("block_regex")
 
-    def setup_logger(self, output_path, log_level):
+    def setup_logger(self, output_path: Path, log_level: logging._Level):
         if isinstance(log_level, str):
             log_level = str.upper(log_level)
 
@@ -1335,7 +1326,10 @@ playability status is: {status} \
                 buf = fsrc_read(length)
         return True
 
-    def get_metadata_dict(self) -> Dict:
+    def get_metadata_dict(self) -> Dict[str, Any]:
+        """
+        Get various information about the video.
+        """
         # TODO add more data, refresh those that got stale
         thumbnails = {}
         try:
