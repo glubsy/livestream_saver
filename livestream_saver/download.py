@@ -143,6 +143,49 @@ def patched__init__(self, js: str):
 pytube.cipher.Cipher.__init__ = patched__init__
 
 
+def patched_get_throttling_plan(js: str):
+    """Extract the "throttling plan".
+
+    The "throttling plan" is a list of tuples used for calling functions
+    in the c array. The first element of the tuple is the index of the
+    function to call, and any remaining elements of the tuple are arguments
+    to pass to that function.
+
+    :param str js:
+        The contents of the base.js asset file.
+    :returns:
+        The full function code for computing the throttlign parameter.
+    """
+    raw_code = pytube.cipher.get_throttling_function_code(js)
+
+    transform_start = r"try{"
+    plan_regex = re.compile(transform_start)
+    match = plan_regex.search(raw_code)
+
+    if match:
+        transform_plan_raw = pytube.cipher.find_object_from_startpoint(
+            raw_code, match.span()[1] - 1)
+    else:
+        transform_plan_raw = raw_code
+
+    # Steps are either c[x](c[y]) or c[x](c[y],c[z])
+    step_start = r"c\[(\d+)\]\(c\[(\d+)\](,c(\[(\d+)\]))?\)"
+    step_regex = re.compile(step_start)
+    matches = step_regex.findall(transform_plan_raw)
+    transform_steps = []
+    for match in matches:
+        if match[4] != '':
+            transform_steps.append((match[0],match[1],match[4]))
+        else:
+            transform_steps.append((match[0],match[1]))
+
+    return transform_steps
+
+# TODO might have to do the same for get_throttling_function_array and get_throttling_function_code
+# https://github.com/pytube/pytube/issues/1498
+pytube.cipher.get_throttling_plan = patched_get_throttling_plan
+
+
 class BaseURL(str):
     """Wrapper class to handle incrementing segment number in various URL formats."""
     def __new__(cls, content):
@@ -246,7 +289,7 @@ class YoutubeLiveStream():
         self.allow_regex: Optional[re.Pattern] = filters.get("allow_regex")
         self.block_regex: Optional[re.Pattern] = filters.get("block_regex")
 
-    def setup_logger(self, output_path: Path, log_level: logging._Level):
+    def setup_logger(self, output_path: Path, log_level):
         if isinstance(log_level, str):
             log_level = str.upper(log_level)
 
