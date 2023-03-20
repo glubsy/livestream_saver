@@ -15,7 +15,7 @@ from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email import encoders
-from livestream_saver.util import UA, is_wanted_based_on_metadata
+from livestream_saver.util import UA, none_filtered_out
 from urllib.request import Request, urlopen
 from urllib.parse import urlparse
 from urllib.error import HTTPError
@@ -189,7 +189,7 @@ class WebHookFactory():
     def get(self, args: Dict):
         """Create a WebHook object, using the configured parameters.
         If a regex from the config file matches, return None."""
-        if not is_wanted_based_on_metadata(
+        if not none_filtered_out(
             (args.get("title"), args.get("description")),
             self.allow_regex, self.block_regex
         ):

@@ -24,7 +24,7 @@ from livestream_saver import extract
 from livestream_saver import util
 from livestream_saver.notifier import NotificationDispatcher
 from livestream_saver.request import YoutubeUrllibSession
-from livestream_saver.hooks import is_wanted_based_on_metadata
+
 
 SYSTEM = system()
 ISPOSIX = SYSTEM == 'Linux' or SYSTEM == 'Darwin'
@@ -221,7 +221,8 @@ class YoutubeLiveStream():
         skip_download = False,
         filters: Dict[str, re.Pattern] = {},
         ignore_quality_change: bool = False,
-        log_level = logging.INFO
+        log_level = logging.INFO,
+        initial_metadata: Optional[Dict[str, Any]] = {}
     ) -> None:
         self.session = session
         self.video_id = video_id
@@ -248,7 +249,10 @@ class YoutubeLiveStream():
 
         self._author: Optional[str] = None
         self._title: Optional[str] = None
+        self._description = ""
         self._publish_date: Optional[datetime] = None
+        self._initial_metadata = initial_metadata
+
         self.video_itag = None
         self.audio_itag = None
 
@@ -272,7 +276,6 @@ class YoutubeLiveStream():
         self.done = False
         self.error = None
         self.mpd = None
-        self._description = ""
 
         self.output_dir = output_dir
         if not self.output_dir.exists():
@@ -280,7 +283,7 @@ class YoutubeLiveStream():
                 output_dir=output_dir, video_id=None
             )
 
-        self.logger = self.setup_logger(self.output_dir, log_level)
+        self.log = self.setup_logger(self.output_dir, log_level)
         self.notifier = notifier
 
         self.video_outpath = self.output_dir / 'vid'
@@ -339,6 +342,81 @@ class YoutubeLiveStream():
         logger.addHandler(conhandler)
         return logger
 
+    def __repr__(self) -> str:
+        return f"{self.video_id} - {self.author} - {self.title}"
+
+    def is_download_wanted(self) -> bool:
+        """
+        Test for blocked substrings in metadata.
+        """
+        title = None
+        description = None
+        try:
+            title = self.title
+            description = self.description
+        except Exception as e:
+            # Default to allowing download in that case.
+            self.log.error(f"Failed getting some metadata for regex matching: {e}")
+
+        # Fallback to using data from monitoring phase
+        if not title:
+            self.title = self._initial_metadata.get("title")
+        if not description:
+            self.description = self._initial_metadata.get("description")
+
+        return util.none_filtered_out(
+            (self.title, self.description),
+            self.allow_regex, self.block_regex)
+
+    def pre_download_checks(self) -> bool:
+        """
+        Make sure the stream has started, and return whether the metadata allow
+        for download.
+        This method will block if the stream is filtered by regex expressions
+        until it goes offline.
+        """
+        download_wanted = self.is_download_wanted()
+        if not download_wanted:
+            self.skip_download = True
+            self.log.info(
+                f"Regex filters prevented download of {self.video_id} - {self.title}")
+
+        # Keep checking metadata for any change in case it becomes wanted for
+        # download, until the stream goes offline.
+        long_wait = 25.0  # minutes
+        while not download_wanted:
+            try:
+                self.update_status()
+                self.log.debug(f"Status is: {self.status}.")
+            except exceptions.WaitingException as e:
+                self.log.info(
+                    f"Stream {self.video_id} status is: {self.status}. "
+                    f"Waiting {long_wait} minutes...")
+            except exceptions.OfflineException as e:
+                self.log.info(f"Stream {self.video_id} status is now offline.")
+                break
+            except Exception as e:
+                self.log.error(f"Error getting status for stream {self.video_id}: {e}")
+
+            if not self.status == Status.OK:
+                self.log.warning(f"Stream {self.video_id} status is not OK.")
+                break
+
+            self.get_metadata(force_update=True)
+            download_wanted = self.is_download_wanted()
+            if download_wanted:
+                self.skip_download = False
+                self.log.warning(
+                    f"Stream {self.video_id} actually became wanted for download!")
+                break
+
+            # Longer delay in minutes between updates since we don't download
+            # we don't care about accuracy that much. Random value.
+            util.wait_block(0.01, 0.5)
+            continue
+        return download_wanted
+
+
     def get_first_segment(self, paths) -> int:
         """
         Determine the first segment number from which we should download.
@@ -362,13 +440,15 @@ class YoutubeLiveStream():
         # Step back one file just in case the latest segment got only partially
         # downloaded (we want to overwrite it to avoid a corrupted segment)
         if seg > 0:
-            self.logger.warning(f"An output directory already existed. \
+            self.log.warning(f"An output directory already existed. \
 We assume a failed download attempt. Last segment available was {seg}.")
             seg -= 1
         return seg
 
     def is_live(self) -> None:
         if not self.json:
+            self.log.debug("Got no JSON data, removing \"Available\" flag from status.")
+            self.status &= ~Status.AVAILABLE
             return
 
         isLive = self.json.get('videoDetails', {}).get('isLive')
@@ -389,8 +469,26 @@ We assume a failed download attempt. Last segment available was {seg}.")
             self.status |= Status.VIEWED_LIVE
         else:
             self.status &= ~Status.VIEWED_LIVE
-        self.logger.debug(f"is_live() status {self.status}")
+        self.log.debug(f"is_live() status: {self.status}")
 
+
+    def clear_cache(self) -> None:
+        """
+        Clear all cached metadata.
+        """
+        self._json = None
+        self._player_config_args = None
+        self._player_response = None
+        self._watch_html = None
+
+    def get_metadata(self, force_update=False) -> Dict:
+        """
+        Fetch metadata about the video.
+        Mainly used to populate member properties.
+        """
+        if force_update:
+            self.clear_cache()
+        return self.json
 
     @property
     def watch_html(self):
@@ -412,37 +510,30 @@ We assume a failed download attempt. Last segment available was {seg}.")
         return self._embed_html
 
     @property
-    def json(self):
+    def json(self) -> Dict[str, Any]:
         if self._json:
             return self._json
+
+        json = {}
         try:
             # json_string = extract.initial_player_response(self.watch_html)
             # API request with ANDROID client gives us a pre-signed URL
-            self._json = self.session.make_api_request(
+            json = self.session.make_api_request(
                 endpoint="https://www.youtube.com/youtubei/v1/player",
                 payload={
                     "videoId": self.video_id
                 },
                 client="android"  # "android" seems to partially work around throttling
             )
-            self.session.is_logged_out(self._json)
-
-            remove_useless_keys(self._json)
-            if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug(
-                    "Extracted JSON from html:\n"
-                    + dumps(self._json, indent=4, ensure_ascii=False)
-                )
+            self.session.is_logged_out(json)
+            remove_useless_keys(json)
         except Exception as e:
-            self.logger.debug(f"Error extracting JSON from HTML: {e}")
-            self._json = {}
-
-        if not self._json:
-            self.logger.critical(
-                f"WARNING: invalid JSON for {self.watch_url}: {self._json}"
-            )
-            self.status &= ~Status.AVAILABLE
-
+            self.log.debug(f"Error getting metadata JSON: {e}")
+            # self.log.debug(
+            #     "Loaded metadata JSON:\n"
+            #     + dumps(json, indent=2, ensure_ascii=False)
+            # )
+        self._json = json
         return self._json
 
     @property
@@ -468,7 +559,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
             try:
                 content = mpd.get_content()
             except Exception as e:
-                self.logger.critical(e)
+                self.log.critical(e)
                 return None
             self.mpd = mpd
         else:
@@ -491,7 +582,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
             #     _, _, el.tag = el.tag.rpartition('}') # strip ns
             # root = it.root
         except Exception as e:
-            self.logger.critical(f"Error loading XML of MPD: {e}")
+            self.log.critical(f"Error loading XML of MPD: {e}")
             return streams
 
         for _as in root.findall("{*}Period/{*}AdaptationSet"):
@@ -499,13 +590,13 @@ We assume a failed download attempt. Last segment available was {seg}.")
             for _rs in _as.findall("{*}Representation"):
                 url = _rs.find("{*}BaseURL")
                 if url is None:
-                    self.logger.debug(f"No BaseURL found for {_rs.attrib}. Skipping.")
+                    self.log.debug(f"No BaseURL found for {_rs.attrib}. Skipping.")
                     continue
                 # Simulate what pytube does in a very basic way
                 # FIXME this can safely be removed in next pytube:
                 codec = _rs.get("codecs")
                 if not codec or not mimeType:
-                    self.logger.debug(f"No codecs key found for {_rs.attrib}. Skipping")
+                    self.log.debug(f"No codecs key found for {_rs.attrib}. Skipping")
                     continue
                 streams.append(pytube.Stream(
                         stream = {
@@ -540,18 +631,18 @@ We assume a failed download attempt. Last segment available was {seg}.")
         try:
             query = pytube.StreamQuery(self.fmt_streams)
         except Exception as e:
-            self.logger.error(e, exc_info=1)
-            self.logger.warning("Failed to get streams from fmt_streams (pytube error).")
+            self.log.error(e, exc_info=1)
+            self.log.warning("Failed to get streams from fmt_streams (pytube error).")
 
         # BUG in pytube, livestreams with resolution higher than 1080 do not
         # return descriptions for their available streams, except in the
         # DASH MPD manifest! These descriptions seem to re-appear after the
         # stream has been converted to a VOD though.
         if query is None or len(query) == 0:
-            self.logger.info("Getting stream descriptors from MPD...")
+            self.log.info("Getting stream descriptors from MPD...")
 
             if mpd_streams := self.get_streams_from_mpd():
-                self.logger.debug(f"Streams from MPD: {mpd_streams}.")
+                self.log.debug(f"Streams from MPD: {mpd_streams}.")
                 # HACK but it works for now
                 query = pytube.StreamQuery(mpd_streams)
             else:
@@ -609,79 +700,76 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
     @property
     def title(self) -> Optional[str]:
-        """Get the video title."""
         if self._title:
             return self._title
 
-        try:
-            # FIXME decode unicode escape sequences if any
-            self._title = self.player_response['videoDetails']['title']
-        except KeyError as e:
-            self.logger.debug(f"KeyError in {self.video_id}.title: {e}")
-            # Check_availability will raise the correct exception in most cases
-            #  if it doesn't, ask for a report.
-            # self.check_availability()
-            self.update_status()
-            raise pytube.exceptions.PytubeError(
-                (
-                    f'Exception while accessing title of {self.watch_url}. '
-                    'Please file a bug report at https://github.com/pytube/pytube'
-                )
-            )
+        title = self.get_title()
+
+        # Keep the last valid value in cache (if we have one), just in case we
+        # would end up overwriting it with nothing.
+        if title is not None:
+            if self._title != title:
+                self.log.debug(
+                    f"Title change: \"{self._title}\" -> \"{title}\"")
+            self._title = title
+
         return self._title
 
     @title.setter
     def title(self, value):
-        """Sets the title value."""
         self._title = value
+
+    def get_title(self) -> Optional[str]:
+        """
+        Retrieve value from cached player_response.
+        """
+        # This method can be called from outside the class
+        try:
+            # TODO decode unicode escape sequences if any
+            return self.player_response["videoDetails"]["title"]
+        except KeyError as e:
+            self.log.warning(f"Error acessing title from player_response: {e}")
 
     @property
     def description(self) -> Optional[str]:
-        """Get the video description.
+        if self._description:
+            return self._description
 
-        :rtype: str
-        """
-        desc = self.player_response.get("videoDetails", {}).get("shortDescription")
+        desc = self.get_description()
+
+        # Keep the last valid value in cache (if we have one), just in case we
+        # would end up overwriting it with nothing.
         if desc is not None:
-            # Keep at least the last description in cache just in case we end
-            # up overwriting it with nothing.
+            if self._description != desc:
+                self.log.debug(
+                    f"Description change: \"{self._description}\" -> \"{desc}\"")
             self._description = desc
-        return desc
+        return self._description
 
-    # # NOT USED
-    # def populate_info(self):
-    #     if not self.json:
-    #         return
+    @description.setter
+    def description(self, value) -> None:
+        self._description = value
 
-    #     self.video_title = self.json.get('videoDetails', {}).get('title')
-    #     self.author =  self.json.get('videoDetails', {}).get('author')
-
-    #     if not self.thumbnail_url:
-    #         tlist = self.json.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails', [])
-    #         if tlist:
-    #             # Grab the last one, probably always highest resolution
-    #             # FIXME grab the best by comparing width/height key-values.
-    #             self.thumbnail_url = tlist[-1].get('url')
-
-    #     # self.scheduled_time = self.get_scheduled_time(self.json.get('playabilityStatus', {}))
-
-    #     if self.logger.isEnabledFor(logging.DEBUG):
-    #         self.logger.debug(f"Video ID: {self.video_id}")
-    #         self.logger.debug(f"Video title: {self.title}")
-    #         self.logger.debug(f"Video author: {self.author}")
-
+    def get_description(self) -> Optional[str]:
+        """
+        Retrieve value from cached player_response.
+        """
+        # This method can be called from outside the class
+        try:
+            return self.player_response["videoDetails"]["shortDescription"]
+        except KeyError as e:
+            self.log.warning(f"Error fetching description from player_response: {e}")
 
     @property
     def thumbnail_url(self) -> str:
-        """Get the best thumbnail url image.
-
-        :rtype: str
+        """
+        Get the best thumbnail image URL.
         """
         # The last item seems to have the maximum size
         best_thumbnail = (
             self.player_response.get("videoDetails", {})
             .get("thumbnail", {})
-            .get("thumbnails", [{}])[-1]\
+            .get("thumbnails", [{}])[-1]
             .get('url')
         )
         if best_thumbnail:
@@ -700,7 +788,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
                 .get("liveBroadcastDetails", {}) \
                 .get("startTimestamp", None)
         except Exception as e:
-            self.logger.debug(f"Error getting start_time: {e}")
+            self.log.debug(f"Error getting start_time: {e}")
         return self._start_time
 
     @property
@@ -719,23 +807,31 @@ We assume a failed download attempt. Last segment available was {seg}.")
             else:
                 self._scheduled_timestamp = None
         except Exception as e:
-            self.logger.debug(f"Error getting scheduled_timestamp: {e}")
+            self.log.debug(f"Error getting scheduled_timestamp: {e}")
         return self._scheduled_timestamp
 
     @property
     def author(self) -> str:
-        """Get the video author.
-        :rtype: str
-        """
         if self._author:
             return self._author
-        self._author = self.player_response.get(
-            "videoDetails", {}).get("author", "Author?")
+
+        author = None
+        try:
+            author = self.player_response["videoDetails"]["author"]
+        except KeyError as e:
+            self.log.warning(f"Error fetching author from player_response: {e}")
+
+        # Keep the last valid value in cache (if we have one), just in case we
+        # would end up overwriting it with nothing.
+        if author is not None:
+            if self._author != author:
+                self.log.debug(
+                    f"Author change: \"{self._author}\" -> \"{author}\"")
+            self._author = author
         return self._author
 
     @author.setter
     def author(self, value):
-        """Set the video author."""
         self._author = value
 
     def download_thumbnail(self):
@@ -747,9 +843,13 @@ We assume a failed download attempt. Last segment available was {seg}.")
                 with closing(urlopen(self.thumbnail_url)) as in_stream:
                     self.write_to_file(in_stream, thumbnail_path)
             except Exception as e:
-                self.logger.warning(f"Error writing thumbnails: {e}")
+                self.log.warning(f"Error writing thumbnails: {e}")
 
     def update_metadata(self):
+        """
+        Write some basic metadata to a file and download thumbnail onto storage
+        device.
+        """
         if self.video_itag:
             if info := pytube.itags.ITAGS.get(self.video_itag):
                 self.video_resolution = info[0]
@@ -798,23 +898,23 @@ We assume a failed download attempt. Last segment available was {seg}.")
         return info
 
     def update_status(self):
-        self.logger.debug("update_status()...")
-        # force update
-        self._watch_html = None
-        self._json = None
-        self._player_config_args = None
+        self.log.debug("update_status...")
+        # Force update
+        self.clear_cache()
         _json = self.json
 
         if not _json:
+            self.log.debug("Got no JSON data, removing \"Available\" flag from status.")
+            self.status &= ~Status.AVAILABLE
             return
 
         self.is_live()
         if not self.skip_download:
-            self.logger.info("Stream seems to be viewed live. Good.") \
-        if self.status & Status.VIEWED_LIVE else \
-        self.logger.warning(
-            "Stream is not being viewed live. This might not work!"
-        )
+            self.log.info("Stream seems to be viewed live. Good.") \
+            if self.status & Status.VIEWED_LIVE else \
+                self.log.warning(
+                    "Stream is not being viewed live. This might not work!"
+                )
 
         # Check if video is indeed available through its reported status.
         playabilityStatus = _json.get('playabilityStatus', {})
@@ -830,11 +930,12 @@ We assume a failed download attempt. Last segment available was {seg}.")
                 # self._scheduled_timestamp = scheduled_time
                 reason = playabilityStatus.get('reason', 'No reason found.')
 
-                self.logger.info(f"Scheduled start time: {scheduled_time} \
-({datetime.utcfromtimestamp(scheduled_time)} UTC). We wait...")
+                self.log.info(
+                    f"Scheduled start time: {scheduled_time}"
+                    f"({datetime.utcfromtimestamp(scheduled_time)} UTC). We wait...")
                 # FIXME use local time zone for more accurate display of time
                 # for example: https://dateutil.readthedocs.io/
-                self.logger.warning(f"{reason}")
+                self.log.warning(f"{reason}")
 
                 raise exceptions.WaitingException(
                     self.video_id, reason, scheduled_time
@@ -869,7 +970,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
                                          .get('subreason', {})\
                                          .get('simpleText', \
                                               'No subreason found in JSON.')
-            self.logger.warning(f"Livestream {self.video_id} \
+            self.log.warning(f"Livestream {self.video_id} \
 playability status is: {status} \
 {playabilityStatus.get('reason', 'No reason found')}. Sub-reason: {subreason}")
             self.status &= ~Status.AVAILABLE
@@ -880,7 +981,7 @@ playability status is: {status} \
             self.status &= ~Status.WAITING
 
         if not self.skip_download:
-            self.logger.info(f"Stream status {self.status}")
+            self.log.info(f"Stream status flags: {self.status}")
 
 
     # TODO get itag by quality first, and then update the itag download url
@@ -895,20 +996,20 @@ playability status is: {status} \
             self._player_response = None
             self._js = None
             self._fmt_streams = None
-            self.logger.info("Forcing update of download URLs.")
+            self.log.info("Forcing update of download URLs.")
 
         video_quality, audio_quality = self.get_best_streams(
             maxq=self.max_video_quality, log=not force)
 
         if not force:
             # Most likely first time
-            self.logger.debug(
+            self.log.debug(
                 f"Selected video itag: {video_quality} / "
                 f"Selected audio itag: {audio_quality}")
         elif not video_quality and not audio_quality:
             if previous_audio_base_url is None and previous_video_base_url is None:
                 raise Exception(f"No stream URL found for {self.video_id}")
-            self.logger.critical(f"No stream URL found for {self.video_id}")
+            self.log.critical(f"No stream URL found for {self.video_id}")
 
         if ((self.video_itag is not None
         and self.video_itag.itag != video_quality.itag)
@@ -917,7 +1018,7 @@ playability status is: {status} \
         and self.audio_itag.itag != audio_quality.itag)):
             # Probably should fail if we suddenly get a different format than the
             # one we had before to avoid problems during merging.
-            self.logger.critical(
+            self.log.critical(
                 "Got a different format after refresh of download URL!\n"
                 f"Previous video itag: {self.video_itag}. New: {video_quality}.\n"
                 f"Previous audio itag: {self.audio_itag}. New: {audio_quality}"
@@ -938,89 +1039,77 @@ playability status is: {status} \
         self.audio_base_url = self.audio_itag.url
 
         if not force:
-            self.logger.debug(f"Video base url: {self.video_base_url}")
-            self.logger.debug(f"Audio base url: {self.audio_base_url}")
+            self.log.debug(f"Video base url: {self.video_base_url}")
+            self.log.debug(f"Audio base url: {self.audio_base_url}")
         else:
             if previous_video_base_url != self.video_base_url:
-                self.logger.debug(
+                self.log.debug(
                     f"Audio base URL got changed from {previous_video_base_url}"
                     f" to {self.video_base_url}.")
             if previous_audio_base_url != self.audio_base_url:
-                self.logger.debug(
+                self.log.debug(
                     f"Audio base URL got changed from {previous_audio_base_url}"
                     f" to {self.audio_base_url}.")
 
 
     def download(self, wait_delay: float = 1.0):
-        # Disable download if regex submitted by user and they match
-        self.logger.debug(
-            f"Checking metadata items {(self.title, self.description)} against"
-            f" {self.allow_regex} and {self.block_regex}\n")
-        if not is_wanted_based_on_metadata(
-            (self.title, self.description),
-            self.allow_regex, self.block_regex
-        ):
-            self.skip_download = True
-            self.logger.warning(
-                f"Will skip download of {self.video_id} {self.title} "
-                "because a regex filter matched.")
+        # If one of the directories exists, assume we are resuming a previously
+        # failed download attempt.
+        dir_existed = False
+        for path in (self.video_outpath, self.audio_outpath):
+            try:
+                makedirs(path, 0o770)
+            except FileExistsError:
+                dir_existed = True
+
+        if dir_existed:
+            self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
+        else:
+            self.seg = 0
+        self.log.info(f"Will start downloading from segment number {self.seg}.")
 
         if self.skip_download:
-            # Longer delay in minutes between updates since we don't download
-            # we don't care about accuracy that much. Random value.
-            wait_delay *= 14.7
-        else:
-            # If one of the directories exists, assume we are resuming a previously
-            # failed download attempt.
-            dir_existed = False
-            for path in (self.video_outpath, self.audio_outpath):
-                try:
-                    makedirs(path, 0o770)
-                except FileExistsError:
-                    dir_existed = True
-
-            if dir_existed:
-                self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
-            else:
-                self.seg = 0
-            self.logger.info(f'Will start downloading from segment number {self.seg}.')
-
-        self.trigger_hooks("on_download_initiated")
+            # If the user explicitly asked to skip download, but calls this
+            # method anyway, we assume it's because they only care about the
+            # events being triggered
+            self.trigger_hooks("on_download_initiated")
 
         self.seg_attempt = 0
         while not self.done and not self.error:
             try:
                 self.update_status()
-                self.logger.debug(f"Status is {self.status}.")
+                self.log.debug(f"Status is {self.status}.")
 
                 if not self.status == Status.OK:
-                    self.logger.critical(
+                    self.log.critical(
                         f"Could not download \"{self.url}\": "
                         "stream unavailable or not a livestream.")
                     return
 
             except exceptions.WaitingException as e:
-                self.logger.warning(
+                self.log.warning(
                     f"Status is {self.status}. "
                     f"Waiting for {wait_delay} minutes...")
                 sleep(wait_delay * 60)
                 continue
             except exceptions.OfflineException as e:
-                self.logger.critical(f"{e}")
+                self.log.critical(f"{e}")
                 raise e
             except Exception as e:
-                self.logger.critical(f"{e}")
+                self.log.critical(f"{e}")
                 raise e
 
             if not self.skip_download:
                 self.update_download_urls()
                 self.update_metadata()
 
+            # FIXME triggers everytime the download resumes, rename to
+            # on_download_resumed or on_stream_resumed?
             self.trigger_hooks('on_download_started')
 
             if self.skip_download:
                 # We rely on the exception above to signal when the stream has ended
-                self.logger.debug(
+                self.log.debug(
                     f"Not downloading because \"skip-download\" option is active."
                     f" Waiting for {wait_delay} minutes..."
                 )
@@ -1038,7 +1127,7 @@ playability status is: {status} \
                     ConnectionError,  # ConnectionResetError - Connection reset by peer
                     urllib.error.HTTPError # typically 404 errors, need refresh
                 ) as e:
-                    self.logger.info(e)
+                    self.log.info(e)
                     # force update
                     self._watch_html = None
                     self._json = None
@@ -1049,14 +1138,14 @@ playability status is: {status} \
                     if Status.LIVE | Status.VIEWED_LIVE in self.status:
 
                         if self.seg_attempt >= 15:
-                            self.logger.critical(
+                            self.log.critical(
                                 f"Too many attempts on segment {self.seg}. "
                                 "Skipping it.")
                             self.seg += 1
                             self.seg_attempt = 0
                             continue
 
-                        self.logger.warning(
+                        self.log.warning(
                             "It seems the stream has not really ended. "
                             f"Retrying in 5 secs... (attempt {self.seg_attempt}/15)")
                         self.seg_attempt += 1
@@ -1068,18 +1157,18 @@ playability status is: {status} \
                             self.error = f"{e}"
                             break
                         continue
-                    self.logger.warning(f"The stream is not live anymore. Done.")
+                    self.log.warning(f"The stream is not live anymore. Done.")
                     self.done = True
                     break
                 except Exception as e:
-                    self.logger.exception(f"Unhandled exception. Aborting.")
+                    self.log.exception(f"Unhandled exception. Aborting.")
                     self.error = f"{e}"
                     break
         if self.done:
-            self.logger.info(f"Finished downloading {self.video_id}.")
+            self.log.info(f"Finished downloading {self.video_id}.")
             self.trigger_hooks("on_download_ended")
         if self.error:
-            self.logger.critical(f"Some kind of error occured during download? {self.error}")
+            self.log.critical(f"Some kind of error occured during download? {self.error}")
 
     def download_seg(self, baseurl: BaseURL, seg, type):
         segment_url: str = baseurl.add_seg(seg)
@@ -1096,9 +1185,9 @@ playability status is: {status} \
             headers = in_stream.headers
             status = in_stream.status
             if status >= 204:
-                self.logger.debug(f"Seg {self.seg} {type} URL: {segment_url}")
-                self.logger.debug(f"Seg status: {status}")
-                self.logger.debug(f"Seg headers:\n{headers}")
+                self.log.debug(f"Seg {self.seg} {type} URL: {segment_url}")
+                self.log.debug(f"Seg status: {status}")
+                self.log.debug(f"Seg headers:\n{headers}")
 
             if not self.write_to_file(in_stream, segment_filename):
                 if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
@@ -1132,13 +1221,13 @@ playability status is: {status} \
                 or not self.download_seg(self.audio_base_url, self.seg, "audio"):
                     attempts_left -= 1
                     if attempts_left >= 0:
-                        self.logger.warning(
+                        self.log.warning(
                             f"Waiting for {wait_sec} seconds before retrying "
                             f"segment {self.seg} (attempt {max_attempts - attempts_left}/{max_attempts})")
                         sleep(wait_sec)
                         continue
                     else:
-                        self.logger.warning(
+                        self.log.warning(
                             f"Skipping segment {self.seg} due to too many attempts.")
                 # Resetting error counter and moving on to next segment
                 attempts_left = max_attempts
@@ -1146,7 +1235,7 @@ playability status is: {status} \
                 self.seg += 1
 
             except urllib.error.URLError as e:
-                self.logger.critical(f'{type(e)}: {e}')
+                self.log.critical(f'{type(e)}: {e}')
                 if e.reason == "Not Found":
                     # Try to refresh immediately
                     raise
@@ -1157,17 +1246,17 @@ playability status is: {status} \
                 if attempts_left < 0:
                     raise e
                 attempts_left -= 1
-                self.logger.warning(
+                self.log.warning(
                     f"Waiting for {wait_sec} seconds before retrying... "
                     f"(attempt {max_attempts - attempts_left}/{max_attempts})")
                 sleep(wait_sec)
                 continue
             except (IncompleteRead, ValueError) as e:
                 # This is most likely signaling the end of the stream
-                self.logger.exception(e)
+                self.log.exception(e)
                 raise e
             except IOError as e:
-                self.logger.exception(e)
+                self.log.exception(e)
                 raise e
 
     def print_progress(self, seg: int) -> None:
@@ -1183,7 +1272,7 @@ playability status is: {status} \
             clear_line = ('\r\x1b[K' if stderr.isatty() else '\r')
 
         print(clear_line + fullmsg, end='')
-        self.logger.info(fullmsg)
+        self.log.info(fullmsg)
 
     # OBSOLETE
     def print_found_quality(self, item, datatype):
@@ -1195,17 +1284,17 @@ playability status is: {status} \
             result = f"Available {datatype} quality: "
             for k in keys:
                 result += f"{k}: {item.get(k)}\t"
-            self.logger.info(result)
+            self.log.info(result)
         except Exception as e:
-            self.logger.critical(
+            self.log.critical(
                 f"Exception while trying to print found {datatype} quality: {e}"
             )
 
     def print_available_streams(self, stream_list):
-        if not self.logger.isEnabledFor(logging.INFO):
+        if not self.log.isEnabledFor(logging.INFO):
             return
         for s in stream_list:
-            self.logger.info(
+            self.log.info(
                 "Available {}".format(s.__repr__().replace(' ', '\t'))
             )
 
@@ -1220,7 +1309,7 @@ playability status is: {status} \
         self._player_config_args["player_response"] = self.json
 
         if 'streamingData' not in self._player_config_args["player_response"]:
-            self.logger.critical("Missing streamingData key in json!")
+            self.log.critical("Missing streamingData key in json!")
             # TODO add fallback strategy with get_ytplayer_config()?
 
         return self._player_config_args
@@ -1232,7 +1321,6 @@ playability status is: {status} \
         If the streams have not been initialized, finds all relevant
         streams and initializes them.
         """
-        # self.check_availability()
         if self._fmt_streams:
             return self._fmt_streams
 
@@ -1287,7 +1375,7 @@ playability status is: {status} \
             # if match := re.search(r"(\d{3,4})(p)?|(\d{2,4}(kpbs)?", maxq):
             #     maxq = int(match.group(1))
             if maxq is None:
-                self.logger.warning(
+                self.log.warning(
                     f"Max quality setting \"{maxq}\" is incorrect. "
                     "Defaulting to best video quality available."
                 )
@@ -1314,7 +1402,7 @@ playability status is: {status} \
         video_stream = video_streams.first()
 
         if log:
-            self.logger.info(f"Selected video {video_stream}")
+            self.log.info(f"Selected video {video_stream}")
 
         audio_streams = avail_streams.filter(
             only_audio=True
@@ -1324,7 +1412,7 @@ playability status is: {status} \
         audio_stream = audio_streams.first()
 
         if log:
-            self.logger.info(f"selected audio {audio_stream}")
+            self.log.info(f"selected audio {audio_stream}")
 
         # FIXME need a fallback in case we didn't have an audio stream
         # TODO need a strategy if progressive has better audio quality:
@@ -1357,7 +1445,7 @@ playability status is: {status} \
             # FIXME handle these errors better, for now we just ignore and move on:
             # ValueError: invalid literal for int() with base 16: b''
             # http.client.IncompleteRead: IncompleteRead
-            self.logger.exception(e)
+            self.log.exception(e)
             buf = None
 
         if not buf:
@@ -1381,13 +1469,13 @@ playability status is: {status} \
         except Exception as e:
             # This might occur if we invalidated the cache but the stream is not
             # live anymore, and "streamingData" key is missing from the json
-            self.logger.warning(f"Error getting thumbnail metadata value: {e}")
+            self.log.warning(f"Error getting thumbnail metadata value: {e}")
 
         return {
                 "url": self.url,
                 "videoId": self.video_id,
                 "cookie_path": self.session.cookie_path,
-                "logger": self.logger,
+                "logger": self.log,
                 "output_dir": self.output_dir,
                 "title": self.title,
                 "description": self._description,
@@ -1402,6 +1490,8 @@ playability status is: {status} \
         webhookfactory = self.notifier.get_webhook(event)
 
         if hook_cmd is not None or webhookfactory is not None:
+            self.log.debug(f"Triggered event hook: {event}")
+
             # TODO if an event needs to refresh some data, update metadata here
             args = self.get_metadata_dict()
 
@@ -1459,18 +1549,22 @@ class Status(Flag):
     OK = AVAILABLE | LIVE | VIEWED_LIVE
 
 
-def remove_useless_keys(_dict):
+def remove_useless_keys(json_response: Dict[str, Any]) -> None:
+    """
+    Modify dictionary passed in <json_response> in place by removing
+    key we will never use to reduce output in log files.
+    """
     for keyname in ['heartbeatParams', 'playerAds', 'adPlacements', 'playbackTracking',
     'annotations', 'playerConfig', 'storyboards',
     'trackingParams', 'attestation', 'messages', 'frameworkUpdates']:
         try:
-            _dict.pop(keyname)
+            json_response.pop(keyname)
         except KeyError:
             continue
 
     # remove this annoying long list
     try:
-        _dict.get('microformat', {})\
+        json_response.get('microformat', {})\
              .get('playerMicroformatRenderer', {})\
              .pop('availableCountries')
     except KeyError:

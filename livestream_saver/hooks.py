@@ -4,7 +4,7 @@ import logging
 from typing import Optional, Dict, Any, List
 from subprocess import Popen, DEVNULL
 from datetime import datetime
-from livestream_saver.util import is_wanted_based_on_metadata
+from livestream_saver.util import none_filtered_out
 
 # logger = logging.getLogger("livestream_saver")
 
@@ -56,8 +56,7 @@ class HookCommand():
         logger = args.get("logger", logging.getLogger("livestream_saver"))
         
         data = (args.get("title"), args.get("description"))
-        if not is_wanted_based_on_metadata(
-            data, self.allow_regex, self.block_regex):
+        if not none_filtered_out(data, self.allow_regex, self.block_regex):
             logger.warning(
                 f"Skipping command spawning for event {self.event_name} because"
                 " one video metadata elements do not satisfy filter regexes: "

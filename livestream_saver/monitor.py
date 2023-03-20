@@ -1,6 +1,4 @@
 from pathlib import Path
-from time import sleep
-from random import uniform
 import logging
 from typing import Optional, Any, List, Dict
 from livestream_saver import extract
@@ -491,11 +489,14 @@ class YoutubeChannel:
             "output_dir": self.output_dir
             }
         )
+
         description = vid.get("description", "")
+
         if not description:
             json_d = self.fetch_video_metadata(vid)
             if not json_d:
                 return vid
+
             self.log.debug(
                 f"Got metadata JSON for videoId \"{vid.get('videoId', '')}\".")
             # if self.logger.isEnabledFor(logging.DEBUG):
@@ -764,7 +765,7 @@ def _get_content_from_list_renderer(contents: List, tabtype: str) -> List[Dict]:
     return videos
 
 
-def get_videos_from_tab(tabs, tabtype) -> List[Dict]:
+def get_videos_from_tab(tabs, tabtype: str) -> List[Dict]:
     """
     Returns videos attached to posts in available "tab" section in JSON response.
     tabtype is either "Videos" "Community", "Membership", "Home" etc.
@@ -868,21 +869,6 @@ def rss_from_id(channel_id):
 
 def rss_from_name(channel_name):
     return 'https://www.youtube.com/feeds/videos.xml?user=' + channel_name
-
-
-def wait_block(min_minutes=15.0, variance=3.5):
-    """
-    Sleep (blocking) for a specified amount of minutes,
-    with variance to avoid being detected as a robot.
-    :param min_minutes float Minimum number of minutes to wait.
-    :param variance float Maximum number of minutes added.
-    """
-    min_seconds = min_minutes * 60
-    max_seconds = min_seconds + (variance * 60)
-    wait_time_sec = uniform(min_seconds, max_seconds)
-    wait_time_min = wait_time_sec / 60
-    logger.info(f"Sleeping for {wait_time_min:.2f} minutes ({wait_time_sec:.2f} seconds)...")
-    sleep(wait_time_sec)
 
 
 def format_list_output(vid_list: List[Dict]) -> str:

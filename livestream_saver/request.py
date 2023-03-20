@@ -13,7 +13,7 @@ import hashlib
 from livestream_saver.util import UA, str_as_json
 from livestream_saver.cookies import get_cookie
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
 
@@ -101,7 +101,7 @@ class YoutubeUrllibSession:
             try:
                 content_html = str(data.read().decode('utf-8'))
             except Exception as e:
-                logger.critical(f"Failed to load html for ytcfg: {e}")
+                log.critical(f"Failed to load html for ytcfg: {e}")
             return self.get_ytcfg_from_html(content_html)
 
         return self.get_ytcfg_from_html(data)
@@ -115,7 +115,7 @@ class YoutubeUrllibSession:
             try:
                 return json.loads(objstr)
             except Exception as e:
-                logger.error(f"Error loading ytcfg as json: {e}.")
+                log.error(f"Error loading ytcfg as json: {e}.")
         return {}
 
     def _generate_sapisidhash_header(
@@ -139,7 +139,7 @@ class YoutubeUrllibSession:
             if len(cookies.values()) > 0:
                 # Value should be the same for both of them
                 self._SAPISID = tuple(cookies.values())[-1].value
-                logger.info("Extracted SAPISID cookie")
+                log.info("Extracted SAPISID cookie")
                 # We still require SAPISID to be present anyway
                 if not cookies.get("SAPISID"):
                     domain = '.youtube.com'
@@ -162,7 +162,7 @@ class YoutubeUrllibSession:
                         {} # rest
                     )
                     self.cookie_jar.set_cookie(cookie)
-                    logger.debug(f"Copied __Secure-3PAPISID to missing SAPISID.")
+                    log.debug(f"Copied __Secure-3PAPISID to missing SAPISID.")
             else:
                 self._SAPISID = False
         if not self._SAPISID:
@@ -189,8 +189,8 @@ class YoutubeUrllibSession:
 
         res = urlopen(req)
 
-        logger.debug(f"Initial req header items: {req.header_items()}")
-        logger.debug(f"Initial res headers: {res.headers}")
+        log.debug(f"Initial req header items: {req.header_items()}")
+        log.debug(f"Initial res headers: {res.headers}")
       
         if self.user_supplied_cookies:
             self.ytcfg = self.get_ytcfg(res)
@@ -202,7 +202,7 @@ class YoutubeUrllibSession:
         self.cookie_jar.add_cookie_header(req)
 
         cookies = SimpleCookie(req.get_header('Cookie'))
-        logger.debug(f"Initial req cookies after extract: {cookies}")
+        log.debug(f"Initial req cookies after extract: {cookies}")
 
         if cookies.get('__Secure-3PSID'):
             return
@@ -237,8 +237,8 @@ class YoutubeUrllibSession:
                         {} # rest
                     )
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Setting consent cookie: {cookie}")
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"Setting consent cookie: {cookie}")
         self.cookie_jar.set_cookie(cookie)
 
         if self.cookie_jar.filename:
@@ -323,7 +323,7 @@ class YoutubeUrllibSession:
                 "prettyPrint": "false"
             }
         )
-        logger.debug(f"Making API request... {endpoint=}\n{data=}\n{headers=}")
+        log.debug(f"Making API request... {endpoint=}\n{data=}\n{headers=}")
         req = Request(
             endpoint,
             headers=headers,
@@ -351,12 +351,12 @@ class YoutubeUrllibSession:
 
         if logged_out and self.user_supplied_cookies:
             self.user_supplied_cookies = 0
-            logger.critical(
+            log.critical(
                 "We are not logged in. Check the validity of your cookies!"
             )
 
         if logged_out and self._logged_in == True:
-            logger.critical(
+            log.critical(
                 "We are not logged in anymore! Are cookies still valid?"
             )
             if self.notify_h:
@@ -381,7 +381,7 @@ class YoutubeUrllibSession:
 
         for cook in ret_cookies:
             if cook.name == "SIDCC" and cook.value == "EXPIRED":
-                logger.critical("SIDCC expired. Renew your cookies.")
+                log.critical("SIDCC expired. Renew your cookies.")
                 #TODO send email to admin
                 return
 
@@ -395,15 +395,13 @@ class YoutubeUrllibSession:
         Return an HTML page from a request as str. 
         Also update cookies in cookie jar if necessary.
         """
-        # TODO get the DASH manifest (MPD) and parse that xml file instead
-        # We could also use youtube-dl --dump-json
         with urlopen(req) as res:
             status = res.status
             
             if status >= 204:
-                logger.debug(f"Request {req.full_url} -> response url: {res.url}")
-                logger.debug(f"POST Request headers were {req.header_items()}")
-                logger.debug(
+                log.debug(f"Request {req.full_url} -> response url: {res.url}")
+                log.debug(f"POST Request headers were {req.header_items()}")
+                log.debug(
                     f"Response {status=}.\n"
                     f"Response headers:\n{res.headers}")
 
@@ -417,5 +415,5 @@ class YoutubeUrllibSession:
             try:
                 return str(res.read().decode('utf-8'))
             except Exception as e:
-                logger.critical(f"Failed to load {req.full_url}: {e}")
+                log.critical(f"Failed to load {req.full_url}: {e}")
                 raise e

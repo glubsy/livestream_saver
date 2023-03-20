@@ -1,3 +1,4 @@
+from typing import Iterable, Optional, Any, List, Dict, Union
 from os import sep, makedirs, getcwd, environ, getenv
 from sys import platform
 from sys import argv
@@ -8,10 +9,10 @@ from configparser import ConfigParser, ExtendedInterpolation
 import traceback
 import re
 from shlex import split
-from typing import Iterable, Optional, Any, List, Dict, Union
+
 from livestream_saver import extract, util
 import livestream_saver
-from livestream_saver.monitor import YoutubeChannel, wait_block
+from livestream_saver.monitor import YoutubeChannel
 from livestream_saver.download import YoutubeLiveStream
 from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import get_channel_id, event_props
@@ -468,7 +469,9 @@ def _get_target_params(
         )
     return params
 
+
 TIME_VARIANCE = 3.0  # in minutes
+
 
 def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
     URL = args["URL"]
@@ -509,7 +512,7 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
             pass
 
         if len(live_videos) == 0:
-            wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
+            util.wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
             continue
 
         # TODO there might be more than one active live stream at a time
@@ -523,88 +526,93 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
                 video_id = extract.get_video_id(video_url)
             except ValueError as e:
                 log.critical(e)
-                wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
+                util.wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
                 continue
 
         log.info(
             f"Found live: {video_id}. Title: \"{target_live.get('title')}\".")
 
         sub_output_dir = args["output_dir"] / f"stream_capture_{video_id}"
-
-        livestream = YoutubeLiveStream(
+        skip_download = args.get("skip_download", False)
+        ls = YoutubeLiveStream(
             video_id=video_id,
             url=video_url,
             output_dir=sub_output_dir,
             session=ch.session,
             notifier=NOTIFIER,
             max_video_quality=config.getint(
-                "monitor", "max_video_quality", vars=args, fallback=None
-            ),
+                "monitor", "max_video_quality", vars=args, fallback=None),
             hooks=args["hooks"],
-            skip_download=args.get("skip_download", False),
+            skip_download=skip_download,
             filters=args["filters"],
             ignore_quality_change=config.getboolean(
                 "monitor", "ignore_quality_change", vars=args, fallback=False),
-            log_level=config.get("monitor", "log_level", vars=args)
+            log_level=config.get("monitor", "log_level", vars=args),
+            initial_metadata=target_live
         )
 
-        try:
-            livestream.download()
-        except Exception as e:
-            log.exception(
-                f"Got error in stream download but continuing...\n {e}")
-            pass
+        # ls.get_metadata(force=True)
+        ls.trigger_hooks("on_download_initiated")
 
-        if livestream.skip_download:
+        download_wanted = not skip_download
+        if not skip_download:
+            download_wanted = ls.pre_download_checks()
+
+        if download_wanted:
+            try:
+                ls.download()
+            except Exception as e:
+                log.exception(
+                    f"Got error in stream download but continuing...\n {e}")
+
+        if ls.skip_download or not download_wanted:
             NOTIFIER.send_email(
                 subject=(
                     f"Skipped download of {ch.get_channel_name()} - "
-                    f"{livestream.title} {video_id}"
-                ),
+                    f"{ls.title} {video_id}"),
                 message_text=f"Hooks scheduled to run were: {args.get('hooks')}"
             )
 
-        if livestream.done:
+        if ls.done:
             log.info(f"Finished downloading {video_id}.")
             NOTIFIER.send_email(
-                subject=f"Finished downloading {ch.get_channel_name()} - \
-{livestream.title} {video_id}",
+                subject=(
+                    f"Finished downloading {ch.get_channel_name()} -"
+                    f"{ls.title} {video_id}"),
                 message_text=f""
             )
             if not config.getboolean("monitor", "no_merge", vars=args):
                 log.info("Merging segments...")
                 # TODO in a separate thread?
-                merged = None
                 try:
-                    merged = merge(
-                        info=livestream.video_info,
-                        data_dir=livestream.output_dir,
+                    merge(
+                        info=ls.video_info,
+                        data_dir=ls.output_dir,
                         keep_concat=config.getboolean(
-                            "monitor", "keep_concat", vars=args
-                        ),
+                            "monitor", "keep_concat", vars=args),
                         delete_source=config.getboolean(
-                            "monitor", "delete_source", vars=args
-                        )
+                            "monitor", "delete_source", vars=args)
                     )
                 except Exception as e:
                     log.error(e)
 
-                # TODO pass arguments about successful merge
-                livestream.trigger_hooks("on_merge_done")
+                # TODO pass arguments about (un)successful merge
+                ls.trigger_hooks("on_merge_done")
 
                 # TODO get the updated stream title from the channel page if
                 # the stream was recorded correctly?
-        if livestream.error:
+        if ls.error:
             NOTIFIER.send_email(
-                subject=f"Error downloading stream {livestream.video_id}",
-                message_text=f"Error was: {livestream.error}\n"
-                              "Resuming monitoring..."
+                subject=f"Error downloading stream {ls.video_id}",
+                message_text=(
+                    f"Error was: {ls.error}\n"
+                    "Resuming monitoring..."
+                )
             )
             log.critical("Error during stream download! Resuming monitoring...")
             pass
 
-        wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
-    return 1
+        util.wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
 
 
 def download_mode(config: ConfigParser, args: Dict[str, Any]):
@@ -612,7 +620,7 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
         cookie_path=args.get("cookie"), notifier=NOTIFIER
     )
 
-    livestream = YoutubeLiveStream(
+    ls = YoutubeLiveStream(
         video_id=args["video_id"],
         url=args.get("URL"),
         output_dir=args["output_dir"],
@@ -632,14 +640,15 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
         log_level=config.get("download", "log_level", vars=args)
     )
 
-    livestream.download(config.getfloat("download", "scan_delay", vars=args))
+    ls.trigger_hooks("on_download_initiated")
+    ls.download(config.getfloat("download", "scan_delay", vars=args))
 
-    if livestream.done and not config.getboolean("download", "no_merge", vars=args):
+    if ls.done and not config.getboolean("download", "no_merge", vars=args):
         log.info("Merging segments...")
         try:
             merge(
-                info=livestream.video_info,
-                data_dir=livestream.output_dir,
+                info=ls.video_info,
+                data_dir=ls.output_dir,
                 keep_concat=config.getboolean("download", "keep_concat", vars=args),
                 delete_source=config.getboolean("download", "delete_source", vars=args)
             )
@@ -647,7 +656,7 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
             log.error(e)
 
         # TODO pass arguments about successful merge
-        livestream.trigger_hooks("on_merge_done")
+        ls.trigger_hooks("on_merge_done")
     return 0
 
 
