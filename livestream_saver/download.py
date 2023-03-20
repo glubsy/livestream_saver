@@ -412,7 +412,7 @@ class YoutubeLiveStream():
 
             # Longer delay in minutes between updates since we don't download
             # we don't care about accuracy that much. Random value.
-            util.wait_block(0.01, 0.5)
+            util.wait_block(long_wait)
             continue
         return download_wanted
 
@@ -906,6 +906,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
         if not _json:
             self.log.debug("Got no JSON data, removing \"Available\" flag from status.")
             self.status &= ~Status.AVAILABLE
+            self.log.debug(dumps(_json, indent=2, ensure_ascii=False))
             return
 
         self.is_live()
@@ -969,13 +970,15 @@ We assume a failed download attempt. Last segment available was {seg}.")
                                          .get('playerErrorMessageRenderer', {})\
                                          .get('subreason', {})\
                                          .get('simpleText', \
-                                              'No subreason found in JSON.')
-            self.log.warning(f"Livestream {self.video_id} \
-playability status is: {status} \
-{playabilityStatus.get('reason', 'No reason found')}. Sub-reason: {subreason}")
+                                              'No subreason found.')
+            self.log.warning(
+                f"Livestream {self.video_id} "
+                f"playability status is: {status} "
+                f"{playabilityStatus.get('reason', 'No reason found')}. "
+                f"Sub-reason: {subreason}")
             self.status &= ~Status.AVAILABLE
-            # return
-        else: # status == 'OK'
+            self.log.debug(dumps(_json, indent=2, ensure_ascii=False))
+        else:  # status == 'OK'
             self.status |= Status.AVAILABLE
             self.status &= ~Status.OFFLINE
             self.status &= ~Status.WAITING
