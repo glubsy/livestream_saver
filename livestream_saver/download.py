@@ -399,11 +399,16 @@ class YoutubeLiveStream():
                 self.log.error(f"Error getting status for stream {self.video_id}: {e}")
 
             if not self.status == Status.OK:
-                self.log.warning(f"Stream {self.video_id} status is not OK.")
+                self.log.info(
+                    f"Stream {self.video_id} status is not active.")
                 break
 
-            self.get_metadata(force_update=True)
+            self.log.info(f"Stream {self.video_id} is still active...")
+
+            # Keep checking in case the metadata changed
+            self.get_metadata()
             download_wanted = self.is_download_wanted()
+
             if download_wanted:
                 self.skip_download = False
                 self.log.warning(
@@ -411,7 +416,7 @@ class YoutubeLiveStream():
                 break
 
             # Longer delay in minutes between updates since we don't download
-            # we don't care about accuracy that much. Random value.
+            # we don't care about accuracy that much.
             util.wait_block(long_wait)
             continue
         return download_wanted

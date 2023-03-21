@@ -572,6 +572,8 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
                     f"{ls.title} {video_id}"),
                 message_text=f"Hooks scheduled to run were: {args.get('hooks')}"
             )
+            # We have already waited on the current stream for status update
+            continue
 
         if ls.done:
             log.info(f"Finished downloading {video_id}.")
