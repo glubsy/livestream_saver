@@ -388,19 +388,22 @@ class YoutubeLiveStream():
             try:
                 self.update_status()
                 self.log.debug(f"Status is: {self.status}.")
-            except exceptions.WaitingException as e:
+            except exceptions.WaitingException:
                 self.log.info(
                     f"Stream {self.video_id} status is: {self.status}. "
                     f"Waiting {long_wait} minutes...")
-            except exceptions.OfflineException as e:
+            except exceptions.OfflineException:
                 self.log.info(f"Stream {self.video_id} status is now offline.")
                 break
+            except exceptions.OutdatedAppException as e:
+                self.log.warning(f"Outdated client error. Retrying shortly...")
+                util.wait_block(2)
+                continue
             except Exception as e:
                 self.log.error(f"Error getting status for stream {self.video_id}: {e}")
 
             if not self.status == Status.OK:
-                self.log.info(
-                    f"Stream {self.video_id} status is not active.")
+                self.log.info(f"Stream {self.video_id} status is not active.")
                 break
 
             self.log.info(f"Stream {self.video_id} is still active...")
@@ -445,18 +448,21 @@ class YoutubeLiveStream():
         # Step back one file just in case the latest segment got only partially
         # downloaded (we want to overwrite it to avoid a corrupted segment)
         if seg > 0:
-            self.log.warning(f"An output directory already existed. \
-We assume a failed download attempt. Last segment available was {seg}.")
+            self.log.warning(
+                "An output directory already existed. "
+                "We assume a failed download attempt. "
+                f"Last segment available was {seg}.")
             seg -= 1
         return seg
 
     def is_live(self) -> None:
-        if not self.json:
-            self.log.debug("Got no JSON data, removing \"Available\" flag from status.")
+        if not self.get_info():
+            self.log.debug(
+                "Got no JSON data, removing \"Available\" flag from status.")
             self.status &= ~Status.AVAILABLE
             return
 
-        isLive = self.json.get('videoDetails', {}).get('isLive')
+        isLive = self.get_info().get('videoDetails', {}).get('isLive')
         if isLive is not None and isLive is True:
             self.status |= Status.LIVE
         else:
@@ -464,7 +470,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
 
         # Is this actually being streamed live?
         val = None
-        for _dict in self.json.get('responseContext', {}).get('serviceTrackingParams', []):
+        for _dict in self.get_info().get('responseContext', {}).get('serviceTrackingParams', []):
             param = _dict.get('params', [])
             for key in param:
                 if key.get('key') == 'is_viewed_live':
@@ -493,7 +499,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
         """
         if force_update:
             self.clear_cache()
-        return self.json
+        return self.get_info()
 
     @property
     def watch_html(self):
@@ -514,9 +520,8 @@ We assume a failed download attempt. Last segment available was {seg}.")
         self._embed_html = pytube.request.get(url=self.embed_url)
         return self._embed_html
 
-    @property
-    def json(self) -> Dict[str, Any]:
-        if self._json:
+    def get_info(self, client="android", update=False) -> Dict[str, Any]:
+        if self._json and not update:
             return self._json
 
         json = {}
@@ -528,7 +533,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
                 payload={
                     "videoId": self.video_id
                 },
-                client="android"  # "android" seems to partially work around throttling
+                client=client  # "android" seems to partially work around throttling
             )
             self.session.is_logged_out(json)
             remove_useless_keys(json)
@@ -536,8 +541,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
             self.log.debug(f"Error getting metadata JSON: {e}")
             # self.log.debug(
             #     "Loaded metadata JSON:\n"
-            #     + dumps(json, indent=2, ensure_ascii=False)
-            # )
+            #     + dumps(json, indent=2, ensure_ascii=False))
         self._json = json
         return self._json
 
@@ -906,7 +910,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
         self.log.debug("update_status...")
         # Force update
         self.clear_cache()
-        _json = self.json
+        _json = self.get_info()
 
         if not _json:
             self.log.debug("Got no JSON data, removing \"Available\" flag from status.")
@@ -925,6 +929,22 @@ We assume a failed download attempt. Last segment available was {seg}.")
         # Check if video is indeed available through its reported status.
         playabilityStatus = _json.get('playabilityStatus', {})
         status = playabilityStatus.get('status')
+        playability_reason = playabilityStatus.get('reason', 'No reason found.')
+        subreason = None
+        error_reason = None
+        if errorScreen := playabilityStatus.get('errorScreen'):
+            if playerErrorMessageRenderer := errorScreen.get(
+                    'playerErrorMessageRenderer'):
+                if _subreason := playerErrorMessageRenderer.get('subreason'):
+                    if simpleText := _subreason.get('simpleText'):
+                        subreason = simpleText
+                    elif subr_runs := _subreason.get('runs'):
+                        subreason = ','.join([r.get('text') for r in subr_runs])
+                    else:
+                        subreason = "No subreason found."
+                if _reason := playerErrorMessageRenderer.get('reason'):
+                    if runs := _reason.get('runs'):
+                        error_reason = ','.join([r.get('text') for r in runs])
 
         if status == 'LIVE_STREAM_OFFLINE':
             self.status |= Status.OFFLINE
@@ -934,55 +954,43 @@ We assume a failed download attempt. Last segment available was {seg}.")
                 self.status |= Status.WAITING
 
                 # self._scheduled_timestamp = scheduled_time
-                reason = playabilityStatus.get('reason', 'No reason found.')
-
                 self.log.info(
                     f"Scheduled start time: {scheduled_time}"
                     f"({datetime.utcfromtimestamp(scheduled_time)} UTC). We wait...")
                 # FIXME use local time zone for more accurate display of time
                 # for example: https://dateutil.readthedocs.io/
-                self.log.warning(f"{reason}")
+
+                self.log.warning(f"{playability_reason}")
 
                 raise exceptions.WaitingException(
-                    self.video_id, reason, scheduled_time
-                )
+                    self.video_id, playability_reason, scheduled_time)
 
             elif (Status.LIVE | Status.VIEWED_LIVE) not in self.status:
-                raise exceptions.WaitingException(
-                    self.video_id,
-                    playabilityStatus.get('reason', 'No reason found.')
-                )
+                raise exceptions.WaitingException(self.video_id, playability_reason)
 
-            raise exceptions.OfflineException(
-                self.video_id,
-                playabilityStatus.get('reason', 'No reason found.')
-            )
+            raise exceptions.OfflineException(self.video_id, playability_reason)
 
         elif status == 'LOGIN_REQUIRED':
-            raise exceptions.NoLoginException(
-                self.video_id,
-                playabilityStatus.get('reason', 'No reason found.')
-            )
+            raise exceptions.NoLoginException(self.video_id, playability_reason)
 
         elif status == 'UNPLAYABLE':
-            raise exceptions.UnplayableException(
-                self.video_id,
-                playabilityStatus.get('reason', 'No reason found.')
-            )
+            raise exceptions.UnplayableException(self.video_id, playability_reason)
 
         elif status != 'OK':
-            subreason = playabilityStatus.get('errorScreen', {})\
-                                         .get('playerErrorMessageRenderer', {})\
-                                         .get('subreason', {})\
-                                         .get('simpleText', \
-                                              'No subreason found.')
             self.log.warning(
                 f"Livestream {self.video_id} "
                 f"playability status is: {status} "
-                f"{playabilityStatus.get('reason', 'No reason found')}. "
-                f"Sub-reason: {subreason}")
-            self.status &= ~Status.AVAILABLE
+                f"Reason: {playability_reason}. "
+                f"Sub-reason: {subreason}. Error reason: {error_reason}.")
             self.log.debug(dumps(_json, indent=2, ensure_ascii=False))
+
+            if (error_reason and "not available on this app" in error_reason)\
+                or (subreason and "Watch on the latest version of YouTube" in subreason):
+                # Video might still be available if we retry with different client
+                raise exceptions.OutdatedAppException(self.video_id, error_reason)
+
+            self.status &= ~Status.AVAILABLE
+
         else:  # status == 'OK'
             self.status |= Status.AVAILABLE
             self.status &= ~Status.OFFLINE
@@ -1100,11 +1108,15 @@ We assume a failed download attempt. Last segment available was {seg}.")
                     f"Waiting for {wait_delay} minutes...")
                 sleep(wait_delay * 60)
                 continue
+            except exceptions.OutdatedAppException as e:
+                self.log.warning(f"Outdated client error. Retrying shortly...")
+                util.wait_block(2)
+                continue
             except exceptions.OfflineException as e:
-                self.log.critical(f"{e}")
+                self.log.critical(e)
                 raise e
             except Exception as e:
-                self.log.critical(f"{e}")
+                self.log.critical(e, exc_info=True)
                 raise e
 
             if not self.skip_download:
@@ -1141,7 +1153,7 @@ We assume a failed download attempt. Last segment available was {seg}.")
                     self._json = None
                     self._player_config_args = None
                     self._js = None
-                    self.json
+                    self.get_info()
                     self.is_live()
                     if Status.LIVE | Status.VIEWED_LIVE in self.status:
 
@@ -1311,10 +1323,10 @@ We assume a failed download attempt. Last segment available was {seg}.")
         if self._player_config_args:
             return self._player_config_args
 
-        # FIXME this is redundant with json property
+        # FIXME this is redundant with "json" property of this class
         self._player_config_args = {}
         # self._player_config_args["player_response"] = self.json["responseContext"]
-        self._player_config_args["player_response"] = self.json
+        self._player_config_args["player_response"] = self.get_info()
 
         if 'streamingData' not in self._player_config_args["player_response"]:
             self.log.critical("Missing streamingData key in json!")
@@ -1523,7 +1535,7 @@ class MPD():
     def update_url(self) -> Optional[str]:
         mpd_type = "dashManifestUrl" if self.mpd_type == "dash" else "hlsManifestUrl"
 
-        json = self.parent.json
+        json = self.parent.get_info()
 
         if streamingData := json.get("streamingData", {}):
             if ManifestUrl := streamingData.get(mpd_type):
