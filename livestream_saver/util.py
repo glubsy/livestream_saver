@@ -96,13 +96,19 @@ def none_filtered_out(
         blocked = True
 
     for string in strings:
-        log.debug(f"Testing {allow_re=} and {block_re=} against \"{string}\"")
         if not string:
             continue
-        if allow_re and allow_re.search(string):
-            wanted = True
-        if block_re and block_re.search(string):
-            blocked = True
+        # log.debug(f"Testing {allow_re=} and {block_re=} against \"{string}\"")
+        
+        if allow_re:
+            if allow_match := allow_re.search(string):
+                log.debug(f"{allow_match=} means this is wanted: {string}")
+                wanted = True
+        
+        if block_re:
+            if block_match := block_re.search(string):
+                log.debug(f"{block_match=} means this is blocked: {string}")
+                blocked = True
     
     if blocked:
         return False
