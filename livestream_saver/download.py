@@ -395,6 +395,13 @@ class YoutubeLiveStream():
             except exceptions.OfflineException:
                 self.log.info(f"Stream {self.video_id} status is now offline.")
                 break
+            except (
+                exceptions.NoLoginException,
+                exceptions.UnplayableException
+            ) as e:
+                self.log.warning(e)
+                util.wait_block(long_wait)
+                continue
             except exceptions.OutdatedAppException as e:
                 self.log.warning(f"Outdated client error. Retrying shortly...")
                 util.wait_block(2)
