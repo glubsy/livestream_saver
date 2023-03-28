@@ -388,6 +388,10 @@ class YoutubeLiveStream():
             try:
                 self.update_status()
                 self.log.debug(f"Status is: {self.status}.")
+
+                if not (Status.LIVE in self.status):
+                    self.log.info("Stream is not live anymore.")
+                    break
             except exceptions.WaitingException:
                 self.log.info(
                     f"Stream {self.video_id} status is: {self.status}. "
@@ -476,14 +480,14 @@ class YoutubeLiveStream():
             self.status &= ~Status.LIVE
 
         # Is this actually being streamed live?
-        val = None
+        is_viewed_live = None
         for _dict in self.get_info().get('responseContext', {}).get('serviceTrackingParams', []):
             param = _dict.get('params', [])
             for key in param:
                 if key.get('key') == 'is_viewed_live':
-                    val = key.get('value')
+                    is_viewed_live = key.get('value')
                     break
-        if val and val == "True":
+        if is_viewed_live and is_viewed_live == "True":
             self.status |= Status.VIEWED_LIVE
         else:
             self.status &= ~Status.VIEWED_LIVE
