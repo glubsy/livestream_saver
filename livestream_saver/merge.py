@@ -662,10 +662,13 @@ def merge(info: Dict, data_dir: Path,
         final_output_name = info.get('id', 'UNKNOWN_ID') + f".{ext}"
     else:
         final_output_name = sanitize_filename(
-            f"{info.get('author')}_"
-            f"[{info.get('download_date')}]_{info.get('title')}_"
-            f"[{info.get('video_resolution')}]_{info.get('id')}"
-            f".{ext}")
+            f"{info.get('download_date', '').replace('-', '')} "
+            f"[{info.get('author')}] "
+            f"{info.get('title')} "
+            f"[{info.get('video_resolution')}]"
+            f"[{info.get('id')}]"
+            f".{ext}"
+        )
 
     final_output_file = output_dir / final_output_name
 
@@ -991,6 +994,7 @@ def sanitize_filename(filename: str) -> str:
             # Only preserve extension if it is valid ASCII, otherwise ignore it.
             extension = ""
 
+    # TODO only trim the title part (need to pass as individual arguments)
     if extension:
         filename = filename[:-len(extension)]
 
