@@ -336,18 +336,20 @@ class YoutubeUrllibSession:
         return str_as_json(self.get_response_as_str(req))
 
     # TODO Place this in both monitor and download
-    def _check_logged_out(self, json_obj):
-        return json_obj.get("responseContext", {}) \
+    def _is_logged_out(self, json_obj) -> bool:
+        if json_obj.get("responseContext", {}) \
                 .get("mainAppWebResponseContext", {}) \
-                .get("loggedOut", True)
+                .get("loggedOut", True):
+            return True
+        return False
 
-    def is_logged_out(self, json_obj):
+    def is_logged_out(self, json_obj) -> bool:
         """Take a json object and return if we detect logged out status
         only if we have supplied our own cookies, which we ASSUME are meant
         to be logged in."""
         if not json_obj:
             return False
-        logged_out = self._check_logged_out(json_obj)
+        logged_out = self._is_logged_out(json_obj)
 
         if logged_out and self.user_supplied_cookies:
             self.user_supplied_cookies = 0
