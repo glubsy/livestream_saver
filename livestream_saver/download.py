@@ -472,6 +472,9 @@ class YoutubeLiveStream():
                 "Got no JSON data, removing \"Available\" flag from status.")
             self.status &= ~Status.AVAILABLE
             return
+        
+        # FIXME we could have JSON data but no videoDetails, while the stream
+        # is actually still live.
 
         isLive = self.get_info().get('videoDetails', {}).get('isLive')
         if isLive is not None and isLive is True:
@@ -1341,6 +1344,7 @@ class YoutubeLiveStream():
 
         if 'streamingData' not in self._player_config_args["player_response"]:
             self.log.critical("Missing streamingData key in json!")
+            self.log.debug(self._player_config_args)
             # TODO add fallback strategy with get_ytplayer_config()?
 
         return self._player_config_args
