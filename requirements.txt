@@ -1,7 +1,6 @@
 pytube==10.9.2
 Pillow
-#pytest
-# yt-dlp
-# youtube-dlp
 # streamlink
 # streamlink_cli
+# yt-dlp==2023.3.4
+git+https://github.com/yt-dlp/yt-dlp

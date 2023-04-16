@@ -13,64 +13,9 @@ import hashlib
 from livestream_saver.util import UA, str_as_json
 from livestream_saver.cookies import get_cookie
 
+from yt_dlp.extractor.youtube import INNERTUBE_CLIENTS
+
 log = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG)
-
-
-# TODO Copy clients from yt-dlp project
-# TODO do not hardcode timezone
-# TODO assign dynamic User-Agent to Web client
-INNERTUBE_CLIENTS = {
-    "web_linux": {
-        "INNERTUBE_API_KEY": "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-        "INNERTUBE_CONTEXT": {
-            "context": {
-                "client": {
-                    # "acceptHeader": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                    # "browserName": "Firefox",
-                    # "browserVersion": "103.0",
-                    # "clientFormFactor": "UNKNOWN_FORM_FACTOR",
-                    "clientName": "WEB",
-                    "clientVersion": "2.20230301.09.00",
-                    # "deviceMake": "",
-                    # "deviceModel": "",
-                    # "gl": "EN",
-                    # "hl": "en",
-                    # "mainAppWebInfo": {
-                    #     "isWebNativeShareAvailable": "false",
-                    #     "webDisplayMode": "WEB_DISPLAY_MODE_BROWSER"
-                    # },
-                    # "osName": "X11",
-                    # "osVersion": "",
-                    # "platform": "DESKTOP",
-                    # "timeZone": "Europe/Madrid",
-                    # "userAgent": "Mozilla/5.0 (X11; Linux x86_64; rv:103.0) Gecko/20100101 Firefox/103.0,gzip(gfe)",
-                    # "userInterfaceTheme": "USER_INTERFACE_THEME_DARK",
-                    # "utcOffsetMinutes": 60,
-                },
-                # "user": {
-                #     "lockedSafetyMode": False
-                # }
-            }
-        },
-        "INNERTUBE_CONTEXT_CLIENT_NAME": "1"
-    },
-    "android": {
-        "INNERTUBE_API_KEY": "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
-        "INNERTUBE_CONTEXT": {
-            "context": {
-                "client": {
-                    "clientName": "ANDROID",
-                    "clientVersion": "17.31.35",
-                    "androidSdkVersion": 30,
-                    "userAgent": "com.google.android.youtube/17.31.35 (Linux; U; Android 11) gzip",
-                    "hl": "en"
-                }
-            }
-        },
-        "INNERTUBE_CONTEXT_CLIENT_NAME": "3"
-    }
-}
 
 
 class YoutubeUrllibSession:
@@ -85,7 +30,7 @@ class YoutubeUrllibSession:
         # TODO add proxies
         # TODO could use fake-useragent package here for an up-to-date string
         self.headers = {
-            'User-Agent': UA, 
+            'User-Agent': UA,
             'Accept-Language': 'en-US,en'  # ensure messages in english from the API
         }
         self._initialize_consent()
@@ -105,7 +50,7 @@ class YoutubeUrllibSession:
             return self.get_ytcfg_from_html(content_html)
 
         return self.get_ytcfg_from_html(data)
-    
+
     @staticmethod
     def get_ytcfg_from_html(html) -> Dict:
         # TODO only keep the keys we care about (that thing is huge)
@@ -119,7 +64,7 @@ class YoutubeUrllibSession:
         return {}
 
     def _generate_sapisidhash_header(
-        self, 
+        self,
         origin: Optional[str] = 'https://www.youtube.com') -> Optional[str]:
         if not origin:
             return None
@@ -167,7 +112,7 @@ class YoutubeUrllibSession:
                 self._SAPISID = False
         if not self._SAPISID:
             return None
-        
+
         # SAPISIDHASH algorithm from https://stackoverflow.com/a/32065323
         time_now = round(time.time())
         sapisidhash = hashlib.sha1(
@@ -191,7 +136,7 @@ class YoutubeUrllibSession:
 
         log.debug(f"Initial req header items: {req.header_items()}")
         log.debug(f"Initial res headers: {res.headers}")
-      
+
         if self.user_supplied_cookies:
             self.ytcfg = self.get_ytcfg(res)
 
@@ -255,15 +200,15 @@ class YoutubeUrllibSession:
         custom_headers: Optional[Dict] = None, client: str = "android"
     ) -> Dict:
         """
-        Make an innertube API call. Return response as string.
+        Make an innertube API call.
         Args:
             endpoint: the endpoint to send request to.
             Example: "https://www.youtube.com/youtubei/v1/player"
             or "https://www.youtube.com/youtubei/v1/browse"
-            
+
             custom_headers: mapping of custom headers.
 
-            payload: a mapping of params for the payload. 
+            payload: a mapping of params for the payload.
             Example: {"videoId": video_id}
 
             client: key to INNERTUBE_CLIENTS mapping. Defaults to android to
@@ -280,8 +225,7 @@ class YoutubeUrllibSession:
                 'X-YouTube-Client-Name': INNERTUBE_CLIENTS[client][
                     "INNERTUBE_CONTEXT_CLIENT_NAME"],
                 'X-YouTube-Client-Version': INNERTUBE_CLIENTS[client][
-                    "INNERTUBE_CONTEXT"]["context"]["client"]["clientVersion"],
-                # 'Accept': 'text/plain'
+                    "INNERTUBE_CONTEXT"]["client"]["clientVersion"],
             }
         )
         if auth := self._generate_sapisidhash_header():
@@ -293,8 +237,10 @@ class YoutubeUrllibSession:
             )
         if custom_headers:
             headers.update(custom_headers)
-        # headers["User-Agent"] = INNERTUBE_CLIENTS[client]["INNERTUBE_CONTEXT"][
-        #     "context"]["client"]["userAgent"]
+
+        if userAgent := INNERTUBE_CLIENTS[client]["INNERTUBE_CONTEXT"]["client"]\
+                .get("userAgent"):
+            headers["User-Agent"] = userAgent
 
         if self.ytcfg:
             if IdToken := self.ytcfg.get('IdToken'):
@@ -306,16 +252,18 @@ class YoutubeUrllibSession:
             if SessionIndex := self.ytcfg.get('SessionIndex'):
                 headers["X-Goog-AuthUser"] = SessionIndex
 
-        data: Dict = INNERTUBE_CLIENTS[client]["INNERTUBE_CONTEXT"].copy()
+        context = {
+            "context": INNERTUBE_CLIENTS[client]["INNERTUBE_CONTEXT"].copy()
+        }
         # Hack to avoid overwriting our default context/client
         if payload:
-            if custom_client := payload.get("context", {}).get("client"):
+            if custom_client := payload.get("client"):
                 # update the "client" key instead of overwriting it
-                data["context"]["client"].update(custom_client)
+                context["client"].update(custom_client)
                 # remove the context (hopefully there is nothing else under context...)
-                payload.pop("context")
+                payload.pop("client")
             # update the rest of the payload
-            data.update(payload)
+            context.update(payload)
 
         endpoint = endpoint + '?' + urlencode(
             {
@@ -323,11 +271,11 @@ class YoutubeUrllibSession:
                 "prettyPrint": "false"
             }
         )
-        log.debug(f"Making API request... {endpoint=}\n{data=}\n{headers=}")
+        log.debug(f"POST API request... {endpoint=}\n{context=}\n{headers=}")
         req = Request(
             endpoint,
             headers=headers,
-            data=json.dumps(data).encode(),
+            data=json.dumps(context).encode(),
             method="POST",
         )
 
@@ -366,7 +314,7 @@ class YoutubeUrllibSession:
                     subject="Not logged in anymore",
                     message_text=f"We are logged out: {json_obj}"
                 )
-        
+
         self._logged_in = not logged_out
         return logged_out
 
@@ -394,12 +342,12 @@ class YoutubeUrllibSession:
 
     def get_response_as_str(self, req: Request) -> str:
         """
-        Return an HTML page from a request as str. 
+        Return an HTML page from a request as str.
         Also update cookies in cookie jar if necessary.
         """
         with urlopen(req) as res:
             status = res.status
-            
+
             if status >= 204:
                 log.debug(f"Request {req.full_url} -> response url: {res.url}")
                 log.debug(f"POST Request headers were {req.header_items()}")
