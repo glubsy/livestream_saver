@@ -698,7 +698,7 @@ class YoutubeChannel:
                 "browseId": browseEndpoint.get("browseId"),
                 "params": browseEndpoint.get("params")
             },
-            client="web_linux"
+            client="web"
         )
 
 

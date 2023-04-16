@@ -257,11 +257,11 @@ class YoutubeUrllibSession:
         }
         # Hack to avoid overwriting our default context/client
         if payload:
-            if custom_client := payload.get("client"):
+            if custom_client := payload.get("context", {}).get("client"):
                 # update the "client" key instead of overwriting it
-                context["client"].update(custom_client)
+                context["context"]["client"].update(custom_client)
                 # remove the context (hopefully there is nothing else under context...)
-                payload.pop("client")
+                payload.pop("context")
             # update the rest of the payload
             context.update(payload)
 
