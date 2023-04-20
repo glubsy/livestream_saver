@@ -1,7 +1,7 @@
 * Download Youtube livestreams from the very beginning to the end.
 * Monitor a given channel for upcoming livestreams and download them automatically when they become active.
 
-Cookies (in Netscape format) are needed to access membership-only videos as well as age-restricted videos (which would also mean that you sold your soul to Youtube and your account is "verified").
+Cookies (in Netscape format) are needed to access membership-only videos as well as age-restricted videos (which would also mean that you sold your soul to Youtube and your account is "verified"). You may use [this](https://github.com/hrdl-github/cookies-txt) or [that](https://github.com/dandv/convert-chrome-cookies-to-netscape-format) depending on the browser you used to log into that dis-service.
 
 The example config file `livestream_saver.cfg` is optional and is meant as a convenience to override the default values.
 
