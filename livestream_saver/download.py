@@ -1161,7 +1161,7 @@ class YoutubeLiveStream():
                     ConnectionError,  # ConnectionResetError - Connection reset by peer
                     urllib.error.HTTPError # typically 404 errors, need refresh
                 ) as e:
-                    self.log.info(e)
+                    self.log.warning(e)
                     # force update
                     self._watch_html = None
                     self._json = None

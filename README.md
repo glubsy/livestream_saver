@@ -109,7 +109,8 @@ optional arguments:
 
 # Dependencies
 
-* python 3.8
+* python >=3.8
+* yt-dlp
 * [pytube](https://github.com/pytube/pytube) 10.9.2
 * ffmpeg (and ffprobe) to concatenate segments and merge them into one file 
 * [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional) to convert webp thumbnail
