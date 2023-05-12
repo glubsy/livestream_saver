@@ -121,24 +121,25 @@ optional arguments:
 # Dependencies
 
 * python >=3.8
-* yt-dlp
+* yt-dlp (preferrably always the latest version)
 * [pytube](https://github.com/pytube/pytube) 10.9.2
 * ffmpeg (and ffprobe) to concatenate segments and merge them into one file 
 * [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional) to convert webp thumbnail
 
 # Installation
 
-Either install dependencies system-wide (requires root privileges, use `sudo`):
+* Clone this repository to your local machine `git clone https://github.com/glubsy/livestream_saver.git`
+
+* Setup a virtual environment to install dependencies into and activate the venv:
+
 ```
-python3 -m pip install -r requirements.txt
-``` 
-Or create a virtual environment and install the dependencies inside it, but do note that in this case you will need to activate the venv everytime you need to run the program.
-```
-virtualenv -p python3 venv
+python3 -m venv venv  # or virtualenv -p python3 venv
 source ./venv/bin/activate
 pip3 install -r requirements.txt
 ```
-One could also clone the corresponding repositories manually to get the latest updates.
+
+* If you don't want to use a venv (to avoid having to activate the venv everytime you need to start the program, with `source /path/to/venv/bin/activate`), you *could* install dependencies system-wide. Remember to use `sudo pip3` then.
+
 
 # Configuration
 
