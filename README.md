@@ -6,15 +6,15 @@ Cookies (in Netscape format) are needed to access membership-only videos as well
 The example config file `livestream_saver.cfg` is optional and is meant as a convenience to override the default values.
 
 
-# WARNING: this program is currently broken!
+# WARNING
 
-**Since early 2023/04, Youtube has broken everything and this program does not work anymore.** 
-**You will get "HTTP 503 Forbidden" errors when attempting to download stream segments.**
-**Until this is fixed, use yt-dlp to download live streams.** 
-**For example (triggers every 5 minutes):**
-```shell
-while true; do yt-dlp --fragment-retries 50 -o '%(upload_date)s [%(uploader)s] %(title)s [%(height)s][%(id)s].%(ext)s' -ciw -f '133+140/134+140/mp4+m4a/bestvideo+bestaudio' --add-metadata --embed-thumbnail  --live-from-start --match-filter 'is_live' https://www.youtube.com/chanel_name_or_id/live; sleep $((5*60)); done
-```
+The download feature is half-broken (see issue [#63](https://github.com/glubsy/livestream_saver/issues/63)) so we rely on yt-dlp for the time being.
+
+As a result, many native config options (and some hooks) are currently **ignored**.
+
+The `yt_dlp_conf.py` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples)
+
+So you might want to edit this file too!
 
 
 # Monitoring a channel

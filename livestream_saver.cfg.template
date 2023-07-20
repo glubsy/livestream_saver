@@ -201,10 +201,10 @@ on_merge_done_command_logged = false
 
 
 # These values in the following sections only apply to Monitor mode.
-[monitor Meru]
+[monitor Meruru]
 channel_name = Matsuro Meru
 scan_delay = 20.0
-URL = https://www.youtube.com/channel/UCIJ6TGsTcBlYGUj-zbL60EQ
+URL = https://www.youtube.com/@Meruru
 
 
 [monitor Prune]
@@ -217,6 +217,18 @@ URL = https://www.youtube.com/c/Prune73
 channel_name = Inukai Purin
 scan_delay = 20.0
 URL = https://www.youtube.com/channel/UCdrQWcX7XLDSUEh9SAxnyBg
+
+
+[monitor Riro]
+channel_name = Riro Ron
+scan_delay = 20.0
+URL = https://www.youtube.com/@riroron
+
+
+[monitor Panko]
+channel_name = Komachi Panko
+scan_delay = 20.0
+URL = https://www.youtube.com/@komachipanko
 
 
 [monitor Kana]

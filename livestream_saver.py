@@ -10,6 +10,9 @@ import traceback
 import re
 from shlex import split
 
+import yt_dlp
+from yt_dlp_conf import ydl_opts
+
 from livestream_saver import extract, util
 import livestream_saver
 from livestream_saver.monitor import YoutubeChannel
@@ -559,6 +562,17 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
             download_wanted = ls.pre_download_checks()
 
         if download_wanted:
+            if "cookiepath" not in ydl_opts and args.get("cookie") is not None:
+                ydl_opts["cookiepath"] = args.get("cookie")
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                error_code = ydl.download(ls.url)
+                if error_code:
+                    log.error(f"yt-dlp error: {error_code}")
+            
+            util.wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
+            continue
+
             try:
                 ls.download()
             except Exception as e:
