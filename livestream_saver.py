@@ -27,6 +27,9 @@ log.setLevel(logging.DEBUG)
 
 NOTIFIER = NotificationDispatcher()
 
+# HACK forcing use of yt-dlp for now
+use_ytdl = True
+
 def parse_args(config) -> argparse.Namespace:
     parent_parser = argparse.ArgumentParser(
         description='Monitor a Youtube channel for any active live stream and \
@@ -476,9 +479,6 @@ TIME_VARIANCE = 3.0  # in minutes
 
 
 def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
-    # HACK forcing use of yt-dlp for now
-    use_ytdl = True
-
     URL = args["URL"]
     channel_id = args["channel_id"]
     scan_delay = args["scan_delay"]
@@ -492,7 +492,10 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
 
     ch = YoutubeChannel(
         URL, channel_id, session,
-        output_dir=args["output_dir"], hooks=args["hooks"], notifier=NOTIFIER)
+        output_dir=args["output_dir"],
+        hooks=args["hooks"],
+        notifier=NOTIFIER
+    )
     log.info(f"Monitoring channel: {ch._id}")
 
     while True:
@@ -626,9 +629,6 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
 
 
 def download_mode(config: ConfigParser, args: Dict[str, Any]):
-    # HACK forcing use of yt-dlp for now
-    use_ytdl = True
-
     session = YoutubeUrllibSession(
         cookie_path=args.get("cookie"), notifier=NOTIFIER
     )
@@ -892,11 +892,6 @@ def main():
         # We need to setup output dir before instantiating downloads
         # because we use it to store our logs
         output_dir = Path(config.get("monitor", "output_dir", vars=args))
-        if channel_name is not None:
-            output_dir = output_dir / channel_name
-        else:
-            output_dir = output_dir / channel_id
-
         makedirs(output_dir, exist_ok=True)
         args["output_dir"] = output_dir
 
@@ -927,10 +922,10 @@ def main():
         args["video_id"] = video_id
         output_dir = util.create_output_dir(
             output_dir=output_dir, video_id=video_id
-        )
+        ) if not use_ytdl else Path()
         args["output_dir"] = output_dir
 
-        logfile_path = output_dir / "download.log"
+        logfile_path = output_dir / f"download_{video_id}.log"
         log = setup_logger(
             output_filepath=logfile_path,
             loglevel=config.get(sub_cmd, "log_level", vars=args)

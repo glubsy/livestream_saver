@@ -285,7 +285,7 @@ class YoutubeLiveStream():
         self.ytdl_opts = ytdl_opts
 
         self.output_dir = output_dir
-        if not self.output_dir.exists() and not use_ytdl:
+        if not self.output_dir.exists():
             util.create_output_dir(
                 output_dir=output_dir, video_id=None
             )
@@ -322,7 +322,8 @@ class YoutubeLiveStream():
         logger.setLevel(logging.DEBUG)
         # File output
         logfile = logging.FileHandler(
-            filename=output_path / "download.log", delay=True, encoding='utf-8'
+            filename=output_path / f"download_{self.video_id}.log",
+            delay=True, encoding='utf-8'
         )
         logfile.setLevel(logging.DEBUG)
         formatter = logging.Formatter(
@@ -479,7 +480,7 @@ class YoutubeLiveStream():
                 "Got no JSON data, removing \"Available\" flag from status.")
             self.status &= ~Status.AVAILABLE
             return
-        
+
         # FIXME we could have JSON data but no videoDetails, while the stream
         # is actually still live.
 
