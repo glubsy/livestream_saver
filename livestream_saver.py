@@ -10,7 +10,6 @@ import traceback
 import re
 from shlex import split
 
-import yt_dlp
 from yt_dlp_conf import ydl_opts
 
 from livestream_saver import extract, util
@@ -477,6 +476,9 @@ TIME_VARIANCE = 3.0  # in minutes
 
 
 def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
+    # HACK forcing use of yt-dlp for now
+    use_ytdl = True
+
     URL = args["URL"]
     channel_id = args["channel_id"]
     scan_delay = args["scan_delay"]
@@ -551,7 +553,9 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
             ignore_quality_change=config.getboolean(
                 "monitor", "ignore_quality_change", vars=args, fallback=False),
             log_level=config.get("monitor", "log_level", vars=args),
-            initial_metadata=target_live
+            initial_metadata=target_live,
+            use_ytdl=use_ytdl,
+            ytdl_opts=ydl_opts
         )
 
         # ls.get_metadata(force=True)
@@ -562,17 +566,6 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
             download_wanted = ls.pre_download_checks()
 
         if download_wanted:
-            if "cookiepath" not in ydl_opts and args.get("cookie") is not None:
-                ydl_opts["cookiepath"] = args.get("cookie")
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                error_code = ydl.download(ls.url)
-                if error_code:
-                    log.error(f"yt-dlp error: {error_code}")
-            
-            util.wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
-            continue
-
             try:
                 ls.download()
             except Exception as e:
@@ -597,7 +590,8 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
                     f"{ls.title} {video_id}"),
                 message_text=f""
             )
-            if not config.getboolean("monitor", "no_merge", vars=args):
+            if not config.getboolean("monitor", "no_merge", vars=args) \
+                    and not use_ytdl:
                 log.info("Merging segments...")
                 # TODO in a separate thread?
                 try:
@@ -632,6 +626,9 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
 
 
 def download_mode(config: ConfigParser, args: Dict[str, Any]):
+    # HACK forcing use of yt-dlp for now
+    use_ytdl = True
+
     session = YoutubeUrllibSession(
         cookie_path=args.get("cookie"), notifier=NOTIFIER
     )
@@ -653,13 +650,17 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
         filters={},
         ignore_quality_change=config.getboolean(
             "download", "ignore_quality_change", vars=args, fallback=False),
-        log_level=config.get("download", "log_level", vars=args)
+        log_level=config.get("download", "log_level", vars=args),
+        use_ytdl=use_ytdl,
+        ytdl_opts=ydl_opts
     )
 
     ls.trigger_hooks("on_download_initiated")
     ls.download(config.getfloat("download", "scan_delay", vars=args))
 
-    if ls.done and not config.getboolean("download", "no_merge", vars=args):
+    if ls.done \
+        and not config.getboolean("download", "no_merge", vars=args) \
+            and not use_ytdl:
         log.info("Merging segments...")
         try:
             merge(
@@ -888,7 +889,7 @@ def main():
         channel_id = get_channel_id(args["URL"], service_name="youtube")
         args["channel_id"] = channel_id
 
-        # We need to setup output dir before instanciating downloads
+        # We need to setup output dir before instantiating downloads
         # because we use it to store our logs
         output_dir = Path(config.get("monitor", "output_dir", vars=args))
         if channel_name is not None:
@@ -1010,6 +1011,9 @@ def main():
     else:
         print("Wrong sub-command. Exiting.")
         return
+
+    if "cookiepath" not in ydl_opts and args.get("cookie") is not None:
+        ydl_opts["cookiepath"] = args.get("cookie")
 
     error = 0
     try:
