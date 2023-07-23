@@ -18,6 +18,10 @@ ydl_opts = {
     # "match_filter": 'is_live',
     
     "live_from_start": True,
+
+    "writethumbnail": True,
+
+    "fragment_retries": 50,
     
     # "wait_for_video" = (60, 120),
     
@@ -26,7 +30,7 @@ ydl_opts = {
             # --embed-thumbnail
             'key': 'EmbedThumbnail',
             # already_have_thumbnail = True prevents the file from being deleted after embedding
-            'already_have_thumbnail': False
+            'already_have_thumbnail': True
         },
         {
             'key': 'FFmpegMetadata',
