@@ -558,7 +558,7 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
             log_level=config.get("monitor", "log_level", vars=args),
             initial_metadata=target_live,
             use_ytdl=use_ytdl,
-            ytdl_opts=ydl_opts
+            ytdl_opts=ydl_opts.copy()
         )
 
         # ls.get_metadata(force=True)
@@ -652,7 +652,7 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
             "download", "ignore_quality_change", vars=args, fallback=False),
         log_level=config.get("download", "log_level", vars=args),
         use_ytdl=use_ytdl,
-        ytdl_opts=ydl_opts
+        ytdl_opts=ydl_opts.copy()
     )
 
     ls.trigger_hooks("on_download_initiated")

@@ -226,7 +226,7 @@ class YoutubeLiveStream():
         log_level = logging.INFO,
         initial_metadata: Optional[Dict[str, Any]] = {},
         use_ytdl = False,
-        ytdl_opts = None
+        ytdl_opts: Optional[Dict] = None
     ) -> None:
         self.session = session
         self.video_id = video_id
@@ -288,6 +288,11 @@ class YoutubeLiveStream():
         if not self.output_dir.exists():
             util.create_output_dir(
                 output_dir=output_dir, video_id=None
+            )
+
+        if self.ytdl_opts is not None:
+            self.ytdl_opts["outtmpl"] = str(
+                self.output_dir / self.ytdl_opts["outtmpl"]
             )
 
         self.log = self.setup_logger(self.output_dir, log_level)
@@ -1093,8 +1098,6 @@ class YoutubeLiveStream():
     def download(self, wait_delay: float = 1.0):
 
         if self.use_ytdl:
-            self.ytdl_opts["outtmpl"] = str(self.output_dir / self.ytdl_opts["outtmpl"])
-
             with yt_dlp.YoutubeDL(self.ytdl_opts) as ydl:
                 error_code = ydl.download(self.url)
                 if error_code:
