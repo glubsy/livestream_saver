@@ -75,11 +75,11 @@ class HookCommand():
                         continue
                     else:
                         raise Exception(f"No URL found in video {args}. Skipping command {self.cmd}.")
-                if item == r"%COOKIE_PATH%":
-                    # if parent.session.cookie_path is not None:
-                    if cookie_path := args.get("cookie_path", None):
-                        # cmd[cmd.index(item)] = cookie_path
-                        new.append(cookie_path)
+                if item == r"%COOKIES_PATH%":
+                    # if parent.session.cookiefile_path is not None:
+                    if cookiefile_path := args.get("cookiefile_path", None):
+                        # cmd[cmd.index(item)] = cookiefile_path
+                        new.append(cookiefile_path)
                         continue
                     elif cmd[cmd.index(item) - 1] == "--cookies":
                         logger.warning(
@@ -90,7 +90,7 @@ class HookCommand():
                         patched = True
                         continue
                     else:
-                        raise Exception(f"No cookie path submitted. Skipping command {self.cmd}.")
+                        raise Exception(f"No cookie file path submitted. Skipping command {self.cmd}.")
                 new.append(item)
             if patched:
                 logger.warning(f"{self.event_name} command after replacement: {new}.")

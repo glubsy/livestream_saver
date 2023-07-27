@@ -482,11 +482,12 @@ class YoutubeChannel:
         """
         # TODO make vid a full-fledged class!
         url = vid.get("url")
-        vid.update({
-            "url": f"https://www.youtube.com{url}" if url is not None else None,
-            "cookie_path": self.session.cookie_path,
-            "logger": self.log,
-            "output_dir": self.output_dir
+        vid.update(
+            {
+                "url": f"https://www.youtube.com{url}" if url is not None else None,
+                "cookiefile_path": self.session.cookiefile_path,
+                "logger": self.log,
+                "output_dir": self.output_dir
             }
         )
 

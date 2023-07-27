@@ -6,7 +6,7 @@
 # log_level = DEBUG
 
 # Path to cookies that is commmon to all modes if not overriden by sections (this is a fallback value)
-# cookie = 
+# cookies = 
 
 # Enable sending of e-mail notifications:
 # email_notifications = True
@@ -31,7 +31,7 @@ allow_regex = ".*archiv.*|.*karaoke.*"
 block_regex = ""
 
 # This is just an example invoking yt-dlp (limiting maximum video height to 240p).
-# Note that "--cookies %COOKIE_PATH%" will be smartly removed if the value was 
+# Note that "--cookies %COOKIES_PATH%" will be smartly removed if the value was 
 # not provided from this config file or as a command line argument. 
 ytdlp_command = yt-dlp
 	-v
@@ -41,13 +41,13 @@ ytdlp_command = yt-dlp
 	; -f 'bestvideo+bestaudio'
 	-S "+res:240,res:360"
 	--add-metadata
-	--cookies %COOKIE_PATH%
+	--cookies %COOKIES_PATH%
 	--live-from-start
 	--wait-for-video 5
 	%VIDEO_URL%
 
 # Path to cookies that can be re-used in individual sections:
-cookie = 
+cookies = 
 
 
 [webhook]
@@ -100,8 +100,8 @@ webhook_data_live = '{
 log_level = INFO
 # Delay between scan retries in minutes
 scan_delay = 15.5
-# Path to Netscape formatted cookie file.
-# cookie = /path/to/cookies.txt
+# Path to Netscape formatted cookies file.
+# cookies = /path/to/cookies.txt
 
 # Only trigger download if this regex matches video title + description.
 allow_regex = ''
@@ -172,8 +172,8 @@ on_merge_done_command_logged = false
 log_level = WARNING
 # If live has not started yet, delay retrying by this many minutes.
 scan_delay = 2.5
-# Path to Netscape formatted cookie file.
-# cookie = /path/to/cookies.txt
+# Path to Netscape formatted cookies file.
+# cookies = /path/to/cookies.txt
 
 # This triggers when a download is pending and waiting for a livestream to start.
 on_download_initiated_command = ${common:ytdlp_command}
@@ -242,7 +242,7 @@ URL = https://www.youtube.com/c/kamikokana
 channel_name = Gawr Gura
 scan_delay = 20.0
 URL = https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g
-cookie = ${common:cookie}
+cookies = ${common:cookies}
 
 # Spawn a subprocess of your choosing (only for this target channel, and only 
 # if the metadata matches the regex):

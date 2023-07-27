@@ -1531,7 +1531,7 @@ class YoutubeLiveStream():
         return {
                 "url": self.url,
                 "videoId": self.video_id,
-                "cookie_path": self.session.cookie_path,
+                "cookiefile_path": self.session.cookiefile_path,
                 "logger": self.log,
                 "output_dir": self.output_dir,
                 "title": self.title,

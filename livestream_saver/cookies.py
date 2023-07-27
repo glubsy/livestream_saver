@@ -14,7 +14,7 @@ def get_cookie(path):
     return _get_cookie_jar(path)
 
 
-def _get_cookie_jar(cookie_path: str):
+def _get_cookie_jar(cookiefile_path: str):
     """Necessary for urllib.request."""
 
     policy = http.cookiejar.DefaultCookiePolicy(
@@ -25,29 +25,29 @@ def _get_cookie_jar(cookie_path: str):
         if "HTTPONLY_PREFIX" in dir(http.cookiejar) \
         else CompatMozillaCookieJar(policy=policy)
 
-    if not cookie_path:
-        logger.info(f"No cookie path submitted. Using a blank cookie jar.")
+    if not cookiefile_path:
+        logger.info(f"No cookie file path submitted. Using a blank cookie jar.")
         return cj
 
-    cp = Path(cookie_path).expanduser()
+    cp = Path(cookiefile_path).expanduser()
 
     if not cp.is_file():  # either file doesn't exist, or it's a directory
         cp_str = str(cp)
-        logger.debug(f"Cookie path \"{cp_str}\" is not a file...")
+        logger.debug(f"Cookie file path \"{cp_str}\" is not a file...")
 
         if not cp.exists():
             # Get base directory, remove bogus filename
             found = cp_str.rfind(sep)
             if found != -1:
                 cp_str = cp_str[:found]
-            logger.debug(f"Creating directory for cookie: \"{cp_str}\"")
+            logger.debug(f"Creating directory for cookies: \"{cp_str}\"")
             makedirs(cp_str, exist_ok=True)
             cp_str = str(cp)
         elif cp.is_dir():
             cp_str = cp_str + sep + "livestream_saver_cookies.txt"
         else:  
             # device node or something illegal
-            logger.warning(f"Submitted cookie path \"{cp}\" is incorrect. \
+            logger.warning(f"Submitted cookie file path \"{cp}\" is incorrect. \
 Using blank cookie jar.")
             return cj
 
@@ -57,15 +57,15 @@ Using blank cookie jar.")
         cj.filename = cp_str  # this has to be an absolute valid path string
         return cj
 
-    new_cp_str = str(Path(cookie_path).absolute().with_suffix('')) + "_updated.txt"
+    new_cp_str = str(Path(cookiefile_path).absolute().with_suffix('')) + "_updated.txt"
     new_cp = Path(new_cp_str)
 
     try:
         cj.load(new_cp_str if new_cp.exists() else str(cp),
                 ignore_expires=True, ignore_discard=True)
     except Exception as e:
-        logger.error(f"Failed to load cookie file {cookie_path}: {e}. \
-Defaulting to empty cookie.")
+        logger.error(f"Failed to load cookie file {cookiefile_path}: {e}. \
+Defaulting to empty cookies.")
 
     # Avoid overwriting the cookie, only write to a new one.
     cj.filename = new_cp_str
@@ -95,11 +95,11 @@ Defaulting to empty cookie.")
 # Obsolete
 def _get_cookie_dict(path):
     """Basic dictionary from cookie file. Used by Requests module."""
-    cookie_path = Path(path).absolute()
-    if not cookie_path.exists():
+    cookiefile_path = Path(path).absolute()
+    if not cookiefile_path.exists():
         logger.error("Cookie file does not exist, defaulting to empty cookie...")
         return {}
-    cookie_content = parse_cookie_file(cookie_path)
+    cookie_content = parse_cookie_file(cookiefile_path)
     if not cookie_content:
         logger.warning("Empty cookie file!")
     return cookie_content

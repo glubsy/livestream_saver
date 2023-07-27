@@ -22,12 +22,12 @@ So you might want to edit this file too!
 Monitor a given Youtube channel for any upcoming livestream by requesting the channel's *videos* and *community* tabs every few minutes or so. 
 It should automatically download a live stream as soon as one is listed as being active in any of said tabs.
 
-Basic usage example: `python livestream_saver.py monitor --cookie /path/to/cookie.txt CHANNEL_URL`
+Basic usage example: `python livestream_saver.py monitor --cookies /path/to/cookies.txt CHANNEL_URL`
 
 ```
 > python3 livestream_saver.py monitor --help
 
-usage: livestream_saver.py monitor [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONFIG_FILE] [--cookie COOKIE_PATH] [-q MAX_VIDEO_QUALITY] [-o OUTPUT_DIR] [--channel-name CHANNEL_NAME] [-s SECTION] [-d] [-n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] [--skip-download] [YOUTUBE_CHANNEL_URL]
+usage: livestream_saver.py monitor [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONFIG_FILE] [--cookies COOKIES_PATH] [-q MAX_VIDEO_QUALITY] [-o OUTPUT_DIR] [--channel-name CHANNEL_NAME] [-s SECTION] [-d] [-n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] [--skip-download] [YOUTUBE_CHANNEL_URL]
 
 positional arguments:
   YOUTUBE_CHANNEL_URL   The Youtube channel to monitor for live streams. Either a full youtube URL, /channel/ID, or /c/name format. (default: None)
@@ -38,7 +38,7 @@ optional arguments:
                         Log level. (Default: INFO)
   -c CONFIG_FILE, --config-file CONFIG_FILE
                         Path to config file to use. (Default: ~/.config/livestream_saver/livestream_saver.cfg)
-  --cookie COOKIE_PATH  Path to Netscape formatted cookie file.
+  --cookies COOKIES_PATH  Path to Netscape formatted cookies file.
   -q MAX_VIDEO_QUALITY, --max-video-quality MAX_VIDEO_QUALITY
                         Use best available video resolution up to this height in pixels. Example: "360" for maximum height 360p. Get the highest available resolution by default.
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
@@ -61,12 +61,12 @@ optional arguments:
 
 Downloads an active Youtube livestream specified by its URL.
 
-Basic usage example: `python livestream_saver.py download --cookie /path/to/cookie.txt VIDEO_STREAM_URL`
+Basic usage example: `python livestream_saver.py download --cookies /path/to/cookies.txt VIDEO_STREAM_URL`
 
 ```
 > python3 livestream_saver.py download --help
 
-usage: livestream_saver.py download [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONFIG_FILE] [--cookie COOKIE_PATH] [-q MAX_VIDEO_QUALITY] [-o OUTPUT_DIR] [-d | -n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] [--skip-download] YOUTUBE_VIDEO_URL
+usage: livestream_saver.py download [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONFIG_FILE] [--cookies COOKIES_PATH] [-q MAX_VIDEO_QUALITY] [-o OUTPUT_DIR] [-d | -n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] [--skip-download] YOUTUBE_VIDEO_URL
 
 positional arguments:
   YOUTUBE_VIDEO_URL     Youtube video stream URL to download.
@@ -77,7 +77,7 @@ optional arguments:
                         Log level. (Default: INFO)
   -c CONFIG_FILE, --config-file CONFIG_FILE
                         Path to config file to use. (Default: ~/.config/livestream_saver/livestream_saver.cfg)
-  --cookie COOKIE_PATH  Path to Netscape formatted cookie file.
+  --cookies COOKIES_PATH  Path to Netscape formatted cookies file.
   -q MAX_VIDEO_QUALITY, --max-video-quality MAX_VIDEO_QUALITY
                         Use best available video resolution up to this height in pixels. Example: "360" for maximum height 360p. Get the highest available resolution by default.
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
@@ -159,7 +159,7 @@ on_download_initiated = yt-dlp --add-metadata --embed-thumbnail --wait-for-video
 ```
 The following place-holders will be replaced by the corresponding value (more will be added in the future):
 - `%VIDEO_URL%`: the URL of the live stream being currently downloaded
-- `%COOKIE_PATH%`: the path to the cookie file you have specified (in config, or CLI argument)
+- `%COOKIES_PATH%`: the path to the cookie file you have specified (in config, or CLI argument)
 
 Each section (`[monitor]`, `[download]` and `[monitor CHANNEL]`) can have a different value for the same option / event. The `[DEFAULT]` section is only used as a fallback if none of them have an expected value specified. The `[monitor CHANNEL]` section will override any value from the `monitor` section, so you can specify different programs for different channels for example.
 The command can be disabled and its output logged with the following options (placed in the **same section** as the affected command). Additionally, regex can be used to narrow own when to spawn a command based on the targeted video's metadata:

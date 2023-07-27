@@ -4,7 +4,7 @@ ydl_opts = {
     # otherwise fallback to "best" according to yt-dlp's logic
     'format': '134+140/mp4+m4a/bestvideo+bestaudio',
     
-    # Path to your cookies (this is also deduced from the native --cookie argument)
+    # Path to your cookies (this is always updated from livestream_saver's --cookies argument)
     # 'cookiefile': "",
     
     # Do not stop on download/postprocessing errors.
@@ -16,6 +16,8 @@ ydl_opts = {
      
     # Need to test this one, but it's not needed in our case anyway:
     # "match_filter": 'is_live',
+
+    # "wait_for_video": (60, 120),
     
     "live_from_start": True,
 

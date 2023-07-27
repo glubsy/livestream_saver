@@ -73,10 +73,10 @@ record live streams from the first segment.',
         help='The Youtube channel to monitor for live streams. \
 Either a full youtube URL, /channel/ID, or /c/name format.'
     )
-    monitor_parser.add_argument('--cookie',
-        action='store', type=str, metavar="COOKIE_PATH",
+    monitor_parser.add_argument('--cookies',
+        action='store', type=str, metavar="COOKIES_PATH",
         default=argparse.SUPPRESS,
-        help='Path to Netscape formatted cookie file.'
+        help='Path to Netscape formatted cookies file.'
     )
     monitor_parser.add_argument('-q', '--max-video-quality', action='store',
         default=argparse.SUPPRESS, type=int,
@@ -156,10 +156,10 @@ merging of streams has been successful. Only useful for troubleshooting.'
         type=str, metavar="YOUTUBE_VIDEO_URL",
         help='Youtube video stream URL to download.'
     )
-    download_parser.add_argument('--cookie',
-        action='store', type=str, metavar="COOKIE_PATH",
+    download_parser.add_argument('--cookies',
+        action='store', type=str, metavar="COOKIES_PATH",
         default=argparse.SUPPRESS,
-        help='Path to Netscape formatted cookie file.'
+        help='Path to Netscape formatted cookies file.'
     )
     download_parser.add_argument('-q', '--max-video-quality',
         action='store', type=int,
@@ -389,7 +389,7 @@ def _get_target_params(
         "ignore_quality_change": config.getboolean(sub_cmd, "ignore_quality_change", vars=args),
         "hooks": get_hooks_for_section(sub_cmd, config, "_command"),
         "webhooks": get_hooks_for_section(sub_cmd, config, "_webhook"),
-        "cookie": config.get(sub_cmd, "cookie", vars=args, fallback=None),
+        "cookies": config.get(sub_cmd, "cookies", vars=args, fallback=None),
         "filters": {
             "allow_regex": None,
             "block_regex": None
@@ -428,8 +428,8 @@ def _get_target_params(
             params["channel_name"] = config.get(
                 section, "channel_name", vars=args, fallback=None
             )
-            params["cookie"] = config.get(
-                section, "cookie", vars=args, fallback=None
+            params["cookies"] = config.get(
+                section, "cookies", vars=args, fallback=None
             )
             # Use the value from monitor section if missing
             params["scan_delay"] = config.getfloat(
@@ -484,7 +484,7 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
     scan_delay = args["scan_delay"]
 
     session = YoutubeUrllibSession(
-        cookie_path=args.get("cookie"),
+        cookiefile_path=args.get("cookies"),
         notifier=NOTIFIER
     )
 
@@ -630,7 +630,7 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
 
 def download_mode(config: ConfigParser, args: Dict[str, Any]):
     session = YoutubeUrllibSession(
-        cookie_path=args.get("cookie"), notifier=NOTIFIER
+        cookiefile_path=args.get("cookies"), notifier=NOTIFIER
     )
 
     ls = YoutubeLiveStream(
@@ -881,7 +881,7 @@ def main():
         args["channel_name"] = channel_name
         args["scan_delay"] = params.get("scan_delay")
         args["hooks"] = params.get("hooks")
-        args["cookie"] = params.get("cookie")
+        args["cookies"] = params.get("cookies")
         args["skip_download"] = params.get("skip_download")
         args["ignore_quality_change"] = params.get("ignore_quality_change")
         args["filters"] = params.get("filters", {})
@@ -911,7 +911,7 @@ def main():
         )
         URL = args.get("URL", "")  # pass empty string for get_video_id()
         args["hooks"] = get_hooks_for_section(sub_cmd, config, "_command")
-        args["cookie"] = config.get(sub_cmd, "cookie", vars=args, fallback=None)
+        args["cookies"] = config.get(sub_cmd, "cookies", vars=args, fallback=None)
         args["ignore_quality_change"] = config.getboolean(
             sub_cmd, "ignore_quality_change", vars=args, fallback=False)
 
@@ -1007,8 +1007,8 @@ def main():
         print("Wrong sub-command. Exiting.")
         return
 
-    if "cookiepath" not in ydl_opts and args.get("cookie") is not None:
-        ydl_opts["cookiepath"] = args.get("cookie")
+    if "cookiefile" not in ydl_opts and args.get("cookies") is not None:
+        ydl_opts["cookiefile"] = args.get("cookies")
 
     error = 0
     try:
