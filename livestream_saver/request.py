@@ -36,11 +36,11 @@ class YoutubeUrllibSession:
     """
     Keep cookies in memory for reuse or update.
     """
-    def __init__(self, cookie_path=None, notifier=None):
+    def __init__(self, cookiefile_path=None, notifier=None):
         # Hack to only warn user once after first validity check
-        self.user_supplied_cookies = 1 if cookie_path else 0
-        self.cookie_path = cookie_path
-        self.cookie_jar = get_cookie(cookie_path)
+        self.user_supplied_cookies = 1 if cookiefile_path else 0
+        self.cookiefile_path = cookiefile_path
+        self.cookie_jar = get_cookie(cookiefile_path)
         # TODO add proxies
         # TODO could use fake-useragent package here for an up-to-date string
         self.headers = {
