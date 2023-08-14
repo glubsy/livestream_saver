@@ -2,7 +2,7 @@ ydl_opts = {
     # Stream selection format.
     # 360p video + AAC 128kpbs audio, 
     # otherwise fallback to "best" according to yt-dlp's logic
-    'format': '134+140/mp4+m4a/bestvideo+bestaudio',
+    'format': 'mp4+m4a/bestvideo+bestaudio',
     
     # Path to your cookies (this is always updated from livestream_saver's --cookies argument)
     # 'cookiefile': "",
