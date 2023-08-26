@@ -158,7 +158,7 @@ class WebHook():
             method="POST"
         )
         try:
-            with urlopen(req) as res:
+            with urlopen(req, timeout=10.0) as res:
                 logger.debug(f"Response status: {res.status}")
         except HTTPError as e:
             logger.warning(f"Error calling webhook: {e}")

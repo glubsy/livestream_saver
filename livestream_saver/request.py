@@ -146,7 +146,7 @@ class YoutubeUrllibSession:
         req = Request('https://www.youtube.com/', headers=self.headers)
         self.cookie_jar.add_cookie_header(req)
 
-        res = urlopen(req)
+        res = urlopen(req, timeout=20.0)
 
         log.debug(f"Initial req header items: {req.header_items()}")
         log.debug(f"Initial res headers: {res.headers}")
@@ -359,7 +359,7 @@ class YoutubeUrllibSession:
         Return an HTML page from a request as str.
         Also update cookies in cookie jar if necessary.
         """
-        with urlopen(req) as res:
+        with urlopen(req, timeout=20.0) as res:
             status = res.status
 
             if status >= 204:
