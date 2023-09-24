@@ -210,7 +210,7 @@ class PathURL(BaseURL):
         return self + f"/sq/{seg_num}"
 
 
-class YoutubeLiveStream():
+class YoutubeLiveStream:
     def __init__(
         self,
         video_id: str,
@@ -399,6 +399,7 @@ class YoutubeLiveStream():
         long_wait = 25.0  # minutes
         while not download_wanted:
             try:
+                self.status = Status.OFFLINE
                 self.update_status()
                 self.log.debug(f"Status is: {self.status}.")
 
@@ -547,8 +548,8 @@ class YoutubeLiveStream():
         self._embed_html = pytube.request.get(url=self.embed_url)
         return self._embed_html
 
-    def get_info(self, client="android", update=False) -> Dict[str, Any]:
-        if self._json and not update:
+    def get_info(self, force_update=False, client="android") -> Dict[str, Any]:
+        if self._json and not force_update:
             return self._json
 
         json = {}
@@ -947,11 +948,11 @@ class YoutubeLiveStream():
 
         self.is_live()
         if not self.skip_download:
-            self.log.info("Stream seems to be viewed live. Good.") \
-            if self.status & Status.VIEWED_LIVE else \
+            if self.status & Status.VIEWED_LIVE:
+                self.log.info("Stream seems to be viewed live. Good.")
+            else:
                 self.log.warning(
-                    "Stream is not being viewed live. This might not work!"
-                )
+                    "Stream is not being viewed live. This might not work!")
 
         # Check if video is indeed available through its reported status.
         playabilityStatus = _json.get('playabilityStatus', {})
