@@ -133,6 +133,14 @@ class YoutubeUrllibSession:
             f'{time_now} {self._SAPISID} {origin}'.encode('utf-8')).hexdigest()
         return f'SAPISIDHASH {time_now}_{sapisidhash}'
 
+    def _set_cookie(self, domain, name, value, expire_time=None, port=None,
+                    path='/', secure=False, discard=False, rest={}, **kwargs):
+        cookie = http.cookiejar.Cookie(
+            0, name, value, port, port is not None, domain, True,
+            domain.startswith('.'), path, True, secure, expire_time,
+            discard, None, None, rest)
+        self.cookie_jar.set_cookie(cookie)
+
     def _initialize_consent(self):
         """
         Set a consent cookie if not yet present in the cookie jar, and in the
@@ -165,40 +173,47 @@ class YoutubeUrllibSession:
 
         if cookies.get('__Secure-3PSID'):
             return
-        consent_id = None
-        consent = cookies.get('CONSENT')
-        if consent:
-            if 'YES' in consent.value:
-                return
-            consent_id = re.search(r'PENDING\+(\d+)', consent.value)
-        if not consent_id:
-            consent_id = randint(100, 999)
-        else:
-            # FIXME might be best to just force a random number here instead?
-            consent_id = consent_id.group(1)
-        domain = '.youtube.com'
-        cookie = http.cookiejar.Cookie(
-                        0, # version
-                        'CONSENT', # name
-                        'YES+cb.20210328-17-p0.en+F+%s' % consent_id, # value
-                        None, # port
-                        False, # port_specified
-                        domain, # domain
-                        True, # domain_specified
-                        domain.startswith('.'), # domain_initial_dot
-                        '/', # path
-                        True, # path_specified
-                        False, # secure
-                        None, # expires
-                        False, # discard
-                        None, # comment
-                        None, # comment_url
-                        {} # rest
-                    )
+        
+        # from yt-dlp
+        socs = cookies.get('SOCS')
+        if socs and not socs.value.startswith('CAA'):  # not consented
+            return
+        self._set_cookie('.youtube.com', 'SOCS', 'CAI', secure=True)  # accept all (required for mixes)
 
-        if log.isEnabledFor(logging.DEBUG):
-            log.debug(f"Setting consent cookie: {cookie}")
-        self.cookie_jar.set_cookie(cookie)
+        # Might be obsolete now 20230924
+        # consent_id = None
+        # consent = cookies.get('CONSENT')
+        # if consent:
+        #     if 'YES' in consent.value:
+        #         return
+        #     consent_id = re.search(r'PENDING\+(\d+)', consent.value)
+        # if not consent_id:
+        #     consent_id = randint(100, 999)
+        # else:
+        #     # FIXME might be best to just force a random number here instead?
+        #     consent_id = consent_id.group(1)
+        # domain = '.youtube.com'
+        # cookie = http.cookiejar.Cookie(
+        #                 0, # version
+        #                 'CONSENT', # name
+        #                 'YES+cb.20210328-17-p0.en+F+%s' % consent_id, # value
+        #                 None, # port
+        #                 False, # port_specified
+        #                 domain, # domain
+        #                 True, # domain_specified
+        #                 domain.startswith('.'), # domain_initial_dot
+        #                 '/', # path
+        #                 True, # path_specified
+        #                 True, # secure
+        #                 None, # expires
+        #                 False, # discard
+        #                 None, # comment
+        #                 None, # comment_url
+        #                 {} # rest
+        #             )
+        # if log.isEnabledFor(logging.DEBUG):
+        #     log.debug(f"Setting consent cookie: {cookie}")
+        # self.cookie_jar.set_cookie(cookie)
 
         if self.cookie_jar.filename:
             self.cookie_jar.save(ignore_expires=True)
