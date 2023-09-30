@@ -398,8 +398,8 @@ class YoutubeLiveStream:
         # download, until the stream goes offline.
         long_wait = 25.0  # minutes
         while not download_wanted:
+            self.status = Status.OFFLINE
             try:
-                self.status = Status.OFFLINE
                 self.update_status()
                 self.log.debug(f"Status is: {self.status}.")
 
@@ -418,10 +418,16 @@ class YoutubeLiveStream:
                 exceptions.UnplayableException
             ) as e:
                 self.log.warning(e)
+                if not (Status.LIVE in self.status):
+                    self.log.info("Stream is not live anymore.")
+                    break
                 util.wait_block(long_wait)
                 continue
             except exceptions.OutdatedAppException as e:
                 self.log.warning(f"Outdated client error. Retrying shortly...")
+                if not (Status.LIVE in self.status):
+                    self.log.info("Stream is not live anymore.")
+                    break
                 util.wait_block(2)
                 continue
             except Exception as e:
@@ -491,7 +497,7 @@ class YoutubeLiveStream:
         # is actually still live.
 
         isLive = self.get_info().get('videoDetails', {}).get('isLive')
-        if isLive is not None and isLive is True:
+        if isLive is True:
             self.status |= Status.LIVE
         else:
             self.status &= ~Status.LIVE
