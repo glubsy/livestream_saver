@@ -214,11 +214,11 @@ class YoutubeLiveStream:
     def __init__(
         self,
         video_id: str,
-        output_dir: Path,
         session: YoutubeUrllibSession,
         notifier: NotificationDispatcher,
         url: Optional[str] = None,
         max_video_quality: Optional[str] = None,
+        output_dir: Optional[Path] = None,
         hooks: Dict = {},
         skip_download = False,
         filters: Dict[str, re.Pattern] = {},
@@ -284,20 +284,25 @@ class YoutubeLiveStream:
         self.use_ytdl = use_ytdl
         self.ytdl_opts = ytdl_opts
 
-        self.output_dir = output_dir
-        if not self.output_dir.exists():
-            util.create_output_dir(
-                output_dir=output_dir, video_id=None
-            )
+        if use_ytdl and output_dir is not None:
+            if not output_dir.exists():
+                self.output_dir = util.create_output_dir(
+                    output_dir=output_dir, video_id=None
+                )
 
         if self.ytdl_opts is not None:
-            self.ytdl_opts["outtmpl"] = str(
-                self.output_dir / self.ytdl_opts["outtmpl"]
-            )
+            if paths := self.ytdl_opts.get("paths"):
+                if output_dir and str(output_dir) != '.':
+                    paths.update({"home": str(output_dir)})
+                elif home := paths.get("home"):
+                    output_dir = Path(home)
+        if not output_dir:
+            output_dir = Path()
 
-        self.log = self.setup_logger(self.output_dir, log_level)
+        self.log = self.setup_logger(output_dir, log_level)
         self.notifier = notifier
 
+        self.output_dir = output_dir
         self.video_outpath = self.output_dir / 'vid'
         self.audio_outpath = self.output_dir / 'aud'
 

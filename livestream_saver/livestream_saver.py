@@ -87,7 +87,7 @@ Either a full youtube URL, /channel/ID, or /c/name format.'
     monitor_parser.add_argument('-o', '--output-dir', action='store',
         default=argparse.SUPPRESS, type=str,
         help='Output directory where to save channel data.'\
-            f' (Default: {config.get("monitor", "output_dir")})'
+            f' (Default: {config.get("monitor", "output_dir", fallback=getcwd())})'
     )
     monitor_parser.add_argument('--channel-name', action='store',
         default=argparse.SUPPRESS, type=str,
@@ -172,7 +172,7 @@ merging of streams has been successful. Only useful for troubleshooting.'
         action='store', type=str,
         default=argparse.SUPPRESS,
         help='Output directory where to write downloaded chunks.'\
-              f' (Default: {config.get("download", "output_dir")})'
+              f' (Default: {config.get("download", "output_dir", fallback=getcwd())})'
     )
     download_group = download_parser.add_mutually_exclusive_group()
     download_group.add_argument('-d', '--delete-source',
@@ -540,7 +540,11 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
         log.info(
             f"Found live: {video_id}. Title: \"{target_live.get('title')}\".")
 
-        sub_output_dir = args["output_dir"] / f"stream_capture_{video_id}"
+        if output_dir := args.get("output_dir"):
+            sub_output_dir = output_dir / f"stream_capture_{video_id}"
+        else:
+            sub_output_dir = None
+
         skip_download = args.get("skip_download", False)
         ls = YoutubeLiveStream(
             video_id=video_id,
@@ -583,7 +587,7 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
                 message_text=f"Hooks scheduled to run were: {args.get('hooks')}"
             )
             # We have already waited on the current stream for status update
-            # Add a small wait to read debug output in case of network errors 
+            # Add a small wait to read debug output in case of network errors
             # cf issue #76
             util.wait_block(min_minutes=0.5, variance=0.1)
             continue
@@ -751,7 +755,6 @@ def init_config() -> ConfigParser:
     CONFIG_DEFAULTS = {
         "config_dir": str(config_dir),
         "config_file": config_dir / conf_filename,
-        "output_dir": getcwd(),
         "log_level": "INFO",
 
         "delete_source": "False",
@@ -894,11 +897,14 @@ def main():
 
         # We need to setup output dir before instantiating downloads
         # because we use it to store our logs
-        output_dir = Path(config.get("monitor", "output_dir", vars=args))
-        makedirs(output_dir, exist_ok=True)
-        args["output_dir"] = output_dir
+        output_dir: Optional[str] = config.get(
+            "monitor", "output_dir", vars=args, fallback=None)
+        output_path = Path(output_dir) if output_dir else Path()
 
-        logfile_path = output_dir / f'monitor_{channel_id}.log'
+        makedirs(output_path, exist_ok=True)
+        args["output_dir"] = Path(output_dir) if output_dir else None
+
+        logfile_path = output_path / f'monitor_{channel_id}.log'
 
         log = setup_logger(
             output_filepath=logfile_path,
@@ -907,10 +913,8 @@ def main():
         log.debug(f"Regex filters {[f'{k}: {v}' for k, v in args['filters'].items()]}")
         args["logger"] = log
     elif sub_cmd  == "download":
-        output_dir = Path(
-            config.get(
-                "download", "output_dir", vars=args, fallback=getcwd()
-            )
+        output_dir = config.get(
+            "download", "output_dir", vars=args, fallback=None
         )
         URL = args.get("URL", "")  # pass empty string for get_video_id()
         args["hooks"] = get_hooks_for_section(sub_cmd, config, "_command")
@@ -923,10 +927,19 @@ def main():
 
         video_id = extract.get_video_id(url=URL)
         args["video_id"] = video_id
-        output_dir = util.create_output_dir(
-            output_dir=output_dir, video_id=video_id
-        ) if not use_ytdl else Path()
-        args["output_dir"] = output_dir
+
+
+        output_path = Path(output_dir) if output_dir else None
+        args["output_dir"] = output_path
+
+        if not use_ytdl:
+            output_dir = util.create_output_dir(
+                output_dir=output_path, video_id=video_id)
+        else:
+            # We don't want a stream_capture_xxxx directory, but we need to
+            # ensure output path exists because we create the download log now
+            output_dir = util.create_output_dir(
+                output_dir=output_path, video_id=None)
 
         logfile_path = output_dir / f"download_{video_id}.log"
         log = setup_logger(

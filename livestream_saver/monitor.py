@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class YoutubeChannel:
     def __init__(self, URL, channel_id, session, notifier,
-        output_dir: Path = Path(), hooks={}
+        output_dir: Optional[Path]=None, hooks={}
     ):
         self.session = session
         self.url = URL
@@ -44,6 +44,8 @@ class YoutubeChannel:
         self.notifier = notifier
         self.hooks = hooks
         self._hooked_videos = []
+        if not output_dir:
+            output_dir = Path().cwd()
         self.output_dir = output_dir
         self.log = logger
 
