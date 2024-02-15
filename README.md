@@ -12,9 +12,7 @@ The download feature is half-broken (see issue [#63](https://github.com/glubsy/l
 
 As a result, many native config options (and some hooks) are currently **ignored**.
 
-The `yt_dlp_conf.py` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples)
-
-So you might want to edit this file too!
+The `ytdlp_config.json` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited there, otherwise the default provided template will be used as fallback.
 
 
 # Monitoring a channel

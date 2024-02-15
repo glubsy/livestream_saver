@@ -3,14 +3,13 @@ from os import sep, makedirs, getcwd, environ, getenv
 from sys import platform
 from sys import argv
 import argparse
+import json
 import logging
 from pathlib import Path
 from configparser import ConfigParser, ExtendedInterpolation
 import traceback
 import re
 from shlex import split
-
-from yt_dlp_conf import ydl_opts
 
 from livestream_saver import extract, util
 import livestream_saver
@@ -27,8 +26,15 @@ log.setLevel(logging.DEBUG)
 
 NOTIFIER = NotificationDispatcher()
 
-# HACK forcing use of yt-dlp for now
+
+# HACK forcing use of yt-dlp for the time being.
 use_ytdl = True
+ytdlp_conf = "ytdlp_config.json"
+ytdlp_conf_file = Path().home() / ".config" / "livestream_saver" / ytdlp_conf
+if ytdlp_conf_file.exists():
+    log.warning(f"{ytdlp_conf_file} not found. Falling back to using template.")
+    ytdlp_conf_file = Path(__file__).parent.parent.absolute() / "ytdlp_config.json"
+
 
 def parse_args(config) -> argparse.Namespace:
     parent_parser = argparse.ArgumentParser(
@@ -562,7 +568,7 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
             log_level=config.get("monitor", "log_level", vars=args),
             initial_metadata=target_live,
             use_ytdl=use_ytdl,
-            ytdl_opts=ydl_opts.copy()
+            ytdl_opts=args["ytdlp_config"]
         )
 
         # ls.get_metadata(force=True)
@@ -659,7 +665,7 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
             "download", "ignore_quality_change", vars=args, fallback=False),
         log_level=config.get("download", "log_level", vars=args),
         use_ytdl=use_ytdl,
-        ytdl_opts=ydl_opts.copy()
+        ytdl_opts=args["ytdlp_config"]
     )
 
     ls.trigger_hooks("on_download_initiated")
@@ -746,6 +752,7 @@ def init_config() -> ConfigParser:
     """Get a ConfigParser with sane default values."""
     # Create user config directory if it doesn't already exist
     conf_filename = "livestream_saver.cfg"
+
     if platform == "win32":
         config_dir = Path.home() / "livestream_saver.cfg"
     else:
@@ -846,6 +853,15 @@ def get_from_env(lookup_keys: Iterable[str]) -> Optional[Dict]:
         return env_vars
 
 
+def load_ytldp_config(path: Path) -> Dict:
+    """
+    Remove comments from JSON file and load as mapping.
+    """
+    with open(path, "r") as f:
+        return json.loads(
+            '\n'.join(row for row in f if not row.lstrip().startswith("//")))
+
+
 def main():
     config: ConfigParser = init_config()
 
@@ -859,6 +875,9 @@ def main():
     # We'll need to mutate args further down
     args: Dict[str, Any] = vars(parse_args(config))
     update_config(config, args)
+
+    # Load
+    args["ytdlp_config"] = load_ytldp_config(ytdlp_conf_file)
 
     # DEBUG
     # for section in config.sections():
@@ -1023,8 +1042,8 @@ def main():
         print("Wrong sub-command. Exiting.")
         return
 
-    if "cookiefile" not in ydl_opts and args.get("cookies") is not None:
-        ydl_opts["cookiefile"] = args.get("cookies")
+    if "cookiefile" not in args["ytdlp_config"] and args.get("cookies") is not None:
+        args["ytdlp_config"]["cookiefile"] = args.get("cookies")
 
     error = 0
     try:
