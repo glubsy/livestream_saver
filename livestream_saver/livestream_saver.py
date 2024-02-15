@@ -14,7 +14,7 @@ from yt_dlp_conf import ydl_opts
 
 from livestream_saver import extract, util
 import livestream_saver
-from livestream_saver.monitor import YoutubeChannel
+from livestream_saver.monitor import YoutubeChannel, VideoPost
 from livestream_saver.download import YoutubeLiveStream
 from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import get_channel_id, event_props

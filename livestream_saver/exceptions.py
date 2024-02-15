@@ -71,3 +71,9 @@ class ForbiddenSegmentException(Exception):
 
 class TabNotFound(Exception):
     pass
+
+class UnexpectedLength(Exception):
+    """
+    Happens when user gets logged out and less videos are returned for a given tab.
+    """
+    pass
