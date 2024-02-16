@@ -1,6 +1,7 @@
 {
     // Stream selection format.
-    // 360p video + AAC 128kpbs audio, 
+    // For example "134+140/mp4+m4a/bestvideo+bestaudio"
+    // would prefer 360p video + AAC 128kpbs audio to be muxed with ffmpeg, 
     // otherwise fallback to "best" according to yt-dlp's logic
     "format": "mp4+m4a/bestvideo+bestaudio",
     
