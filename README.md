@@ -243,6 +243,14 @@ livestream_saver.py test-notification --log DEBUG
 ```
 Note that only the `webhook_url` and `webhook_data` key/value pairs from the `[webhook]` section will be loaded and tested.
 
+
+# Known issue
+
+Youtube may log you out if you actively use the session from which you have exported the cookies (in your web browser). See [issue and workarounds here](https://github.com/yt-dlp/yt-dlp/issues/8227).
+
+As of 2024/02/15 simply exporting cookies from an "incognito" session seems to reduce the chances of experiencing this issue.
+
+
 # Notes:
 
 This is beta software. It should work, but in case it doesn't, feel free to report issues. Or better yet, fix them yourself and submit a merge request. Keep in mind that these mega corporations will often attempt to break our things.
