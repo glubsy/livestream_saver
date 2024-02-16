@@ -31,7 +31,7 @@ NOTIFIER = NotificationDispatcher()
 use_ytdl = True
 ytdlp_conf = "ytdlp_config.json"
 ytdlp_conf_file = Path().home() / ".config" / "livestream_saver" / ytdlp_conf
-if ytdlp_conf_file.exists():
+if not ytdlp_conf_file.exists():
     log.warning(f"{ytdlp_conf_file} not found. Falling back to using template.")
     ytdlp_conf_file = Path(__file__).parent.parent.absolute() / "ytdlp_config.json"
 
