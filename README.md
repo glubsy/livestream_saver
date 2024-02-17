@@ -144,6 +144,8 @@ pip3 install -r requirements.txt
 
 If you prefer to build and use a Docker container, look at the Readme inside the `docker` directory.
 
+Docker image also available at https://hub.docker.com/r/glubsy/livestream_saver (can also be referenced in docker-compose)
+
 # Configuration
 
 The template config file `livestream_saver.cfg` is provided as an example. The default path should be `$HOME/.config/livestream_saver/livestream_saver.cfg` (On Windows, it is read directly from your base user directory).
