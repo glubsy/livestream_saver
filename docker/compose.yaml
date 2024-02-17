@@ -1,0 +1,36 @@
+
+x-defaults:
+  &defaults
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: livestream_saver:latest
+  restart: always
+  volumes:
+    - type: bind
+      # This path is relative to this here file
+      source: ../downloads
+      target: /downloads
+    - type: bind
+      source: ${HOME}/.config/livestream_saver
+      target: /root/.config/livestream_saver
+
+services:
+  # Each service defines monitoring of a Youtube channel
+  # Here are some examples provided by default
+  Panko:
+    <<: *defaults
+    command: monitor -s Panko
+  Bijou:
+    <<: *defaults
+    command: monitor -s Bijou
+  Fuwamoco:
+    <<: *defaults
+    command: monitor -s Fuwamoco
+  Prune:
+    <<: *defaults
+    command: monitor -s Prune
+  # You can also provide the URL to monitor as argument
+  Gura:
+    <<: *defaults
+    command: monitor https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g

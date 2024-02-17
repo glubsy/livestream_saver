@@ -29,11 +29,6 @@ NOTIFIER = NotificationDispatcher()
 
 # HACK forcing use of yt-dlp for the time being.
 use_ytdl = True
-ytdlp_conf = "ytdlp_config.json"
-ytdlp_conf_file = Path().home() / ".config" / "livestream_saver" / ytdlp_conf
-if not ytdlp_conf_file.exists():
-    log.warning(f"{ytdlp_conf_file} not found. Falling back to using template.")
-    ytdlp_conf_file = Path(__file__).parent.parent.absolute() / "ytdlp_config.json"
 
 
 def parse_args(config) -> argparse.Namespace:
@@ -754,15 +749,19 @@ def init_config() -> ConfigParser:
     conf_filename = "livestream_saver.cfg"
 
     if platform == "win32":
-        config_dir = Path.home() / "livestream_saver.cfg"
+        config_dir = Path.home()
+    elif env_path := environ.get("LSS_CONFIG_DIR"):
+        config_dir = Path(env_path)
     else:
-        config_dir = Path.home() / ".config/livestream_saver"
+        config_dir = Path.home() / ".config" / "livestream_saver"
         # config_dir.mkdir(exist_ok=True)
 
     CONFIG_DEFAULTS = {
         "config_dir": str(config_dir),
         "config_file": config_dir / conf_filename,
         "log_level": "INFO",
+        "output_dir": environ.get("LSS_OUTPUT_DIR"),
+        "cookies": environ.get("LSS_COOKIES_FILE"),
 
         "delete_source": "False",
         "keep_concat": "False",
@@ -853,7 +852,7 @@ def get_from_env(lookup_keys: Iterable[str]) -> Optional[Dict]:
         return env_vars
 
 
-def load_ytldp_config(path: Path) -> Dict:
+def load_commented_json(path: Path) -> Dict:
     """
     Remove comments from JSON file and load as mapping.
     """
@@ -867,7 +866,7 @@ def main():
 
     # Update "env" section with variables from env so that they can be
     # used in config via interpolation when loading the config file.
-    # For now we only look for the urls (with secret tokens).
+    # For now we only look for the urls (sometimes holding secret tokens).
     if found_vars := get_from_env(("webhook_url",)):
         env_vars = { "env": found_vars }
         config.read_dict(env_vars)
@@ -875,9 +874,6 @@ def main():
     # We'll need to mutate args further down
     args: Dict[str, Any] = vars(parse_args(config))
     update_config(config, args)
-
-    # Load
-    args["ytdlp_config"] = load_ytldp_config(ytdlp_conf_file)
 
     # DEBUG
     # for section in config.sections():
@@ -893,6 +889,14 @@ def main():
 
     global log
     log_enabled(config, args, sub_cmd)
+
+    ytdlp_conf = "ytdlp_config.json"
+    config_dir = Path(config.get("DEFAULT", "config_dir"))
+    ytdlp_conf_file = config_dir / ytdlp_conf
+    if not ytdlp_conf_file.exists():
+        log.warning(f"{ytdlp_conf_file} not found. Falling back to using template.")
+        ytdlp_conf_file = Path(__file__).parent.parent.absolute() / ytdlp_conf
+    args["ytdlp_config"] = load_commented_json(ytdlp_conf_file)
 
     logfile_path = Path("")  # cwd by default
     if sub_cmd == "monitor":

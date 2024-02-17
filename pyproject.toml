@@ -1,0 +1,45 @@
+[project]
+name = "livestream_saver"
+version = "0.0.1"
+description = "Monitor Youtube channels to download live streams"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {file = "LICENSE"}
+keywords = ["youtube", "python"]
+authors = [
+  {name = "glubsy", email = "glubsy@users.noreply.github.com" }
+]
+
+# Classifiers help users find your project by categorizing it.
+#
+# For a list of valid classifiers, see https://pypi.org/classifiers/
+classifiers = [  # Optional
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: End Users/Desktop",
+  "Topic :: Multimedia :: Video",
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3 :: Only",
+]
+
+dependencies = [
+    "pytube == 10.9.2"
+    "Pillow"
+    "git+https://github.com/yt-dlp/yt-dlp"
+]
+
+[project.urls]  # Optional
+"Homepage" = "https://github.com/glubsy/livestream_saver"
+"Bug Reports" = "https://github.com/glubsy/livestream_saver/issues"
+"Source" = "https://github.com/glubsy/livestream_saver"
+
+
+[build-system]
+requires = ["setuptools>=43.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
