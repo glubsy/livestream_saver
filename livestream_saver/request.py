@@ -49,6 +49,7 @@ class YoutubeUrllibSession:
         }
         self._initialize_consent()
         self._logged_in = False
+        self.was_logged_in = False
         self.notify_h = notifier
         self.ytcfg = None
         self._SAPISID: Union[str, bool, None] = None
@@ -335,6 +336,7 @@ class YoutubeUrllibSession:
             )
 
         if logged_out and self._logged_in == True:
+            self.was_logged_in = True
             log.critical(
                 "We are not logged in anymore! Are cookies still valid?"
             )

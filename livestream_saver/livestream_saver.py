@@ -3,6 +3,7 @@ from os import sep, makedirs, getcwd, environ, getenv
 from sys import platform
 from sys import argv
 import argparse
+import json
 import logging
 from pathlib import Path
 from configparser import ConfigParser, ExtendedInterpolation
@@ -10,11 +11,9 @@ import traceback
 import re
 from shlex import split
 
-from yt_dlp_conf import ydl_opts
-
 from livestream_saver import extract, util
 import livestream_saver
-from livestream_saver.monitor import YoutubeChannel
+from livestream_saver.monitor import YoutubeChannel, VideoPost
 from livestream_saver.download import YoutubeLiveStream
 from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import get_channel_id, event_props
@@ -27,8 +26,10 @@ log.setLevel(logging.DEBUG)
 
 NOTIFIER = NotificationDispatcher()
 
-# HACK forcing use of yt-dlp for now
+
+# HACK forcing use of yt-dlp for the time being.
 use_ytdl = True
+
 
 def parse_args(config) -> argparse.Namespace:
     parent_parser = argparse.ArgumentParser(
@@ -562,7 +563,7 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
             log_level=config.get("monitor", "log_level", vars=args),
             initial_metadata=target_live,
             use_ytdl=use_ytdl,
-            ytdl_opts=ydl_opts.copy()
+            ytdl_opts=args["ytdlp_config"]
         )
 
         # ls.get_metadata(force=True)
@@ -659,7 +660,7 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
             "download", "ignore_quality_change", vars=args, fallback=False),
         log_level=config.get("download", "log_level", vars=args),
         use_ytdl=use_ytdl,
-        ytdl_opts=ydl_opts.copy()
+        ytdl_opts=args["ytdlp_config"]
     )
 
     ls.trigger_hooks("on_download_initiated")
@@ -746,16 +747,21 @@ def init_config() -> ConfigParser:
     """Get a ConfigParser with sane default values."""
     # Create user config directory if it doesn't already exist
     conf_filename = "livestream_saver.cfg"
+
     if platform == "win32":
-        config_dir = Path.home() / "livestream_saver.cfg"
+        config_dir = Path.home()
+    elif env_path := environ.get("LSS_CONFIG_DIR"):
+        config_dir = Path(env_path)
     else:
-        config_dir = Path.home() / ".config/livestream_saver"
+        config_dir = Path.home() / ".config" / "livestream_saver"
         # config_dir.mkdir(exist_ok=True)
 
     CONFIG_DEFAULTS = {
         "config_dir": str(config_dir),
         "config_file": config_dir / conf_filename,
         "log_level": "INFO",
+        "output_dir": environ.get("LSS_OUTPUT_DIR"),
+        "cookies": environ.get("LSS_COOKIES_FILE"),
 
         "delete_source": "False",
         "keep_concat": "False",
@@ -846,12 +852,21 @@ def get_from_env(lookup_keys: Iterable[str]) -> Optional[Dict]:
         return env_vars
 
 
+def load_commented_json(path: Path) -> Dict:
+    """
+    Remove comments from JSON file and load as mapping.
+    """
+    with open(path, "r") as f:
+        return json.loads(
+            '\n'.join(row for row in f if not row.lstrip().startswith("//")))
+
+
 def main():
     config: ConfigParser = init_config()
 
     # Update "env" section with variables from env so that they can be
     # used in config via interpolation when loading the config file.
-    # For now we only look for the urls (with secret tokens).
+    # For now we only look for the urls (sometimes holding secret tokens).
     if found_vars := get_from_env(("webhook_url",)):
         env_vars = { "env": found_vars }
         config.read_dict(env_vars)
@@ -874,6 +889,14 @@ def main():
 
     global log
     log_enabled(config, args, sub_cmd)
+
+    ytdlp_conf = "ytdlp_config.json"
+    config_dir = Path(config.get("DEFAULT", "config_dir"))
+    ytdlp_conf_file = config_dir / ytdlp_conf
+    if not ytdlp_conf_file.exists():
+        log.warning(f"{ytdlp_conf_file} not found. Falling back to using template.")
+        ytdlp_conf_file = Path(__file__).parent.parent.absolute() / ytdlp_conf
+    args["ytdlp_config"] = load_commented_json(ytdlp_conf_file)
 
     logfile_path = Path("")  # cwd by default
     if sub_cmd == "monitor":
@@ -1023,8 +1046,8 @@ def main():
         print("Wrong sub-command. Exiting.")
         return
 
-    if "cookiefile" not in ydl_opts and args.get("cookies") is not None:
-        ydl_opts["cookiefile"] = args.get("cookies")
+    if "cookiefile" not in args["ytdlp_config"] and args.get("cookies") is not None:
+        args["ytdlp_config"]["cookiefile"] = args.get("cookies")
 
     error = 0
     try:

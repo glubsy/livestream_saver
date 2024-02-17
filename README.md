@@ -6,15 +6,15 @@ Cookies (in Netscape format) are needed to access membership-only videos as well
 The example config file `livestream_saver.cfg` is optional and is meant as a convenience to override the default values.
 
 
-# WARNING
+# NOTICE
 
-The download feature is half-broken (see issue [#63](https://github.com/glubsy/livestream_saver/issues/63)) so we rely on yt-dlp for the time being.
+The download feature is currently half-broken (see issue [#63](https://github.com/glubsy/livestream_saver/issues/63)) so we rely on yt-dlp for the time being.
 
-As a result, many native config options (and some hooks) are currently **ignored**.
+As a result, many native config file (and some hooks) are currently **ignored**.
 
-The `yt_dlp_conf.py` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples)
+The `ytdlp_config.json` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited there, otherwise the default provided template will be used as fallback.
 
-So you might want to edit this file too!
+This may be confusing but will be fixed soon (hopefully).
 
 
 # Monitoring a channel
@@ -140,10 +140,13 @@ pip3 install -r requirements.txt
 
 * If you don't want to use a venv (to avoid having to activate the venv everytime you need to start the program, with `source /path/to/venv/bin/activate`), you *could* install dependencies system-wide. Remember to use `sudo pip3` then.
 
+## Docker container
+
+If you prefer to build and use a Docker container, look at the Readme inside the `docker` directory.
 
 # Configuration
 
-The template config file `livestream_saver.cfg.template` is provided as an example. The default path should be `~/.config/livestream_saver/livestream_saver.cfg` (On Windows, it is read directly from your base user directory).
+The template config file `livestream_saver.cfg` is provided as an example. The default path should be `$HOME/.config/livestream_saver/livestream_saver.cfg` (On Windows, it is read directly from your base user directory).
 A lot of options can be overriden via command line arguments. See the --help message for details.
 
 A monitor section for a specific channel can be invoked from the CLI with `--section NAME` where `NAME` is the same string of characters from `[monitor NAME]` in the config file. This helps having one central config file.
@@ -244,6 +247,14 @@ You can send a test e-mail and a blank web hook notification with this sub-comma
 livestream_saver.py test-notification --log DEBUG
 ```
 Note that only the `webhook_url` and `webhook_data` key/value pairs from the `[webhook]` section will be loaded and tested.
+
+
+# Known issue
+
+Youtube may log you out if you actively use the session from which you have exported the cookies (in your web browser). See [issue and workarounds here](https://github.com/yt-dlp/yt-dlp/issues/8227).
+
+As of 2024/02/15 simply exporting cookies from an "incognito" session seems to reduce the chances of experiencing this issue.
+
 
 # Notes:
 

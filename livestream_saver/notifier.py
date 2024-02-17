@@ -210,7 +210,7 @@ class WebHookFactory():
         )
 
 
-class EmailHandler():
+class EmailHandler:
     """Handle email notifications."""
     def __init__(self):
         self.disabled = False
@@ -318,8 +318,8 @@ class EmailHandler():
     def _do_send_email(self, email):
         if self.disabled:
             return
-        if logger.isEnabledFor(logging.INFO):
-            logger.info(f"Sending email: {email}")
+        
+        logger.info(f"Sending email: {email}")
 
         context = create_default_context()
         server = SMTP(self.smtp_server, self.smtp_port)
@@ -346,7 +346,7 @@ class EmailHandler():
             logger.debug(f"Sent email {email.get('subject')}")
 
 
-class NotificationDispatcher():
+class NotificationDispatcher:
     """Singleton controller that acts as an interface to send various
     notifications as emails and webhooks."""
     def __init__(self) -> None:
@@ -370,10 +370,10 @@ class NotificationDispatcher():
         """Consummer thread."""
         while True:
             item = self.q.get()
-            if isinstance(item, EmailHandler):
-                self.email_handler._do_send_email(item)
-            elif isinstance(item, WebHook):
+            if isinstance(item, WebHook):
                 item.call_api()
+            else:
+                self.email_handler._do_send_email(item)
             self.q.task_done()
 
     def send_email(self, subject, message_text, attachments=[]):

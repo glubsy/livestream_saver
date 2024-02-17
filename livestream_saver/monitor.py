@@ -1,29 +1,112 @@
+from typing import Optional, Any, List, Dict
 from pathlib import Path
 import logging
-from typing import Optional, Any, List, Dict
+from dataclasses import dataclass, field
+
 from livestream_saver import extract
-from livestream_saver.exceptions import TabNotFound
+from livestream_saver.exceptions import TabNotFound, UnexpectedLength
 from livestream_saver.hooks import HookCommand
-from livestream_saver.notifier import WebHookFactory
+from livestream_saver.notifier import WebHookFactory, NotificationDispatcher
+from livestream_saver.request import YoutubeUrllibSession
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class VideoPost():
+    videoId: str = field(init=True)
+    title: str = field(init=False)
+    url: str = field(init=False)
+    thumbnail: dict = field(init=False, default_factory=dict)
+    isLiveNow: bool = field(init=False, default=False)
+    isLive: bool = field(init=False, default=False)
+    members_only: bool = field(init=False, default=False)
+    upcoming: bool = field(init=False, default=False)
+    startTime: Optional[str] = field(init=False, default=None)
+    download_metadata : dict = field(init=False, default_factory=dict)
+
+    def __repr__(self) -> str:
+        return self.videoId
+
+    def __hash__(self) -> int:
+        return hash(self.videoId)
+
+    def get(self, value, default=None) -> Any:
+        return getattr(self, value, default)
+
+    def __getitem__(self, value, default=None) -> Any:
+        return self.get(value, default)
+
+    @staticmethod
+    def from_post(post: Dict) -> Optional['VideoPost']:
+        if not (videoId := post.get('videoId')):
+            return None
+
+        video = VideoPost(videoId=videoId)
+        video.thumbnail = post.get('thumbnail', {})
+        video.isLiveNow = post.get('isLiveNow', False)
+        video.isLive = post.get('isLive', False)
+
+        badges = post.get('badges', [])
+        if len(badges) and isinstance(badges[0], dict):
+            label = badges[0].get("metadataBadgeRenderer", {}).get("label")
+            if label and "Members only" in label:
+                video.members_only = label
+
+        for _item in post.get('title', {}).get('runs', []):
+            if _item.get('text'): # assumes list with only one item
+                video.title = _item.get('text')
+
+        video.url = post.get('navigationEndpoint', {})\
+                .get('commandMetadata', {})\
+                .get('webCommandMetadata', {})\
+                .get('url')
+
+        if eventData := post.get('upcomingEventData', {}):
+            # we can safely assume it is "upcoming"
+            video.upcoming = True
+            video.startTime = eventData.get('startTime')
+
+        # Attempt to attach "live" and "upcoming" status from the response
+        for _item in post.get('thumbnailOverlays', []):
+            if status_renderer := _item.get('thumbnailOverlayTimeStatusRenderer', {}):
+                if style := status_renderer.get('style'):
+                    # This seems to be a decent indicator that it is currently LIVE
+                    if style == 'LIVE':
+                        video.isLiveNow = True
+                    # This might be redundant with upcomingEventData key
+                    elif style == 'UPCOMING':
+                        video.upcoming = True
+                if text := status_renderer.get('text'):
+                    if runs := text.get('runs', []):
+                        if len(runs) > 0 and runs[0].get('text') == 'LIVE':
+                            # This indicates that it should be live in the future
+                            video.isLive = True
+                break
+        # Another way to check if it is currently LIVE
+        for _item in post.get('badges', []):
+            if badge_renderer := _item.get('metadataBadgeRenderer', {}):
+                if badge_renderer.get('label') == "LIVE NOW":
+                    video.isLiveNow = True
+        return video
+
 
 
 class YoutubeChannel:
     def __init__(self, URL, channel_id, session, notifier,
         output_dir: Optional[Path]=None, hooks={}
     ):
-        self.session = session
+        self.session: YoutubeUrllibSession = session
         self.url = URL
         self._id = channel_id
         self.channel_name = "N/A"
 
-        self._home_videos = None
-        self._public_videos = None
-        self._upcoming_videos = None
-        self._public_streams = None
-        self._community_videos = None
-        self._membership_videos = None
+        self._home_videos: List[VideoPost] = None
+        self._public_videos: List[VideoPost] = None
+        self._upcoming_videos: List[VideoPost] = None
+        self._public_streams: List[VideoPost] = None
+        self._community_videos: List[VideoPost] = None
+        self._membership_videos: List[VideoPost] = None
 
         # Keep only one html page in memory at a time
         self._cached_html = None
@@ -41,7 +124,7 @@ class YoutubeChannel:
         # around the innertube API.
         self._endpoints: Optional[Dict] = None
 
-        self.notifier = notifier
+        self.notifier: NotificationDispatcher = notifier
         self.hooks = hooks
         self._hooked_videos = []
         if not output_dir:
@@ -172,7 +255,7 @@ class YoutubeChannel:
             self._cached_json_tab = tab_name
         return self._cached_json
 
-    def get_home_videos(self, update=False) -> List[Dict]:
+    def get_home_videos(self, update=False) -> List[VideoPost]:
         """
         Return the currently listed videos from the Home tab.
         Note that Upcoming videos might both get listed in Home and the Live
@@ -183,9 +266,10 @@ class YoutubeChannel:
         home_videos = []
         if update or self._home_videos is None:
             home_videos = get_videos_from_tab(
-                get_tabs_from_json(
-                    self.get_json_and_cache("Home", update=True)),
-                "Home"
+                tabtype="Home",
+                tabs=get_tabs_from_json(
+                    self.get_json_and_cache("Home", update=True)
+                )
             )
 
         # Occurs only the first time
@@ -216,7 +300,7 @@ class YoutubeChannel:
         self._home_videos = home_videos
         return self._home_videos
 
-    def get_public_videos(self, update=False) -> List[Dict]:
+    def get_public_videos(self, update=False) -> List[VideoPost]:
         """
         Return the currently listed videos from the Videos tab (VOD).
         Not super useful right now, but could be in the future if we ever wanted
@@ -225,9 +309,9 @@ class YoutubeChannel:
         public_videos = []
         if update or self._public_videos is None:
             public_videos = get_videos_from_tab(
-                get_tabs_from_json(
+                tabtype="Videos",
+                tabs=get_tabs_from_json(
                     self.get_json_and_cache("Videos", update=True)),
-                "Videos"
             )
 
         # Occurs only the first time
@@ -263,7 +347,7 @@ class YoutubeChannel:
         self._public_videos = public_videos
         return self._public_videos
 
-    def get_upcoming_videos(self, update=False) -> List[Dict]:
+    def get_upcoming_videos(self, update=False) -> List[VideoPost]:
         """
         Supposed to return upcoming Live Streams (or Premieres?),
         but the site will redirect to public videos if there is none found.
@@ -282,9 +366,9 @@ class YoutubeChannel:
                 # We can force update this one since it does not depend on any
                 # other cached data
                 upcoming_videos = get_videos_from_tab(
-                    get_tabs_from_json(
+                    tabtype="Videos",
+                    tabs=get_tabs_from_json(
                         self.get_json_and_cache("Upcoming", update=True)),
-                    "Videos"
                 )
             except Exception as e:
                 self.log.debug(
@@ -335,19 +419,19 @@ class YoutubeChannel:
         self._upcoming_videos = upcoming_videos
         return self._upcoming_videos
 
-    def get_public_streams(self, update=False) -> List[Dict]:
+    def get_public_streams(self, update=False) -> List[VideoPost]:
         """
         Return the currently listed videos from the Live tab.
         """
         public_streams = []
         if update or self._public_streams is None:
             public_streams = get_videos_from_tab(
-                get_tabs_from_json(
+                tabtype="Live",
+                tabs=get_tabs_from_json(
                     self.get_json_and_cache("Live", update=True)),
-                "Live"
             )
 
-        # Occurs on the first time
+        # Occurs only the first time
         if self._public_streams is None:
             logger.info(
                 "Currently listed public Live streams: {}\n{}".format(
@@ -380,13 +464,13 @@ class YoutubeChannel:
         self._public_streams = public_streams
         return self._public_streams
 
-    def get_community_videos(self, update=False) -> List[Dict]:
+    def get_community_videos(self, update=False) -> List[VideoPost]:
         community_videos = []
         if update or self._community_videos is None:
             community_videos = get_videos_from_tab(
-                get_tabs_from_json(
+                tabtype="Community",
+                tabs=get_tabs_from_json(
                     self.get_json_and_cache("Community", update=True)),
-                "Community"
             )
 
         # Occurs on the first time
@@ -400,6 +484,13 @@ class YoutubeChannel:
             for vid in community_videos:
                 if vid.get("upcoming"):
                     self.trigger_hook('on_upcoming_detected', vid)
+        
+        elif len(community_videos) < len(self._community_videos):
+            raise UnexpectedLength(
+                f"Number of returned Community video Ids is {len(community_videos)}"
+                f", while we previously got {len(self._community_videos)}"
+            )
+        
         else:
             known_ids = [v["videoId"] for v in self._community_videos]
             new_comm_videos = [
@@ -422,15 +513,17 @@ class YoutubeChannel:
         self._community_videos = community_videos
         return self._community_videos
 
-    def get_membership_videos(self, update=False) -> List[Dict]:
+    def get_membership_videos(self, update=False) -> List[VideoPost]:
         membership_videos = []
         if update or self._membership_videos is None:
             _json = self.get_json_and_cache("Membership", update=True)
             self.session.is_logged_out(_json)
             membership_videos = get_videos_from_tab(
-                get_tabs_from_json(_json), "Membership")
+                tabtype="Membership",
+                tabs=get_tabs_from_json(_json)
+            )
 
-        # Occurs on the first time
+        # Occurs only the first time
         if self._membership_videos is None:
             logger.info(
                 "Currently listed membership videos: {}\n{}".format(
@@ -439,8 +532,15 @@ class YoutubeChannel:
                 )
             )
             for vid in membership_videos:
-                if vid.get("upcoming"):
+                if vid.upcoming:
                     self.trigger_hook('on_upcoming_detected', vid)
+        
+        elif len(membership_videos) < len(self._membership_videos):
+            raise UnexpectedLength(
+                f"Number of returned Membership video Ids is {len(membership_videos)}"
+                f", while we previously got {len(self._membership_videos)}"
+            )
+        
         else:
             known_ids = [v["videoId"] for v in self._membership_videos]
             new_membership_videos = [
@@ -454,21 +554,21 @@ class YoutubeChannel:
                     )
                 )
                 for vid in new_membership_videos:
-                    if vid.get("upcoming"):
+                    if vid.upcoming:
                         self.trigger_hook('on_upcoming_detected', vid)
-                    if vid.get("isLiveNow") or vid.get("isLive"):
+                    if vid.isLiveNow or vid.isLive:
                         continue
                     # Although rare, this should trigger for VODs only
                     self.trigger_hook('on_video_detected', vid)
         self._membership_videos = membership_videos
         return self._membership_videos
 
-    def trigger_hook(self, hook_name: str, vid: Dict):
+    def trigger_hook(self, hook_name: str, vid: VideoPost):
         hook_cmd: Optional[HookCommand] = self.hooks.get(hook_name, None)
         webhookfactory: Optional[WebHookFactory] = self.notifier.get_webhook(hook_name)
 
         if hook_cmd is not None or webhookfactory is not None:
-            self.get_metadata_dict(vid)
+            self.update_metadata(vid)
             self.log.debug(f"Fetched metadata for vid: {vid}")
 
             if hook_cmd and not self.is_hooked_video(vid.get("videoId", None)):
@@ -478,13 +578,12 @@ class YoutubeChannel:
                 if webhook := webhookfactory.get(vid):
                     self.notifier.q.put(webhook)
 
-    def get_metadata_dict(self, vid: Dict) -> Dict:
+    def update_metadata(self, vid: VideoPost) -> None:
         """
-        Update vid with various matadata fetched from the API.
+        Update a VideoPost object with various matadata fetched from the API.
         """
-        # TODO make vid a full-fledged class!
         url = vid.get("url")
-        vid.update(
+        vid.download_metadata.update(
             {
                 "url": f"https://www.youtube.com{url}" if url is not None else None,
                 "cookiefile_path": self.session.cookiefile_path,
@@ -492,13 +591,11 @@ class YoutubeChannel:
                 "output_dir": self.output_dir
             }
         )
-
         description = vid.get("description", "")
-
         if not description:
             json_d = self.fetch_video_metadata(vid)
             if not json_d:
-                return vid
+                return
 
             self.log.debug(
                 f"Got metadata JSON for videoId \"{vid.get('videoId', '')}\".")
@@ -544,9 +641,8 @@ class YoutubeChannel:
                     # Timestamp, will overwrite
                     vid["startTime"] = scheduledStartTime
             # logger.debug(f"JSON fetched for video {vid}:\n{json_d}")
-        return vid
 
-    def fetch_video_metadata(self, vid: Optional[Dict]) -> Optional[Dict]:
+    def fetch_video_metadata(self, vid: Optional[VideoPost]) -> Optional[Dict]:
         """
         Fetch more details about a particular video Id.
         This is necessary for videos that we only know the Id of, but need the
@@ -593,7 +689,11 @@ class YoutubeChannel:
         if len(self._hooked_videos) >= 40:
             self._hooked_videos.pop(0)
 
-    def filter_videos(self, filter_type: str = 'isLiveNow', update=True) -> List[Dict]:
+    def filter_videos(
+        self,
+        filter_type: str = 'isLiveNow',
+        update=True
+    ) -> List[VideoPost]:
         """Returns a list of videos that are live, from all channel tabs combined.
         Usually there is only one live video active at a time.
         """
@@ -617,19 +717,32 @@ class YoutubeChannel:
             for comm_vid in self.get_community_videos(update=update):
                 if comm_vid.get(filter_type):
                     filtered_videos.append(comm_vid)
-        except TabNotFound as e:
+        except TabNotFound:
             # self.log.debug(f"No Community tab available for this channel: {e}")
             missing_endpoints.append("Community")
+        except UnexpectedLength as e:
+            self.log.warning(e)
+            self.notifier.send_email(
+                subject="Channel monitor got logged out!",
+                message_text=str(e)
+            )
 
         try:
             for memb_vid in self.get_membership_videos(update=update):
                 if memb_vid.get(filter_type):
                     filtered_videos.append(memb_vid)
-        except TabNotFound as e:
+        except TabNotFound:
             # self.log.debug(f"No membership tab available for this channel: {e}")
             # This tab might also be missing if logged in user is simply not a member
-            # TODO use this in conjunction with cookies to warn user if logged out?
-            pass
+            if self.session.was_logged_in:
+                self.log.warning(
+                    f"Missing expected Membership tab: We might be logged out!")
+        except UnexpectedLength as e:
+            self.log.warning(e)
+            self.notifier.send_email(
+                subject="Channel monitor got logged out!",
+                message_text=str(e)
+            )
 
         # TODO this should be removed if filter is isLiveNow since Youtube does not
         # list livestreams in the Videos tab anymore. Keep for now just in case.
@@ -705,32 +818,62 @@ class YoutubeChannel:
         )
 
 
-def _get_content_from_grid_renderer(contents: List, tabtype: str) -> List[Dict]:
+class DedupedVideoList(list):
+    def __init__(self) -> None:
+        self.seen_ids = set()
+        self.duplicates = set()  # seen more than once
+
+    def append(self, video: VideoPost) -> None:
+        videoId = video.get("videoId")
+        
+        if videoId in self.seen_ids:
+            self.duplicates.add(videoId)
+        else:
+            self.seen_ids.add(videoId)
+            super().append(video)
+
+
+def _get_content_from_grid_renderer(
+    tabtype: str,
+    contents: List
+) -> List[VideoPost]:
+    """
+    Parse gridVideoRenderer for video posts.
+    """
     assert tabtype in ("Videos", "Live")
-    videos = []
+    videos = DedupedVideoList()
     for content in contents:
         if __item := content.get('richItemRenderer', {}).get('content', {}):
             if tabtype == "Videos" or tabtype == "Live":
                 # gridVideoRenderer might be obsolete
                 griditems = __item.get('gridVideoRenderer', {}).get('items', [])
                 for griditem in griditems:
-                    vid_metadata = get_video_from_post(
-                        griditem.get('gridVideoRenderer')
-                    )
-                    if vid_metadata.get('videoId'):
+                    if vid_metadata := VideoPost.from_post(
+                        griditem.get('gridVideoRenderer')):
                         videos.append(vid_metadata)
                 # New structure
-                if vid_metadata := get_video_from_post(
+                if vid_metadata := VideoPost.from_post(
                     __item.get("videoRenderer")):
-                    if vid_metadata.get("videoId"):
-                        videos.append(vid_metadata)
-    return videos
+                    videos.append(vid_metadata)
+    if videos.duplicates:
+        logger.debug(
+            f"Filtered duplicate video Ids from tab {tabtype}: {videos.duplicates}")
 
-def _get_content_from_list_renderer(contents: List, tabtype: str) -> List[Dict]:
-    videos = []
+    return list(videos)
+
+
+def _get_content_from_list_renderer(
+    tabtype: str,
+    contents: List
+) -> List[VideoPost]:
+    """
+    Parse sectionListRenderer for video posts.
+    """
+    videos = DedupedVideoList()
     for content in contents:
         for __item in content.get('itemSectionRenderer', {}).get('contents', []):
-            # These tabs appear to share the same architecture
+
+            # These two tab types appear to share the same architecture
             if tabtype == "Community" or tabtype == "Membership":
                 post = __item.get('backstagePostThreadRenderer', {}).get('post', {})
                 if post:
@@ -739,38 +882,42 @@ def _get_content_from_list_renderer(contents: List, tabtype: str) -> List[Dict]:
                         .get('backstageAttachment', {}):
                         if videoRenderer := backstageAttachment\
                             .get('videoRenderer', {}):
-                            vid_metadata = get_video_from_post(videoRenderer)
-                            if vid_metadata.get('videoId'):
-                                # some posts don't have attached videos
+                            # some posts don't have attached videos
+                            if vid_metadata := VideoPost.from_post(videoRenderer):
                                 videos.append(vid_metadata)
                 # In some cases the video is directly listed as its own item:
-                if videoRenderer := __item.get('videoRenderer', {}):
-                    vid_metadata = get_video_from_post(videoRenderer)
-                    if vid_metadata.get('videoId'):
+                elif videoRenderer := __item.get('videoRenderer', {}):
+                    if vid_metadata := VideoPost.from_post(videoRenderer):
                         videos.append(vid_metadata)
+
             elif tabtype == "Videos":
                 griditems = __item.get('gridRenderer', {}).get('items', [])
                 for griditem in griditems:
-                    vid_metadata = get_video_from_post(
+                    if vid_metadata := VideoPost.from_post(
                         griditem.get('gridVideoRenderer')
-                    )
-                    if vid_metadata.get('videoId'):
+                    ):
                         videos.append(vid_metadata)
+
             elif tabtype == "Home":
                 cfcRenderer = __item.get(
                     'channelFeaturedContentRenderer', {}).get('items', [])
                 for cfcItem in cfcRenderer:
                     if videoRenderer := cfcItem.get('videoRenderer'):
-                        if vid_metadata := get_video_from_post(videoRenderer):
+                        if vid_metadata := VideoPost.from_post(videoRenderer):
                             videos.append(vid_metadata)
 
             # elif tabtype == "Live":
-    return videos
+    
+    if videos.duplicates:
+        logger.debug(
+            f"Filtered duplicate video Ids from tab {tabtype}: {videos.duplicates}")
+
+    return list(videos)
 
 
-def get_videos_from_tab(tabs, tabtype: str) -> List[Dict]:
+def get_videos_from_tab(tabtype: str, tabs: List) -> List[VideoPost]:
     """
-    Returns videos attached to posts in available "tab" section in JSON response.
+    Return videos attached to posts in available "tab" section in JSON response.
     tabtype is either "Videos" "Community", "Membership", "Home" etc.
     """
     # NOTE the format depends on the client (user-agent) used to make the request
@@ -779,73 +926,23 @@ def get_videos_from_tab(tabs, tabtype: str) -> List[Dict]:
         if tab.get('tabRenderer', {}).get('title') != tabtype:
             continue
 
-        if richGridRenderer := tab.get('tabRenderer')\
+        if richGridRenderer := tab.get('tabRenderer', {})\
                       .get('content', {})\
                       .get('richGridRenderer'):
             return _get_content_from_grid_renderer(
-                richGridRenderer.get('contents', []), tabtype)
+                tabtype,
+                richGridRenderer.get('contents', []))
 
         # This is the way the Home tab renders
-        if sectionListRenderer := tab.get('tabRenderer')\
+        if sectionListRenderer := tab.get('tabRenderer', {})\
                       .get('content', {})\
                       .get('sectionListRenderer'):
             return _get_content_from_list_renderer(
-                sectionListRenderer.get('contents', []), tabtype)
+                tabtype,
+                sectionListRenderer.get('contents', []))
 
         raise Exception(f"No valid content renderer found for \"{tabtype=}\".")
     return []
-
-def get_video_from_post(attachment: Dict) -> Dict[str, Any]:
-    """Get video entry and attach various metadata found alongside it."""
-    if not attachment:
-        return {}
-    video_post = {}
-    video_post['videoId'] = attachment.get('videoId')
-    video_post['thumbnail'] = attachment.get('thumbnail', {})
-    video_post['isLiveNow'] = attachment.get('isLiveNow', False)
-    video_post['isLive'] = attachment.get('isLive', False)
-
-    badges = attachment.get('badges', [])
-    if len(badges) and isinstance(badges[0], dict):
-        label = badges[0].get("metadataBadgeRenderer", {}).get("label")
-        if label and "Members only" in label:
-            video_post['members-only'] = label
-
-    for _item in attachment.get('title', {}).get('runs', []):
-        if _item.get('text'): # assumes list with only one item
-            video_post['title'] = _item.get('text')
-    video_post['url'] = attachment.get('navigationEndpoint', {})\
-                                    .get('commandMetadata', {})\
-                                    .get('webCommandMetadata', {})\
-                                    .get('url')
-    if eventData := attachment.get('upcomingEventData', {}):
-        # we can safely assume it is "upcoming"
-        video_post['upcoming'] = True
-        video_post['startTime'] = eventData.get('startTime')
-
-    # Attempt to attach "live" and "upcoming" status from the response
-    for _item in attachment.get('thumbnailOverlays', []):
-        if status_renderer := _item.get('thumbnailOverlayTimeStatusRenderer', {}):
-            if style := status_renderer.get('style'):
-                # This seems to be a decent indicator that it is currently LIVE
-                if style == 'LIVE':
-                    video_post['isLiveNow'] = True
-                # This might be redundant with upcomingEventData key
-                elif style == 'UPCOMING':
-                    video_post['upcoming'] = True
-            if text := status_renderer.get('text'):
-                if runs := text.get('runs', []):
-                    if len(runs) > 0 and runs[0].get('text') == 'LIVE':
-                        # This indicates that it should be live in the future
-                        video_post['isLive'] = True
-            break
-    # Another way to check if it is currently LIVE
-    for _item in attachment.get('badges', []):
-        if badge_renderer := _item.get('metadataBadgeRenderer', {}):
-            if badge_renderer.get('label') == "LIVE NOW":
-                video_post['isLiveNow'] = True
-
-    return video_post
 
 
 def get_tabs_from_json(_json) -> Optional[List]:
@@ -875,14 +972,15 @@ def rss_from_name(channel_name):
 
 
 def format_list_output(vid_list: List[Dict]) -> str:
-    strs = []
-    for vid in vid_list:
-        strs.append(
+    return "\n".join(
+        (
             f"{vid.get('videoId')} - {vid.get('title')}"
             f"{' (LiveStream)' if vid.get('isLive') else ''}"
             f"{' LIVE NOW!' if vid.get('isLiveNow') else ''}"
-            f"{' (Upcoming)' if vid.get('upcoming') else ''}")
-    return "\n".join(strs)
+            f"{' (Upcoming)' if vid.get('upcoming') else ''}"
+        )
+            for vid in vid_list
+    )
 
 
 def get_endpoints_from_json(json: Dict) -> Dict[str, Any]:

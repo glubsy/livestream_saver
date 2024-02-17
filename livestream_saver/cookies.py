@@ -10,6 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 def get_cookie(path):
+    # TODO make a backup copy of the cookies (or set read only?)
+    # because yt-dlp takes ownership of the file that is passed to it
+    # and makes modifications to it.
+    
     # CookieJar now instead of a dict
     return _get_cookie_jar(path)
 
