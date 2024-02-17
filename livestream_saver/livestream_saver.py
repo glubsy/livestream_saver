@@ -760,8 +760,8 @@ def init_config() -> ConfigParser:
         "config_dir": str(config_dir),
         "config_file": config_dir / conf_filename,
         "log_level": "INFO",
-        "output_dir": environ.get("LSS_OUTPUT_DIR"),
-        "cookies": environ.get("LSS_COOKIES_FILE"),
+        "output_dir": environ.get("LSS_OUTPUT_DIR", ""),
+        "cookies": environ.get("LSS_COOKIES_FILE", ""),
 
         "delete_source": "False",
         "keep_concat": "False",
