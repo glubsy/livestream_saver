@@ -1046,8 +1046,8 @@ def main():
         print("Wrong sub-command. Exiting.")
         return
 
-    if "cookiefile" not in args["ytdlp_config"] and args.get("cookies") is not None:
-        args["ytdlp_config"]["cookiefile"] = args.get("cookies")
+    if "cookiefile" not in args["ytdlp_config"] and (cookies := args.get("cookies")):
+        args["ytdlp_config"]["cookiefile"] = cookies
 
     error = 0
     try:
