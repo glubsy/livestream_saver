@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field
 
 from livestream_saver import extract
-from livestream_saver.exceptions import TabNotFound, UnexpectedLength
+from livestream_saver.exceptions import TabNotFound
 from livestream_saver.hooks import HookCommand
 from livestream_saver.notifier import WebHookFactory, NotificationDispatcher
 from livestream_saver.request import YoutubeUrllibSession
@@ -90,6 +90,13 @@ class VideoPost():
                     video.isLiveNow = True
         return video
 
+
+# Only raise a warning if that many Ids are missing from one returned list
+# of Id to another (between two requests). It is expected that video Ids
+# disappear from the front page as more Ids are added. It is only relevant to
+# us if we are suddenly missing a lof of entries, as it may indicate that we
+# have been logged out.
+MISSING_THRESHOLD = 3
 
 
 class YoutubeChannel:
@@ -255,7 +262,7 @@ class YoutubeChannel:
             self._cached_json_tab = tab_name
         return self._cached_json
 
-    def get_home_videos(self, update=False) -> List[VideoPost]:
+    def get_home_videos(self) -> List[VideoPost]:
         """
         Return the currently listed videos from the Home tab.
         Note that Upcoming videos might both get listed in Home and the Live
@@ -263,16 +270,13 @@ class YoutubeChannel:
         Note also that active Livestreams seem to be listed only in this tab,
         and not in the Live tab anymore.
         """
-        home_videos = []
-        if update or self._home_videos is None:
-            home_videos = get_videos_from_tab(
-                tabtype="Home",
-                tabs=get_tabs_from_json(
-                    self.get_json_and_cache("Home", update=True)
-                )
+        home_videos = get_videos_from_tab(
+            tabtype="Home",
+            tabs=get_tabs_from_json(
+                self.get_json_and_cache("Home", update=True)
             )
-
-        # Occurs only the first time
+        )
+        # Only after first request, print the full list of Ids retrieved
         if self._home_videos is None:
             logger.info(
                 "Currently listed Featured videos: {}\n{}".format(
@@ -281,40 +285,31 @@ class YoutubeChannel:
                 )
             )
         else:
-            known_ids = [v["videoId"] for v in self._home_videos]
-            new_home_videos = [
-                v for v in home_videos if v["videoId"] not in known_ids
-            ]
-            if new_home_videos:
-                logger.info(
-                    "Newly added Featured video: {}\n{}".format(
-                        len(new_home_videos),
-                        format_list_output(new_home_videos)
-                    )
-                )
-                for vid in new_home_videos:
-                    if vid.get("isLiveNow") or vid.get("isLive"):
-                        continue
-                    # This should only trigger for VOD (non-live) videos
-                    self.trigger_hook('on_video_detected', vid)
+            new_videos, _ = self.get_changes(
+                videos=home_videos,
+                previous=self._home_videos
+            )
+            # TODO warn of removed live VODs (requires keeping memory of all
+            # Ids in the channel by using Shelve or Sqlite)
+            if new_videos:
+                self.warn_of_new(
+                    new_videos=new_videos,
+                    name="featured")
         self._home_videos = home_videos
-        return self._home_videos
+        return home_videos
 
-    def get_public_videos(self, update=False) -> List[VideoPost]:
+    def get_public_videos(self) -> List[VideoPost]:
         """
         Return the currently listed videos from the Videos tab (VOD).
         Not super useful right now, but could be in the future if we ever wanted
-        to scrape VOD, or record premiering videos as they are first streamed.
+        to scrape VOD, or record premiering videos as they are streamed.
         """
-        public_videos = []
-        if update or self._public_videos is None:
-            public_videos = get_videos_from_tab(
-                tabtype="Videos",
-                tabs=get_tabs_from_json(
-                    self.get_json_and_cache("Videos", update=True)),
-            )
-
-        # Occurs only the first time
+        public_videos = get_videos_from_tab(
+            tabtype="Videos",
+            tabs=get_tabs_from_json(
+                self.get_json_and_cache("Videos", update=True)),
+        )
+        # Only after first request, print the full list of Ids retrieved
         if self._public_videos is None:
             logger.info(
                 "Currently listed public videos: {}\n{}".format(
@@ -326,112 +321,29 @@ class YoutubeChannel:
                 if vid.get("upcoming"):
                     self.trigger_hook('on_upcoming_detected', vid)
         else:
-            known_ids = [v["videoId"] for v in self._public_videos]
-            new_pub_videos = [
-                v for v in public_videos if v["videoId"] not in known_ids
-            ]
-            if new_pub_videos:
-                logger.info(
-                    "Newly added public video: {}\n{}".format(
-                        len(new_pub_videos),
-                        format_list_output(new_pub_videos)
-                    )
-                )
-                for vid in new_pub_videos:
-                    if vid.get("upcoming"):
-                        self.trigger_hook('on_upcoming_detected', vid)
-                    if vid.get("isLiveNow") or vid.get("isLive"):
-                        continue
-                    # This should only trigger for VOD (non-live) videos
-                    self.trigger_hook('on_video_detected', vid)
-        self._public_videos = public_videos
-        return self._public_videos
-
-    def get_upcoming_videos(self, update=False) -> List[VideoPost]:
-        """
-        Supposed to return upcoming Live Streams (or Premieres?),
-        but the site will redirect to public videos if there is none found.
-
-        This is probably about to become useless since it is made redundant by
-        the fact that upcoming streams are also listed in the /streams tab, so
-        getting those specifically could be done by filtering all videos
-        in the filter_videos() method.
-        This is not a filter method that returns all upcoming videos from all
-        tabs combined!
-        """
-        # TODO make this method into a filter over videos from all tabs combined?
-        upcoming_videos = []
-        if update or self._upcoming_videos is None:
-            try:
-                # We can force update this one since it does not depend on any
-                # other cached data
-                upcoming_videos = get_videos_from_tab(
-                    tabtype="Videos",
-                    tabs=get_tabs_from_json(
-                        self.get_json_and_cache("Upcoming", update=True)),
-                )
-            except Exception as e:
-                self.log.debug(
-                    f"Failed to get upcoming videos from Videos tab: {e}")
-                return upcoming_videos
-
-        # Make sure we only list upcoming videos and not public VODs due to redirect
-        upcoming_videos_filtered = []
-        for vid in upcoming_videos:
-            if not vid.get('upcoming'):
-                continue
-            upcoming_videos_filtered.append(vid)
-        upcoming_videos = upcoming_videos_filtered
-
-        # Occurs on the first time
-        if self._upcoming_videos is None:
-            logger.info(
-                "Currently listed public upcoming videos: {}\n{}".format(
-                    len(upcoming_videos),
-                    format_list_output(upcoming_videos)
-                )
+            new_videos, _ = self.get_changes(
+                videos=public_videos,
+                previous=self._public_videos
             )
-            for vid in upcoming_videos:
-                # These checks are important to avoid the youtube bug that
-                # return VODs if there is no upcoming video at all.
-                # FIXME perhaps API calls might help filter these better,
-                # otherwise we could keep track of public videoIds and
-                # ignore them.
-                # if vid.get('upcoming') and vid.get('isLive'):
-                self.trigger_hook('on_upcoming_detected', vid)
-        else:
-            known_ids = [v["videoId"] for v in self._upcoming_videos]
-            new_upcoming_videos = [
-                v for v in upcoming_videos if v["videoId"] not in known_ids
-            ]
-            if new_upcoming_videos:
-                logger.info(
-                    "Newly added upcoming videos: {}\n{}".format(
-                        len(new_upcoming_videos),
-                        format_list_output(new_upcoming_videos)
-                    )
-                )
-                for vid in new_upcoming_videos:
-                    # These checks are important to avoid the youtube bug that
-                    # return VOD here as well.
-                    if vid.get('upcoming'): # and vid.get('isLive'):
-                        self.trigger_hook('on_upcoming_detected', vid)
-        self._upcoming_videos = upcoming_videos
-        return self._upcoming_videos
+            # TODO warn of removed live VODs (requires keeping memory of all
+            # Ids in the channel by using Shelve or Sqlite)
+            if new_videos:
+                self.warn_of_new(
+                    new_videos=new_videos,
+                    name="public")
+        self._public_videos = public_videos
+        return public_videos
 
-    def get_public_streams(self, update=False) -> List[VideoPost]:
+    def get_public_streams(self) -> List[VideoPost]:
         """
         Return the currently listed videos from the Live tab.
         """
-        public_streams = []
-        if update or self._public_streams is None:
-            public_streams = get_videos_from_tab(
-                tabtype="Live",
-                tabs=get_tabs_from_json(
-                    self.get_json_and_cache("Live", update=True)),
-            )
-
-        # Occurs only the first time
+        public_streams = get_videos_from_tab(
+            tabtype="Live",
+            tabs=get_tabs_from_json(
+                self.get_json_and_cache("Live", update=True)),
+        )
+        # Only after first request, print the full list of Ids retrieved
         if self._public_streams is None:
             logger.info(
                 "Currently listed public Live streams: {}\n{}".format(
@@ -443,37 +355,26 @@ class YoutubeChannel:
                 if vid.get("upcoming"):
                     self.trigger_hook('on_upcoming_detected', vid)
         else:
-            known_ids = [v["videoId"] for v in self._public_streams]
-            new_pub_videos = [
-                v for v in public_streams if v["videoId"] not in known_ids
-            ]
-            if new_pub_videos:
-                logger.info(
-                    "Newly added public Live streams: {}\n{}".format(
-                        len(new_pub_videos),
-                        format_list_output(new_pub_videos)
-                    )
-                )
-                for vid in new_pub_videos:
-                    if vid.get("upcoming"):
-                        self.trigger_hook('on_upcoming_detected', vid)
-                    if vid.get("isLiveNow") or vid.get("isLive"):
-                        continue
-                    # This should only trigger for VOD (non-live) videos
-                    self.trigger_hook('on_video_detected', vid)
-        self._public_streams = public_streams
-        return self._public_streams
-
-    def get_community_videos(self, update=False) -> List[VideoPost]:
-        community_videos = []
-        if update or self._community_videos is None:
-            community_videos = get_videos_from_tab(
-                tabtype="Community",
-                tabs=get_tabs_from_json(
-                    self.get_json_and_cache("Community", update=True)),
+            new_videos, _ = self.get_changes(
+                videos=public_streams,
+                previous=self._public_streams
             )
+            # TODO warn of removed live VODs (requires keeping memory of all
+            # Ids in the channel by using Shelve or Sqlite)
+            if new_videos:
+                self.warn_of_new(
+                    new_videos=new_videos,
+                    name="public Live stream")
+        self._public_streams = public_streams
+        return public_streams
 
-        # Occurs on the first time
+    def get_community_videos(self) -> List[VideoPost]:
+        community_videos = get_videos_from_tab(
+            tabtype="Community",
+            tabs=get_tabs_from_json(
+                self.get_json_and_cache("Community", update=True)),
+        )
+        # Only after first request, print the full list of Ids retrieved
         if self._community_videos is None:
             logger.info(
                 "Currently listed community videos: {}\n{}".format(
@@ -484,46 +385,31 @@ class YoutubeChannel:
             for vid in community_videos:
                 if vid.get("upcoming"):
                     self.trigger_hook('on_upcoming_detected', vid)
-        
-        elif len(community_videos) < len(self._community_videos):
-            raise UnexpectedLength(
-                f"Number of returned Community video Ids is {len(community_videos)}"
-                f", while we previously got {len(self._community_videos)}"
-            )
-        
         else:
-            known_ids = [v["videoId"] for v in self._community_videos]
-            new_comm_videos = [
-                v for v in community_videos if v["videoId"] not in known_ids
-            ]
-            if new_comm_videos:
-                logger.info(
-                    "Newly added community video: {}\n{}".format(
-                        len(new_comm_videos),
-                        format_list_output(new_comm_videos)
-                    )
-                )
-                for vid in new_comm_videos:
-                    if vid.get("upcoming"):
-                        self.trigger_hook('on_upcoming_detected', vid)
-                    if vid.get("isLiveNow") or vid.get("isLive"):
-                        continue
-                    # Although rare, this should trigger for VODs only
-                    self.trigger_hook('on_video_detected', vid)
-        self._community_videos = community_videos
-        return self._community_videos
-
-    def get_membership_videos(self, update=False) -> List[VideoPost]:
-        membership_videos = []
-        if update or self._membership_videos is None:
-            _json = self.get_json_and_cache("Membership", update=True)
-            self.session.is_logged_out(_json)
-            membership_videos = get_videos_from_tab(
-                tabtype="Membership",
-                tabs=get_tabs_from_json(_json)
+            new_videos, removed_videos = self.get_changes(
+                videos=community_videos,
+                previous=self._community_videos
             )
+            if len(removed_videos) >= MISSING_THRESHOLD:
+                self.warn_of_removed(
+                    videos=community_videos,
+                    removed_videos=removed_videos,
+                    name="community")
+            if new_videos:
+                self.warn_of_new(
+                    new_videos=new_videos,
+                    name="community")
+        self._community_videos = community_videos
+        return community_videos
 
-        # Occurs only the first time
+    def get_membership_videos(self) -> List[VideoPost]:
+        _json = self.get_json_and_cache("Membership", update=True)
+        self.session.is_logged_out(_json)
+        membership_videos = get_videos_from_tab(
+            tabtype="Membership",
+            tabs=get_tabs_from_json(_json)
+        )
+        # Only after first request, print the full list of Ids retrieved
         if self._membership_videos is None:
             logger.info(
                 "Currently listed membership videos: {}\n{}".format(
@@ -534,34 +420,78 @@ class YoutubeChannel:
             for vid in membership_videos:
                 if vid.upcoming:
                     self.trigger_hook('on_upcoming_detected', vid)
-        
-        elif len(membership_videos) < len(self._membership_videos):
-            raise UnexpectedLength(
-                f"Number of returned Membership video Ids is {len(membership_videos)}"
-                f", while we previously got {len(self._membership_videos)}"
-            )
-        
         else:
-            known_ids = [v["videoId"] for v in self._membership_videos]
-            new_membership_videos = [
-                v for v in membership_videos if v["videoId"] not in known_ids
-            ]
-            if new_membership_videos:
-                logger.info(
-                    "Newly added membership video: {}\n{}".format(
-                        len(new_membership_videos),
-                        format_list_output(new_membership_videos)
-                    )
-                )
-                for vid in new_membership_videos:
-                    if vid.upcoming:
-                        self.trigger_hook('on_upcoming_detected', vid)
-                    if vid.isLiveNow or vid.isLive:
-                        continue
-                    # Although rare, this should trigger for VODs only
-                    self.trigger_hook('on_video_detected', vid)
+            new_videos, removed_videos = self.get_changes(
+                videos=membership_videos,
+                previous=self._membership_videos
+            )
+            if len(removed_videos) >= MISSING_THRESHOLD:
+                self.warn_of_removed(
+                    videos=membership_videos,
+                    removed_videos=removed_videos,
+                    name="membership")
+            if new_videos:
+                self.warn_of_new(
+                    new_videos=new_videos,
+                    name="membership")
         self._membership_videos = membership_videos
-        return self._membership_videos
+        return membership_videos
+
+    def get_changes(
+        self,
+        videos: List[VideoPost],
+        previous: List[VideoPost],
+    ) -> tuple[list[VideoPost], list[VideoPost]]:
+        """
+        Return the changes in the list of video Ids compared to its previous state.
+        """
+        previous_ids = set(v["videoId"] for v in previous)
+        new_videos = [
+            v for v in videos if v["videoId"] not in previous_ids
+        ]
+        collected_ids = set(v["videoId"] for v in videos)
+        removed_videos = list(filter(
+            lambda x: x["videoId"] not in collected_ids, previous)
+        )
+        return new_videos, removed_videos
+
+    def warn_of_removed(
+        self,
+        videos: List[VideoPost],
+        removed_videos: List[VideoPost],
+        name: str
+    ) -> None:
+        message = (
+            f"Some video Ids are now missing from the {name} tab. "
+            "This may indicate that we got logged out. "
+            f"Out of the {len(videos)} returned Ids, we are now missing:\n"
+            + "\n".join(
+                f"{v['videoId']}: {v.get('title')}" for v in removed_videos
+            )
+        )
+        logger.warning(message)
+        self.notifier.send_email(
+            subject="Channel monitor: tab is missing video Ids",
+            message_text=(message)
+        )
+
+    def warn_of_new(
+        self,
+        new_videos: List[VideoPost],
+        name: str
+    ) -> None:
+        logger.info(
+            f"Newly added {name} video: {len(new_videos)}\n"
+            f"{format_list_output(new_videos)}")
+
+        for vid in new_videos:
+            if vid.upcoming:
+                self.trigger_hook('on_upcoming_detected', vid)
+            if vid.isLiveNow or vid.isLive:
+                continue
+            # This should only trigger for VOD (non-live) videos
+            self.trigger_hook('on_video_detected', vid)
+
 
     def trigger_hook(self, hook_name: str, vid: VideoPost):
         hook_cmd: Optional[HookCommand] = self.hooks.get(hook_name, None)
@@ -691,8 +621,7 @@ class YoutubeChannel:
 
     def filter_videos(
         self,
-        filter_type: str = 'isLiveNow',
-        update=True
+        filter_type: str = 'isLiveNow'
     ) -> List[VideoPost]:
         """Returns a list of videos that are live, from all channel tabs combined.
         Usually there is only one live video active at a time.
@@ -700,13 +629,14 @@ class YoutubeChannel:
         if not self._endpoints:
             self.load_endpoints()
 
+        # Only collect videos for which the field has a value
         filtered_videos = []
         missing_endpoints = []
 
         # We should call this first since we probably have the Home tab in memory
         # as the first cached json data
         try:
-            for home_vid in self.get_home_videos(update=update):
+            for home_vid in self.get_home_videos():
                 if home_vid.get(filter_type):
                     filtered_videos.append(home_vid)
         except TabNotFound as e:
@@ -714,21 +644,15 @@ class YoutubeChannel:
             missing_endpoints.append("Home")
 
         try:
-            for comm_vid in self.get_community_videos(update=update):
+            for comm_vid in self.get_community_videos():
                 if comm_vid.get(filter_type):
                     filtered_videos.append(comm_vid)
         except TabNotFound:
             # self.log.debug(f"No Community tab available for this channel: {e}")
             missing_endpoints.append("Community")
-        except UnexpectedLength as e:
-            self.log.warning(e)
-            self.notifier.send_email(
-                subject="Channel monitor got logged out!",
-                message_text=str(e)
-            )
 
         try:
-            for memb_vid in self.get_membership_videos(update=update):
+            for memb_vid in self.get_membership_videos():
                 if memb_vid.get(filter_type):
                     filtered_videos.append(memb_vid)
         except TabNotFound:
@@ -737,18 +661,12 @@ class YoutubeChannel:
             if self.session.was_logged_in:
                 self.log.warning(
                     f"Missing expected Membership tab: We might be logged out!")
-        except UnexpectedLength as e:
-            self.log.warning(e)
-            self.notifier.send_email(
-                subject="Channel monitor got logged out!",
-                message_text=str(e)
-            )
 
         # TODO this should be removed if filter is isLiveNow since Youtube does not
         # list livestreams in the Videos tab anymore. Keep for now just in case.
         public_videos = []
         try:
-            public_videos = self.get_public_videos(update=update)
+            public_videos = self.get_public_videos()
         except TabNotFound as e:
             # Some channels do no have a Videos tab (only Live tab).
             # self.log.debug(f"No Videos tab available for this channel: {e}")
@@ -756,7 +674,7 @@ class YoutubeChannel:
 
         public_streams = []
         try:
-            public_streams = self.get_public_streams(update=update)
+            public_streams = self.get_public_streams()
         except TabNotFound as e:
             # self.log.debug(f"No Live tab available for this channel: {e}")
             missing_endpoints.append("Live")
@@ -825,7 +743,7 @@ class DedupedVideoList(list):
 
     def append(self, video: VideoPost) -> None:
         videoId = video.get("videoId")
-        
+
         if videoId in self.seen_ids:
             self.duplicates.add(videoId)
         else:
@@ -907,7 +825,7 @@ def _get_content_from_list_renderer(
                             videos.append(vid_metadata)
 
             # elif tabtype == "Live":
-    
+
     if videos.duplicates:
         logger.debug(
             f"Filtered duplicate video Ids from tab {tabtype}: {videos.duplicates}")
