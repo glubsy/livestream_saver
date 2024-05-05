@@ -5,7 +5,8 @@
     // otherwise fallback to "best" according to yt-dlp's logic
     "format": "mp4+m4a/bestvideo+bestaudio",
     
-    // Path to your cookies (this is always updated from livestream_saver's --cookies argument)
+    // Path to your cookies (this value is replaced by the value 
+    // submitted via the --cookies parameter to livestream_saver)
     // "cookiefile": "",
     
     // Do not stop on download/postprocessing errors.
