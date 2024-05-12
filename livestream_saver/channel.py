@@ -12,8 +12,18 @@ from livestream_saver.request import YoutubeUrllibSession
 logger = logging.getLogger(__name__)
 
 
+
+# Only raise a warning if that many Ids are missing from one returned list
+# of Id to another (between two requests). It is expected that video Ids
+# disappear from the front page as more Ids are added. It is only relevant to
+# us if we are suddenly missing a lof of entries, as it may indicate that we
+# have been logged out.
+MISSING_THRESHOLD = 3
+
+
+
 @dataclass(slots=True)
-class VideoPost():
+class VideoPost:
     videoId: str = field(init=True)
     title: str = field(init=False)
     url: str = field(init=False)
@@ -23,7 +33,8 @@ class VideoPost():
     members_only: bool = field(init=False, default=False)
     upcoming: bool = field(init=False, default=False)
     startTime: Optional[str] = field(init=False, default=None)
-    download_metadata : dict = field(init=False, default_factory=dict)
+    download_metadata: dict = field(init=False, default_factory=dict)
+    channel: "YoutubeChannel" = field(init=False)
 
     def __repr__(self) -> str:
         return self.videoId
@@ -91,12 +102,6 @@ class VideoPost():
         return video
 
 
-# Only raise a warning if that many Ids are missing from one returned list
-# of Id to another (between two requests). It is expected that video Ids
-# disappear from the front page as more Ids are added. It is only relevant to
-# us if we are suddenly missing a lof of entries, as it may indicate that we
-# have been logged out.
-MISSING_THRESHOLD = 3
 
 
 class YoutubeChannel:
@@ -735,6 +740,35 @@ class YoutubeChannel:
             client="web"
         )
 
+def get_videos_from_tab(tabtype: str, tabs: List) -> List[VideoPost]:
+    """
+    Return videos attached to posts in available "tab" section in JSON response.
+    tabtype is either "Videos" "Community", "Membership", "Home" etc.
+    """
+    # NOTE the format depends on the client (user-agent) used to make the request
+    # FIXME
+    for tab in tabs:
+        if tab.get('tabRenderer', {}).get('title') != tabtype:
+            continue
+
+        if richGridRenderer := tab.get('tabRenderer', {})\
+                      .get('content', {})\
+                      .get('richGridRenderer'):
+            return _get_content_from_grid_renderer(
+                tabtype,
+                richGridRenderer.get('contents', []))
+
+        # This is the way the Home tab renders
+        if sectionListRenderer := tab.get('tabRenderer', {})\
+                      .get('content', {})\
+                      .get('sectionListRenderer'):
+            return _get_content_from_list_renderer(
+                tabtype,
+                sectionListRenderer.get('contents', []))
+
+        raise Exception(f"No valid content renderer found for \"{tabtype=}\".")
+    return []
+
 
 class DedupedVideoList(list):
     def __init__(self) -> None:
@@ -833,34 +867,6 @@ def _get_content_from_list_renderer(
     return list(videos)
 
 
-def get_videos_from_tab(tabtype: str, tabs: List) -> List[VideoPost]:
-    """
-    Return videos attached to posts in available "tab" section in JSON response.
-    tabtype is either "Videos" "Community", "Membership", "Home" etc.
-    """
-    # NOTE the format depends on the client (user-agent) used to make the request
-    # FIXME
-    for tab in tabs:
-        if tab.get('tabRenderer', {}).get('title') != tabtype:
-            continue
-
-        if richGridRenderer := tab.get('tabRenderer', {})\
-                      .get('content', {})\
-                      .get('richGridRenderer'):
-            return _get_content_from_grid_renderer(
-                tabtype,
-                richGridRenderer.get('contents', []))
-
-        # This is the way the Home tab renders
-        if sectionListRenderer := tab.get('tabRenderer', {})\
-                      .get('content', {})\
-                      .get('sectionListRenderer'):
-            return _get_content_from_list_renderer(
-                tabtype,
-                sectionListRenderer.get('contents', []))
-
-        raise Exception(f"No valid content renderer found for \"{tabtype=}\".")
-    return []
 
 
 def get_tabs_from_json(_json) -> Optional[List]:
