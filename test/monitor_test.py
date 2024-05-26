@@ -7,7 +7,7 @@ from json import load
 from urllib.error import URLError
 
 
-from livestream_saver.monitor import YoutubeChannel, VideoPost, DedupedVideoList
+from livestream_saver.channel import YoutubeChannel, VideoPost, DedupedVideoList
 from livestream_saver.request import YoutubeUrllibSession
 from livestream_saver.notifier import NotificationDispatcher
 from livestream_saver.livestream_saver import monitor_mode
@@ -31,22 +31,22 @@ class BaseTestVideoPost(unittest.TestCase):
     }
 
     def test_initialise_from_post(self):
-        video = VideoPost.from_post(self.data)
+        video = VideoPost.from_post(self.data, channel=None)
         self.assertEqual(video.videoId, "test_id")
     
     def test_update_data(self):
-        video = VideoPost.from_post(self.data)
+        video = VideoPost.from_post(self.data, channel=None)
         self.assertEqual(video.url, "test_url")
         video.url = "new_test_url"
         self.assertEqual(video.url, "new_test_url")
 
     def test_getter(self):
-        video = VideoPost.from_post(self.data)
+        video = VideoPost.from_post(self.data, channel=None)
         self.assertEqual(video.get('url'), "test_url")
         self.assertEqual(video['url'], "test_url")
 
     def test_repr(self):
-        video = VideoPost.from_post(self.data)
+        video = VideoPost.from_post(self.data, channel=None)
         self.assertEqual(repr(video), "test_id")
 
 

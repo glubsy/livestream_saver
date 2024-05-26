@@ -26,7 +26,7 @@ from livestream_saver import extract
 from livestream_saver import util
 from livestream_saver.notifier import NotificationDispatcher
 from livestream_saver.request import YoutubeUrllibSession
-
+from livestream_saver.channel import VideoPost
 
 SYSTEM = system()
 ISPOSIX = SYSTEM == 'Linux' or SYSTEM == 'Darwin'
@@ -210,6 +210,21 @@ class PathURL(BaseURL):
         return self + f"/sq/{seg_num}"
 
 
+class VideoDownloader:
+    # TODO should replace YoutubeLiveStream, handle download state
+    pass
+
+
+class YTDLPVideoDownlaoder():
+    # TODO only use yt-dlp to download
+    pass
+
+
+class LiveVideo(VideoPost):
+    # TODO extend video Post with method to get live data
+    pass
+
+
 class YoutubeLiveStream:
     def __init__(
         self,
@@ -224,7 +239,7 @@ class YoutubeLiveStream:
         filters: Dict[str, re.Pattern] = {},
         ignore_quality_change: bool = False,
         log_level = logging.INFO,
-        initial_metadata: Optional[Dict[str, Any]] = {},
+        initial_metadata: Optional[VideoPost] = None,
         use_ytdl = False,
         ytdl_opts: Optional[Dict] = None
     ) -> None:
@@ -379,9 +394,9 @@ class YoutubeLiveStream:
             self.log.error(f"Failed getting some metadata for regex matching: {e}")
 
         # Fallback to using data from monitoring phase
-        if not title:
+        if not title and self._initial_metadata is not None:
             self.title = self._initial_metadata.get("title")
-        if not description:
+        if not description and self._initial_metadata is not None:
             self.description = self._initial_metadata.get("description")
 
         return util.none_filtered_out(

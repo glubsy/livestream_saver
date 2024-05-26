@@ -8,12 +8,17 @@ import logging
 from pathlib import Path
 from configparser import ConfigParser, ExtendedInterpolation
 import traceback
+import threading
+from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 import re
 from shlex import split
+from time import sleep
 
 from livestream_saver import extract, util
 import livestream_saver
-from livestream_saver.monitor import YoutubeChannel, VideoPost
+from livestream_saver.channel import YoutubeChannel, VideoPost
 from livestream_saver.download import YoutubeLiveStream
 from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import get_channel_id, event_props
@@ -477,9 +482,199 @@ def _get_target_params(
 
 
 TIME_VARIANCE = 3.0  # in minutes
+# TODO allow configuration by user
+MAX_SIMULTANEOUS_LIVE_DOWNLOAD = 2
+
+video_queue: Queue[VideoPost] = Queue(maxsize=4)
+video_processing = set()
+video_processed = set()
+
+
+def video_feeder(queue: Queue, channel: YoutubeChannel, scan_delay: float):
+    while True:
+        try:
+            live_videos = channel.filter_videos('isLiveNow')
+            log.debug(
+                "Live videos found for channel "
+                f"\"{channel.get_channel_name()}\": "
+                f"{live_videos if len(live_videos) else None}"
+            )
+
+            for v in live_videos[:MAX_SIMULTANEOUS_LIVE_DOWNLOAD]:
+                if v not in video_processing:
+                    queue.put(v)
+        except Exception as e:
+            # Handle urllib.error.URLError <urlopen error [Errno -3] Temporary failure in name resolution>
+            log.exception(f"Error while getting live videos: {e}")
+        util.wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
+
+
+def download_task(
+    video: VideoPost, 
+    config: ConfigParser, 
+    args: Dict, 
+    session: YoutubeUrllibSession
+):
+    if video in video_processing or video in video_processed:
+        logging.debug(f"Video already processed or being processed: {video}")
+        return
+    video_processing.add(video)
+
+    video_id = video.get("videoId")
+    # Build the full "/watch?v=..." URL
+    video_url = f"https://www.youtube.com{video.get('url')}" 
+
+    if not video_id:
+        try:
+            video_id = extract.get_video_id(video_url)
+        except ValueError as e:
+            log.critical(e)
+            video_processing.remove(video)
+            return
+
+    log.info(
+        f"Found live: {video_id}. Title: \"{video.get('title')}\".")
+
+    if output_dir := args.get("output_dir"):
+        sub_output_dir = output_dir / f"stream_capture_{video_id}"
+    else:
+        sub_output_dir = None
+
+    skip_download = args.get("skip_download", False)
+
+    # FIXME this class could be a subclass of VideoPost
+    live_video = YoutubeLiveStream(
+        video_id=video_id,
+        url=video_url,
+        output_dir=sub_output_dir,
+        session=session,
+        notifier=NOTIFIER,
+        max_video_quality=config.getint(
+            "monitor", "max_video_quality", vars=args, fallback=None),
+        hooks=args["hooks"],
+        skip_download=skip_download,
+        filters=args["filters"],
+        ignore_quality_change=config.getboolean(
+            "monitor", "ignore_quality_change", vars=args, fallback=False),
+        log_level=config.get("monitor", "log_level", vars=args),
+        initial_metadata=video,
+        use_ytdl=use_ytdl,
+        ytdl_opts=deepcopy(args["ytdlp_config"])
+    )
+
+    # ls.get_metadata(force=True)
+    live_video.trigger_hooks("on_download_initiated")
+
+    download_wanted = not skip_download
+    if not skip_download:
+        download_wanted = live_video.pre_download_checks()
+
+    if download_wanted:
+        try:
+            live_video.download()
+        except Exception as e:
+            log.exception(
+                f"Got error in stream download but continuing...\n {e}")
+
+    if live_video.skip_download or not download_wanted:
+        NOTIFIER.send_email(
+            subject=(
+                f"Skipped download of {video.channel.get_channel_name()} - "
+                f"{live_video.title} {video_id}"),
+            message_text=f"Hooks scheduled to run were: {args.get('hooks')}"
+        )
+        # We have already waited on the current stream for status update
+        # Add a small wait to read debug output in case of network errors
+        # cf issue #76
+        util.wait_block(min_minutes=0.5, variance=0.1)
+        return
+
+    if live_video.done:
+        log.info(f"Finished downloading {video_id}.")
+        NOTIFIER.send_email(
+            subject=(
+                f"Finished downloading {video.channel.get_channel_name()} -"
+                f"{live_video.title} {video_id}"),
+            message_text=f""
+        )
+        if not config.getboolean("monitor", "no_merge", vars=args) \
+                and not use_ytdl:
+            log.info("Merging segments...")
+            # TODO in a separate thread?
+            try:
+                merge(
+                    info=live_video.video_info,
+                    data_dir=live_video.output_dir,
+                    keep_concat=config.getboolean(
+                        "monitor", "keep_concat", vars=args),
+                    delete_source=config.getboolean(
+                        "monitor", "delete_source", vars=args)
+                )
+            except Exception as e:
+                log.error(e)
+
+            # TODO pass arguments about (un)successful merge
+            live_video.trigger_hooks("on_merge_done")
+
+            # TODO get the updated stream title from the channel page if
+            # the stream was recorded correctly?
+    if live_video.error:
+        NOTIFIER.send_email(
+            subject=f"Error downloading stream {live_video.video_id}",
+            message_text=(
+                f"Error was: {live_video.error}\n"
+                "Resuming monitoring..."
+            )
+        )
+        log.critical("Error during stream download! Resuming monitoring...")
+
+    video_processed.add(video)
+    video_processing.remove(video)
+
 
 
 def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
+    URL = args["URL"]
+    channel_id = args["channel_id"]
+    scan_delay = args["scan_delay"]
+
+    session = YoutubeUrllibSession(
+        cookiefile_path=args.get("cookies"),
+        notifier=NOTIFIER
+    )
+
+    URL = util.sanitize_channel_url(URL)
+    channel = YoutubeChannel(
+        URL, channel_id, session,
+        output_dir=args["output_dir"],
+        hooks=args["hooks"],
+        notifier=NOTIFIER
+    )
+    log.info(f"Monitoring channel: {channel._id}")
+
+    feeder_thread = threading.Thread(
+        target=video_feeder, 
+        args=(video_queue, channel, scan_delay)
+    )
+    feeder_thread.daemon = True
+    feeder_thread.start()
+
+    with ThreadPoolExecutor(
+        max_workers=MAX_SIMULTANEOUS_LIVE_DOWNLOAD
+    ) as executor:
+        # TODO better handle keyboard interrupts
+        while feeder_thread.is_alive():
+            executor.submit(
+                download_task, video_queue.get(), config, args, channel.session
+            )
+            log.debug("waiting 5 seconds")
+            sleep(5)  # probably not necessary if queue.get blocks
+
+    feeder_thread.join()
+
+
+# FIXME remove
+def monitor_mode_old(config: ConfigParser, args: Dict[str, Any]):
     URL = args["URL"]
     channel_id = args["channel_id"]
     scan_delay = args["scan_delay"]
@@ -498,7 +693,6 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
         notifier=NOTIFIER
     )
     log.info(f"Monitoring channel: {ch._id}")
-
     while True:
         live_videos = []
         try:
@@ -518,7 +712,6 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
         except Exception as e:
             # Handle urllib.error.URLError <urlopen error [Errno -3] Temporary failure in name resolution>
             log.exception(f"Error while getting live videos: {e}")
-            pass
 
         if len(live_videos) == 0:
             util.wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)

@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 MISSING_THRESHOLD = 3
 
 
-
 @dataclass(slots=True)
 class VideoPost:
     videoId: str = field(init=True)
@@ -34,7 +33,7 @@ class VideoPost:
     upcoming: bool = field(init=False, default=False)
     startTime: Optional[str] = field(init=False, default=None)
     download_metadata: dict = field(init=False, default_factory=dict)
-    channel: "YoutubeChannel" = field(init=False)
+    channel: Optional["YoutubeChannel"] = field(init=False)
 
     def __repr__(self) -> str:
         return self.videoId
@@ -49,9 +48,9 @@ class VideoPost:
         return self.get(value, default)
 
     @staticmethod
-    def from_post(post: Dict) -> Optional['VideoPost']:
+    def from_post(post: Dict, channel: Optional["YoutubeChannel"]) -> 'VideoPost':
         if not (videoId := post.get('videoId')):
-            return None
+            raise ValueError("Missing videoId")
 
         video = VideoPost(videoId=videoId)
         video.thumbnail = post.get('thumbnail', {})
@@ -99,6 +98,7 @@ class VideoPost:
             if badge_renderer := _item.get('metadataBadgeRenderer', {}):
                 if badge_renderer.get('label') == "LIVE NOW":
                     video.isLiveNow = True
+        video.channel = channel
         return video
 
 
@@ -275,7 +275,7 @@ class YoutubeChannel:
         Note also that active Livestreams seem to be listed only in this tab,
         and not in the Live tab anymore.
         """
-        home_videos = get_videos_from_tab(
+        home_videos = self.get_videos_from_tab(
             tabtype="Home",
             tabs=get_tabs_from_json(
                 self.get_json_and_cache("Home", update=True)
@@ -309,7 +309,7 @@ class YoutubeChannel:
         Not super useful right now, but could be in the future if we ever wanted
         to scrape VOD, or record premiering videos as they are streamed.
         """
-        public_videos = get_videos_from_tab(
+        public_videos = self.get_videos_from_tab(
             tabtype="Videos",
             tabs=get_tabs_from_json(
                 self.get_json_and_cache("Videos", update=True)),
@@ -343,7 +343,7 @@ class YoutubeChannel:
         """
         Return the currently listed videos from the Live tab.
         """
-        public_streams = get_videos_from_tab(
+        public_streams = self.get_videos_from_tab(
             tabtype="Live",
             tabs=get_tabs_from_json(
                 self.get_json_and_cache("Live", update=True)),
@@ -374,7 +374,7 @@ class YoutubeChannel:
         return public_streams
 
     def get_community_videos(self) -> List[VideoPost]:
-        community_videos = get_videos_from_tab(
+        community_videos = self.get_videos_from_tab(
             tabtype="Community",
             tabs=get_tabs_from_json(
                 self.get_json_and_cache("Community", update=True)),
@@ -410,7 +410,7 @@ class YoutubeChannel:
     def get_membership_videos(self) -> List[VideoPost]:
         _json = self.get_json_and_cache("Membership", update=True)
         self.session.is_logged_out(_json)
-        membership_videos = get_videos_from_tab(
+        membership_videos = self.get_videos_from_tab(
             tabtype="Membership",
             tabs=get_tabs_from_json(_json)
         )
@@ -740,34 +740,36 @@ class YoutubeChannel:
             client="web"
         )
 
-def get_videos_from_tab(tabtype: str, tabs: List) -> List[VideoPost]:
-    """
-    Return videos attached to posts in available "tab" section in JSON response.
-    tabtype is either "Videos" "Community", "Membership", "Home" etc.
-    """
-    # NOTE the format depends on the client (user-agent) used to make the request
-    # FIXME
-    for tab in tabs:
-        if tab.get('tabRenderer', {}).get('title') != tabtype:
-            continue
+    def get_videos_from_tab(self, tabtype: str, tabs: List) -> List[VideoPost]:
+        """
+        Return videos attached to posts in available "tab" section in JSON response.
+        tabtype is either "Videos" "Community", "Membership", "Home" etc.
+        """
+        # The format depends on the client (user-agent) used to make the 
+        # request, so either grid_renderer or list_renderer will be used.
+        for tab in tabs:
+            if tab.get('tabRenderer', {}).get('title') != tabtype:
+                continue
 
-        if richGridRenderer := tab.get('tabRenderer', {})\
-                      .get('content', {})\
-                      .get('richGridRenderer'):
-            return _get_content_from_grid_renderer(
-                tabtype,
-                richGridRenderer.get('contents', []))
+            if richGridRenderer := tab.get('tabRenderer', {})\
+                        .get('content', {})\
+                        .get('richGridRenderer'):
+                return _get_content_from_grid_renderer(
+                    tabtype,
+                    richGridRenderer.get('contents', []),
+                    self)
 
-        # This is the way the Home tab renders
-        if sectionListRenderer := tab.get('tabRenderer', {})\
-                      .get('content', {})\
-                      .get('sectionListRenderer'):
-            return _get_content_from_list_renderer(
-                tabtype,
-                sectionListRenderer.get('contents', []))
+            # This is the way the Home tab renders
+            if sectionListRenderer := tab.get('tabRenderer', {})\
+                        .get('content', {})\
+                        .get('sectionListRenderer'):
+                return _get_content_from_list_renderer(
+                    tabtype,
+                    sectionListRenderer.get('contents', []),
+                    self)
 
-        raise Exception(f"No valid content renderer found for \"{tabtype=}\".")
-    return []
+            raise Exception(f"No valid content renderer found for \"{tabtype=}\".")
+        return []
 
 
 class DedupedVideoList(list):
@@ -787,7 +789,8 @@ class DedupedVideoList(list):
 
 def _get_content_from_grid_renderer(
     tabtype: str,
-    contents: List
+    contents: List,
+    channel: YoutubeChannel
 ) -> List[VideoPost]:
     """
     Parse gridVideoRenderer for video posts.
@@ -800,23 +803,31 @@ def _get_content_from_grid_renderer(
                 # gridVideoRenderer might be obsolete
                 griditems = __item.get('gridVideoRenderer', {}).get('items', [])
                 for griditem in griditems:
-                    if vid_metadata := VideoPost.from_post(
-                        griditem.get('gridVideoRenderer')):
+                    try:
+                        vid_metadata = VideoPost.from_post(
+                            griditem.get('gridVideoRenderer'), channel)
+                    except ValueError as e:
+                        logger.debug(e)
+                    else:
                         videos.append(vid_metadata)
                 # New structure
-                if vid_metadata := VideoPost.from_post(
-                    __item.get("videoRenderer")):
+                try:
+                    vid_metadata = VideoPost.from_post(
+                        __item.get("videoRenderer"), channel)
+                except ValueError as e:
+                    logger.debug(e)
+                else:
                     videos.append(vid_metadata)
     if videos.duplicates:
         logger.debug(
             f"Filtered duplicate video Ids from tab {tabtype}: {videos.duplicates}")
-
     return list(videos)
 
 
 def _get_content_from_list_renderer(
     tabtype: str,
-    contents: List
+    contents: List,
+    channel: YoutubeChannel
 ) -> List[VideoPost]:
     """
     Parse sectionListRenderer for video posts.
@@ -835,19 +846,32 @@ def _get_content_from_list_renderer(
                         if videoRenderer := backstageAttachment\
                             .get('videoRenderer', {}):
                             # some posts don't have attached videos
-                            if vid_metadata := VideoPost.from_post(videoRenderer):
+                            try:
+                                vid_metadata = VideoPost.from_post(
+                                    videoRenderer, channel)
+                            except ValueError as e:
+                                logger.debug(e)
+                            else:
                                 videos.append(vid_metadata)
                 # In some cases the video is directly listed as its own item:
                 elif videoRenderer := __item.get('videoRenderer', {}):
-                    if vid_metadata := VideoPost.from_post(videoRenderer):
+                    try:
+                        vid_metadata = VideoPost.from_post(
+                            videoRenderer, channel)
+                    except ValueError as e:
+                        logger.debug(e)
+                    else:
                         videos.append(vid_metadata)
 
             elif tabtype == "Videos":
                 griditems = __item.get('gridRenderer', {}).get('items', [])
                 for griditem in griditems:
-                    if vid_metadata := VideoPost.from_post(
-                        griditem.get('gridVideoRenderer')
-                    ):
+                    try:
+                        vid_metadata = VideoPost.from_post(
+                            griditem.get('gridVideoRenderer'), channel)
+                    except ValueError as e:
+                        logger.debug(e)
+                    else:
                         videos.append(vid_metadata)
 
             elif tabtype == "Home":
@@ -855,7 +879,12 @@ def _get_content_from_list_renderer(
                     'channelFeaturedContentRenderer', {}).get('items', [])
                 for cfcItem in cfcRenderer:
                     if videoRenderer := cfcItem.get('videoRenderer'):
-                        if vid_metadata := VideoPost.from_post(videoRenderer):
+                        try:
+                            vid_metadata = VideoPost.from_post(
+                                videoRenderer, channel)
+                        except ValueError as e:
+                            logger.debug(e)
+                        else:
                             videos.append(vid_metadata)
 
             # elif tabtype == "Live":
