@@ -14,7 +14,7 @@
     // Default is "only_download" for CLI, but False for API
     // "ignoreerrors": "only_download",
     
-    "outtmpl": "%(upload_date)s [%(uploader)s] %(title)s [%(height)s][%(id)s].%(ext)s",
+    "outtmpl": "%(release_date)s [%(uploader)s] %(title)s [%(height)s][%(id)s].%(ext)s",
      
     // Need to test this one, but it's not needed in our case anyway:
     // "match_filter": 'is_live',
