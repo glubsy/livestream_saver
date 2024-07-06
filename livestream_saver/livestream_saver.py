@@ -642,6 +642,7 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
         cookiefile_path=args.get("cookies"),
         notifier=NOTIFIER
     )
+    session._initialize_consent()
 
     URL = util.sanitize_channel_url(URL)
     channel = YoutubeChannel(
@@ -683,6 +684,7 @@ def monitor_mode_old(config: ConfigParser, args: Dict[str, Any]):
         cookiefile_path=args.get("cookies"),
         notifier=NOTIFIER
     )
+    session._initialize_consent()
 
     URL = util.sanitize_channel_url(URL)
 
@@ -833,6 +835,7 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
     session = YoutubeUrllibSession(
         cookiefile_path=args.get("cookies"), notifier=NOTIFIER
     )
+    session._initialize_consent()
 
     ls = YoutubeLiveStream(
         video_id=args["video_id"],

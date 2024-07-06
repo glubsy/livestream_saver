@@ -47,7 +47,8 @@ class YoutubeUrllibSession:
             'User-Agent': UA,
             'Accept-Language': 'en-US,en'  # ensure messages in english from the API
         }
-        self._initialize_consent()
+        # Let the caller do this (can be removed):
+        # self._initialize_consent()
         self._logged_in = False
         self.was_logged_in = False
         self.notify_h = notifier
