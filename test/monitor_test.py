@@ -9,6 +9,7 @@ from urllib.error import URLError
 
 from livestream_saver.channel import YoutubeChannel, VideoPost, DedupedVideoList
 from livestream_saver.request import YoutubeUrllibSession
+from livestream_saver.exceptions import MissingVideoId
 from livestream_saver.notifier import NotificationDispatcher
 from livestream_saver.livestream_saver import monitor_mode
 
@@ -19,21 +20,23 @@ from livestream_saver.livestream_saver import monitor_mode
 
 
 class BaseTestVideoPost(unittest.TestCase):
-    data = {
-        "videoId": "test_id", 
-        "navigationEndpoint": {
-            "commandMetadata": {
-                "webCommandMetadata": {
-                    "url": "test_url"
+    def setUp(self) -> None:
+        self.data = {
+            "videoId": "test_id",
+            "navigationEndpoint": {
+                "commandMetadata": {
+                    "webCommandMetadata": {
+                        "url": "test_url"
+                    }
                 }
             }
         }
-    }
+        return super().setUp()
 
     def test_initialise_from_post(self):
         video = VideoPost.from_post(self.data, channel=None)
         self.assertEqual(video.videoId, "test_id")
-    
+
     def test_update_data(self):
         video = VideoPost.from_post(self.data, channel=None)
         self.assertEqual(video.url, "test_url")
@@ -48,6 +51,26 @@ class BaseTestVideoPost(unittest.TestCase):
     def test_repr(self):
         video = VideoPost.from_post(self.data, channel=None)
         self.assertEqual(repr(video), "test_id")
+
+    def test_missing_video_id(self):
+        del self.data["videoId"]
+        with self.assertRaises(MissingVideoId):
+            VideoPost.from_post(self.data, channel=None)
+
+    def test_invalid_type_passed(self):
+        with self.assertRaises(TypeError):
+            VideoPost.from_post(None, None)
+
+    def test_video_post_can_update_values(self):
+        video = VideoPost.from_post(self.data, channel=None)
+        self.assertFalse(video["isLive"])
+        video["isLive"] = True
+        self.assertTrue(video["isLive"])
+
+    def test_video_post_cannot_create_new_field(self):
+        video = VideoPost.from_post(self.data, channel=None)
+        with self.assertRaises(AttributeError):
+            video["new_field"] = "test"
 
 
 class TestDedupedVideoList(unittest.TestCase):
@@ -82,12 +105,12 @@ class TestMonitor(unittest.TestCase):
             URL="",
             channel_id="",
             session=session,
-            notifier=NotificationDispatcher() 
+            notifier=NotificationDispatcher()
         )
 
     def tearDown(self) -> None:
         self.patcher.stop()
-    
+
     @patch("configparser.ConfigParser")
     @patch("urllib.request.urlopen")
     def test_update_status_live_started(self, urlopen, configparser):
@@ -108,13 +131,11 @@ class TestDownload(unittest.TestCase):
             URL="",
             channel_id="",
             session=session,
-            notifier=NotificationDispatcher() 
+            notifier=NotificationDispatcher()
         )
 
     def tearDown(self) -> None:
         self.patcher.stop()
-    
-    def tearDown(self) -> None:
         return super().tearDown()
 
     @patch("configparser.ConfigParser")
@@ -122,7 +143,7 @@ class TestDownload(unittest.TestCase):
     def test_lost_connection_should_recover(self, request_mock, config):
         request_mock.side_effect = URLError("Temporary failure in name resolution")
         monitor_mode(
-            config, 
+            config,
             {
                 "URL": "",
                 "channel_id": "",

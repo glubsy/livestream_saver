@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field
 
 from livestream_saver import extract
-from livestream_saver.exceptions import TabNotFound
+from livestream_saver.exceptions import TabNotFound, MissingVideoId
 from livestream_saver.hooks import HookCommand
 from livestream_saver.notifier import WebHookFactory, NotificationDispatcher
 from livestream_saver.request import YoutubeUrllibSession
@@ -47,10 +47,18 @@ class VideoPost:
     def __getitem__(self, value, default=None) -> Any:
         return self.get(value, default)
 
+    def __setitem__(self, key, value) -> None:
+        setattr(self, key, value)
+
     @staticmethod
-    def from_post(post: Dict, channel: Optional["YoutubeChannel"]) -> 'VideoPost':
+    def from_post(
+        post: Dict, channel: Optional["YoutubeChannel"]
+    ) -> "VideoPost":
+        if not isinstance(post, dict):
+            raise TypeError(f"Expected type dict, got {type(post)}")
+
         if not (videoId := post.get('videoId')):
-            raise ValueError("Missing videoId")
+            raise MissingVideoId("Missing videoId in video post")
 
         video = VideoPost(videoId=videoId)
         video.thumbnail = post.get('thumbnail', {})
@@ -803,21 +811,22 @@ def _get_content_from_grid_renderer(
                 # gridVideoRenderer might be obsolete
                 griditems = __item.get('gridVideoRenderer', {}).get('items', [])
                 for griditem in griditems:
+                    if data :=  griditem.get('gridVideoRenderer'):
+                        try:
+                            vid_metadata = VideoPost.from_post(data, channel)
+                        except Exception as e:
+                            logger.debug(e)
+                        else:
+                            videos.append(vid_metadata)
+
+                # New structure
+                if data := __item.get("videoRenderer"):
                     try:
-                        vid_metadata = VideoPost.from_post(
-                            griditem.get('gridVideoRenderer'), channel)
-                    except ValueError as e:
+                        vid_metadata = VideoPost.from_post(data, channel)
+                    except Exception as e:
                         logger.debug(e)
                     else:
                         videos.append(vid_metadata)
-                # New structure
-                try:
-                    vid_metadata = VideoPost.from_post(
-                        __item.get("videoRenderer"), channel)
-                except ValueError as e:
-                    logger.debug(e)
-                else:
-                    videos.append(vid_metadata)
     if videos.duplicates:
         logger.debug(
             f"Filtered duplicate video Ids from tab {tabtype}: {videos.duplicates}")
@@ -837,7 +846,7 @@ def _get_content_from_list_renderer(
         for __item in content.get('itemSectionRenderer', {}).get('contents', []):
 
             # These two tab types appear to share the same architecture
-            if tabtype == "Community" or tabtype == "Membership":
+            if tabtype in ("Community", "Membership"):
                 post = __item.get('backstagePostThreadRenderer', {}).get('post', {})
                 if post:
                     if backstageAttachment := post\
@@ -849,7 +858,7 @@ def _get_content_from_list_renderer(
                             try:
                                 vid_metadata = VideoPost.from_post(
                                     videoRenderer, channel)
-                            except ValueError as e:
+                            except Exception as e:
                                 logger.debug(e)
                             else:
                                 videos.append(vid_metadata)
@@ -858,7 +867,7 @@ def _get_content_from_list_renderer(
                     try:
                         vid_metadata = VideoPost.from_post(
                             videoRenderer, channel)
-                    except ValueError as e:
+                    except Exception as e:
                         logger.debug(e)
                     else:
                         videos.append(vid_metadata)
@@ -869,7 +878,7 @@ def _get_content_from_list_renderer(
                     try:
                         vid_metadata = VideoPost.from_post(
                             griditem.get('gridVideoRenderer'), channel)
-                    except ValueError as e:
+                    except Exception as e:
                         logger.debug(e)
                     else:
                         videos.append(vid_metadata)
@@ -882,7 +891,7 @@ def _get_content_from_list_renderer(
                         try:
                             vid_metadata = VideoPost.from_post(
                                 videoRenderer, channel)
-                        except ValueError as e:
+                        except Exception as e:
                             logger.debug(e)
                         else:
                             videos.append(vid_metadata)
@@ -924,7 +933,7 @@ def rss_from_name(channel_name):
     return 'https://www.youtube.com/feeds/videos.xml?user=' + channel_name
 
 
-def format_list_output(vid_list: List[Dict]) -> str:
+def format_list_output(vid_list: List[VideoPost]) -> str:
     return "\n".join(
         (
             f"{vid.get('videoId')} - {vid.get('title')}"

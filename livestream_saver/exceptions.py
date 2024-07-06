@@ -1,4 +1,9 @@
+from typing import Optional
 from datetime import datetime
+
+
+class MissingVideoId(Exception):
+    pass
 
 
 class VideoStatusException(Exception):
@@ -6,7 +11,7 @@ class VideoStatusException(Exception):
         self.video_id = video_id
         self.reason = reason
         super().__init__(self.error_string)
-    
+
     @property
     def error_string(self):
         return f"{self.video_id} status error: {self.reason}"
