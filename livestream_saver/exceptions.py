@@ -34,17 +34,24 @@ class UnplayableException(VideoStatusException):
 
 
 class WaitingException(VideoStatusException):
-    def __init__(self, video_id, reason, scheduled_start_time=None):
+    def __init__(
+        self,
+        video_id: str,
+        reason: str,
+        scheduled_start_time: Optional[float] = None
+    ):
         self.video_id = video_id
-        self.reason = reason
         self.scheduled_start_time = scheduled_start_time
-        super().__init__(self.error_string)
+        super().__init__(self.error_string, reason=reason)
 
     @property
     def error_string(self):
         msg = f"{self.video_id} waiting for stream to start: {self.reason}."
         if self.scheduled_start_time:
-            msg += f" Scheduled time: {datetime.utcfromtimestamp(self.scheduled_start_time)}"
+            msg += (
+                " Scheduled time: "
+                f"{datetime.fromtimestamp(self.scheduled_start_time)}"
+            )
         return msg
 
 
