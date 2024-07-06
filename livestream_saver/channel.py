@@ -636,14 +636,15 @@ class YoutubeChannel:
         self,
         filter_type: str = 'isLiveNow'
     ) -> List[VideoPost]:
-        """Returns a list of videos that are live, from all channel tabs combined.
-        Usually there is only one live video active at a time.
+        """
+        Return a list of videos that are live, from all channel tabs combined.
+        There may be more than one active broadcast.
         """
         if not self._endpoints:
             self.load_endpoints()
 
         # Only collect videos for which the field has a value
-        filtered_videos = []
+        filtered_videos = DedupedVideoList()
         missing_endpoints = []
 
         # We should call this first since we probably have the Home tab in memory
@@ -703,7 +704,7 @@ class YoutubeChannel:
         for video in public_videos + public_streams:
             if video.get(filter_type):
                 filtered_videos.append(video)
-        return filtered_videos
+        return list(filtered_videos)
 
     def get_tab_json_from_api(self, tab_name: str) -> Optional[Dict]:
         """

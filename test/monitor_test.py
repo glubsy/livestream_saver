@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from pathlib import Path
 from json import load
 
@@ -95,56 +95,89 @@ class TestDedupedVideoList(unittest.TestCase):
         self.assertIn(self.data_2, l)
 
 
-class TestMonitor(unittest.TestCase):
+class TestGetVideosFromTabs(unittest.TestCase):
     def setUp(self) -> None:
-        self.patcher = patch("livestream_saver.request.YoutubeUrllibSession")
-        self.patcher.start()
-        session = YoutubeUrllibSession()
-
         self.ch = YoutubeChannel(
             URL="",
             channel_id="",
-            session=session,
+            session=YoutubeUrllibSession(),
             notifier=NotificationDispatcher()
         )
+        self.video_post = VideoPost.from_post(
+            post={
+                "videoId": "test_id",
+                "isLive": True,
+                "isLiveNow": True,
+                "navigationEndpoint": {
+                    "commandMetadata": {
+                        "webCommandMetadata": {
+                            "url": "test_url"
+                        }
+                    }
+                }
+            }, 
+            channel=self.ch
+        )
 
-    def tearDown(self) -> None:
-        self.patcher.stop()
-
+    @patch("livestream_saver.channel.YoutubeChannel.get_videos_from_tab")
+    @patch("livestream_saver.channel.YoutubeChannel.load_endpoints")
     @patch("configparser.ConfigParser")
     @patch("urllib.request.urlopen")
-    def test_update_status_live_started(self, urlopen, configparser):
+    @patch("livestream_saver.channel.YoutubeChannel.get_json_and_cache")
+    def test_duplicate_video_ids_are_filtered(
+        self,
+        get_json_and_cache: Mock,
+        urlopen: Mock, 
+        configparser: Mock, 
+        load_endpoints: Mock,
+        get_videos_from_tab: Mock
+    ):
         """
-        Status should be updated to status.OK or something
+        A given video Id may be found on multiple tabs. The filter_videos method
+        should only return one unique Id per video post found.
         """
-        raise NotImplementedError
+        get_videos_from_tab.return_value = [self.video_post,]
+        videos = self.ch.filter_videos('isLiveNow')
+        self.assertTrue(get_videos_from_tab.call_count > 1)
 
+        # Only one Id should be returned, despite being present on all tas
+        self.assertEqual(len(videos), 1)
+
+
+    # @patch("configparser.ConfigParser")
+    # @patch("urllib.request.urlopen")
+    # def test_update_status_live_started(self, urlopen, configparser):
+    #     """
+    #     Status for a video that is live should be updated to status.OK 
+    #     or something
+    #     """
+    #     raise NotImplementedError
 
 
 class TestDownload(unittest.TestCase):
     def setUp(self) -> None:
-        self.patcher = patch("livestream_saver.request.YoutubeUrllibSession")
-        self.patcher.start()
-        session = YoutubeUrllibSession()
-
+        # TODO a lof of methods to patch here; we might need 
+        # some data fixtures for this 
         self.ch = YoutubeChannel(
             URL="",
             channel_id="",
-            session=session,
+            session=YoutubeUrllibSession(),
             notifier=NotificationDispatcher()
         )
 
-    def tearDown(self) -> None:
-        self.patcher.stop()
-        return super().tearDown()
-
+    @patch("livestream_saver.request.YoutubeUrllibSession.initialize_consent")
     @patch("configparser.ConfigParser")
     @patch("urllib.request.urlopen")
-    def test_lost_connection_should_recover(self, request_mock, config):
+    def test_lost_connection_should_recover(
+        self,
+        request_mock: Mock, 
+        configparser: Mock,
+        initialize_consent: Mock
+    ):
         request_mock.side_effect = URLError("Temporary failure in name resolution")
         monitor_mode(
-            config,
-            {
+            configparser,
+            args={
                 "URL": "",
                 "channel_id": "",
                 "scan_delay": 0.0,
