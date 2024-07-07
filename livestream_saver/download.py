@@ -215,7 +215,7 @@ class VideoDownloader:
     pass
 
 
-class YTDLPVideoDownlaoder():
+class YTDLPVideoDownloader():
     # TODO only use yt-dlp to download
     pass
 
@@ -857,7 +857,7 @@ class YoutubeLiveStream:
         return self._start_time
 
     @property
-    def scheduled_timestamp(self):
+    def scheduled_timestamp(self) -> Optional[int]:
         if self._scheduled_timestamp:
             return self._scheduled_timestamp
         try:
@@ -950,7 +950,7 @@ class YoutubeLiveStream:
             "description": self.description,
         }
         if self.scheduled_timestamp is not None:
-            info["scheduled_time"] = datetime.utcfromtimestamp(
+            info["scheduled_time"] = datetime.fromtimestamp(
                 self.scheduled_timestamp
             ).__str__()
 
@@ -1012,7 +1012,7 @@ class YoutubeLiveStream:
                 # self._scheduled_timestamp = scheduled_time
                 self.log.info(
                     f"Scheduled start time: {scheduled_time}"
-                    f"({datetime.utcfromtimestamp(scheduled_time)} UTC). We wait...")
+                    f"({datetime.fromtimestamp(scheduled_time)} UTC). We wait...")
                 # FIXME use local time zone for more accurate display of time
                 # for example: https://dateutil.readthedocs.io/
 
