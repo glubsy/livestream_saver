@@ -34,41 +34,41 @@ class BaseTestVideoPost(unittest.TestCase):
         return super().setUp()
 
     def test_initialise_from_post(self):
-        video = VideoPost.from_post(self.data, channel=None)
+        video = VideoPost.from_post(self.data, channel_name="channel_name")
         self.assertEqual(video.videoId, "test_id")
 
     def test_update_data(self):
-        video = VideoPost.from_post(self.data, channel=None)
+        video = VideoPost.from_post(self.data, channel_name="channel_name")
         self.assertEqual(video.url, "test_url")
         video.url = "new_test_url"
         self.assertEqual(video.url, "new_test_url")
 
     def test_getter(self):
-        video = VideoPost.from_post(self.data, channel=None)
+        video = VideoPost.from_post(self.data, channel_name="channel_name")
         self.assertEqual(video.get('url'), "test_url")
         self.assertEqual(video['url'], "test_url")
 
     def test_repr(self):
-        video = VideoPost.from_post(self.data, channel=None)
+        video = VideoPost.from_post(self.data, channel_name="channel_name")
         self.assertEqual(repr(video), "test_id")
 
     def test_missing_video_id(self):
         del self.data["videoId"]
         with self.assertRaises(MissingVideoId):
-            VideoPost.from_post(self.data, channel=None)
+            VideoPost.from_post(self.data, channel_name="channel_name")
 
     def test_invalid_type_passed(self):
         with self.assertRaises(TypeError):
-            VideoPost.from_post(None, None)
+            VideoPost.from_post(None, None) # type: ignore
 
     def test_video_post_can_update_values(self):
-        video = VideoPost.from_post(self.data, channel=None)
+        video = VideoPost.from_post(self.data, channel_name="channel_name")
         self.assertFalse(video["isLive"])
         video["isLive"] = True
         self.assertTrue(video["isLive"])
 
     def test_video_post_cannot_create_new_field(self):
-        video = VideoPost.from_post(self.data, channel=None)
+        video = VideoPost.from_post(self.data, channel_name="channel_name")
         with self.assertRaises(AttributeError):
             video["new_field"] = "test"
 
@@ -78,21 +78,24 @@ class TestDedupedVideoList(unittest.TestCase):
     data_1 = {"videoId": "one"}
     data_2 = {"videoId": "two"}
 
-    def test_added_dupe(self):
-        l = DedupedVideoList()
-        l.append(self.data_1)
-        l.append(self.data_2)
-        l.append(self.data_1)
-        l.append(self.data_1)
-        self.assertEqual(l, [self.data_1, self.data_2])
-        self.assertIn(self.data_1, l)
-        self.assertIn(self.data_2, l)
-        self.assertEqual(len(l), 2)
-        self.assertEqual(len(l.seen_ids), 2)
-        self.assertEqual(len(l.duplicates), 1)
-        self.assertIn(self.data_1["videoId"], l.duplicates)
-        self.assertIn(self.data_1, l)
-        self.assertIn(self.data_2, l)
+    def test_added_dupes_are_filtered(self):
+        deduped_l = DedupedVideoList()
+        video_post_1 = VideoPost.from_post(self.data_1, channel_name="channel_name")
+        video_post_2 = VideoPost.from_post(self.data_2, channel_name="channel_name")
+
+        deduped_l.append(video_post_1)
+        deduped_l.append(video_post_2)
+        deduped_l.append(video_post_2)
+        deduped_l.append(video_post_2)
+
+        self.assertIn(self.data_1["videoId"], deduped_l.seen_ids)
+        self.assertIn(self.data_2["videoId"], deduped_l.seen_ids)
+        self.assertIn(video_post_1, deduped_l)
+        self.assertIn(video_post_2, deduped_l)
+        self.assertEqual(len(deduped_l), 2)
+        self.assertEqual(len(deduped_l.seen_ids), 2)
+        self.assertEqual(len(deduped_l.duplicates), 1)
+        self.assertIn(self.data_2["videoId"], deduped_l.duplicates)
 
 
 class TestGetVideosFromTabs(unittest.TestCase):
@@ -115,8 +118,8 @@ class TestGetVideosFromTabs(unittest.TestCase):
                         }
                     }
                 }
-            }, 
-            channel=self.ch
+            },
+            channel_name="channel name"
         )
 
     @patch("livestream_saver.channel.YoutubeChannel.get_videos_from_tab")
@@ -127,8 +130,8 @@ class TestGetVideosFromTabs(unittest.TestCase):
     def test_duplicate_video_ids_are_filtered(
         self,
         get_json_and_cache: Mock,
-        urlopen: Mock, 
-        configparser: Mock, 
+        urlopen: Mock,
+        configparser: Mock,
         load_endpoints: Mock,
         get_videos_from_tab: Mock
     ):
@@ -148,7 +151,7 @@ class TestGetVideosFromTabs(unittest.TestCase):
     # @patch("urllib.request.urlopen")
     # def test_update_status_live_started(self, urlopen, configparser):
     #     """
-    #     Status for a video that is live should be updated to status.OK 
+    #     Status for a video that is live should be updated to status.OK
     #     or something
     #     """
     #     raise NotImplementedError
@@ -156,8 +159,8 @@ class TestGetVideosFromTabs(unittest.TestCase):
 
 class TestDownload(unittest.TestCase):
     def setUp(self) -> None:
-        # TODO a lof of methods to patch here; we might need 
-        # some data fixtures for this 
+        # TODO a lof of methods to patch here; we might need
+        # some data fixtures for this
         self.ch = YoutubeChannel(
             URL="",
             channel_id="",
@@ -165,16 +168,17 @@ class TestDownload(unittest.TestCase):
             notifier=NotificationDispatcher()
         )
 
-    @patch("livestream_saver.request.YoutubeUrllibSession.initialize_consent")
+    @patch("livestream_saver.request.YoutubeUrllibSession._initialize_consent")
     @patch("configparser.ConfigParser")
     @patch("urllib.request.urlopen")
     def test_lost_connection_should_recover(
         self,
-        request_mock: Mock, 
+        request_mock: Mock,
         configparser: Mock,
-        initialize_consent: Mock
+        _initialize_consent: Mock
     ):
         request_mock.side_effect = URLError("Temporary failure in name resolution")
+        raise NotImplementedError
         monitor_mode(
             configparser,
             args={
@@ -185,4 +189,3 @@ class TestDownload(unittest.TestCase):
                 "hooks": "",
             }
         )
-        raise NotImplementedError

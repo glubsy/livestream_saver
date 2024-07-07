@@ -496,7 +496,7 @@ def video_feeder(queue: Queue, channel: YoutubeChannel, scan_delay: float):
             live_videos = channel.filter_videos('isLiveNow')
             log.debug(
                 "Live videos found for channel "
-                f"\"{channel.get_channel_name()}\": "
+                f"\"{channel.name}\": "
                 f"{live_videos if len(live_videos) else None}"
             )
 
@@ -579,7 +579,7 @@ def download_task(
     if live_video.skip_download or not download_wanted:
         NOTIFIER.send_email(
             subject=(
-                f"Skipped download of {video.channel.get_channel_name()} - "
+                f"Skipped download of {video.channel_name} - "
                 f"{live_video.title} {video_id}"),
             message_text=f"Hooks scheduled to run were: {args.get('hooks')}"
         )
@@ -593,7 +593,7 @@ def download_task(
         log.info(f"Finished downloading {video_id}.")
         NOTIFIER.send_email(
             subject=(
-                f"Finished downloading {video.channel.get_channel_name()} -"
+                f"Finished downloading {video.channel_name} -"
                 f"{live_video.title} {video_id}"),
             message_text=f""
         )
@@ -649,7 +649,8 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
         URL, channel_id, session,
         output_dir=args["output_dir"],
         hooks=args["hooks"],
-        notifier=NOTIFIER
+        notifier=NOTIFIER,
+        name=args.get("channel_name")
     )
     log.info(f"Monitoring channel: {channel._id}")
 
@@ -708,7 +709,7 @@ def monitor_mode_old(config: ConfigParser, args: Dict[str, Any]):
             # TODO print to stdout and overwrite line
             log.debug(
                 "Live videos found for channel "
-                f"\"{ch.get_channel_name()}\": "
+                f"\"{ch._get_channel_name()}\": "
                 f"{live_videos if len(live_videos) else None}"
             )
         except Exception as e:
@@ -778,7 +779,7 @@ def monitor_mode_old(config: ConfigParser, args: Dict[str, Any]):
         if ls.skip_download or not download_wanted:
             NOTIFIER.send_email(
                 subject=(
-                    f"Skipped download of {ch.get_channel_name()} - "
+                    f"Skipped download of {ch._get_channel_name()} - "
                     f"{ls.title} {video_id}"),
                 message_text=f"Hooks scheduled to run were: {args.get('hooks')}"
             )
@@ -792,7 +793,7 @@ def monitor_mode_old(config: ConfigParser, args: Dict[str, Any]):
             log.info(f"Finished downloading {video_id}.")
             NOTIFIER.send_email(
                 subject=(
-                    f"Finished downloading {ch.get_channel_name()} -"
+                    f"Finished downloading {ch._get_channel_name()} -"
                     f"{ls.title} {video_id}"),
                 message_text=f""
             )

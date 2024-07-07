@@ -24,7 +24,7 @@ MISSING_THRESHOLD = 3
 @dataclass(slots=True)
 class VideoPost:
     videoId: str = field(init=True)
-    title: str = field(init=False)
+    title: str = field(init=False, default="No title")
     url: str = field(init=False)
     thumbnail: dict = field(init=False, default_factory=dict)
     isLiveNow: bool = field(init=False, default=False)
@@ -33,7 +33,7 @@ class VideoPost:
     upcoming: bool = field(init=False, default=False)
     startTime: Optional[str] = field(init=False, default=None)
     download_metadata: dict = field(init=False, default_factory=dict)
-    channel: Optional["YoutubeChannel"] = field(init=False)
+    channel_name: str = field(init=False)
 
     def __repr__(self) -> str:
         return self.videoId
@@ -52,7 +52,7 @@ class VideoPost:
 
     @staticmethod
     def from_post(
-        post: Dict, channel: Optional["YoutubeChannel"]
+        post: Dict, channel_name: str
     ) -> "VideoPost":
         if not isinstance(post, dict):
             raise TypeError(f"Expected type dict, got {type(post)}")
@@ -106,20 +106,28 @@ class VideoPost:
             if badge_renderer := _item.get('metadataBadgeRenderer', {}):
                 if badge_renderer.get('label') == "LIVE NOW":
                     video.isLiveNow = True
-        video.channel = channel
+
+        video.channel_name = channel_name
         return video
 
 
 
 
 class YoutubeChannel:
-    def __init__(self, URL, channel_id, session, notifier,
-        output_dir: Optional[Path]=None, hooks={}
+    def __init__(
+        self,
+        URL: str,
+        channel_id: str,
+        session: YoutubeUrllibSession,
+        notifier: NotificationDispatcher,
+        output_dir: Optional[Path] = None,
+        hooks: Optional[Dict] = None,
+        name: Optional[str] = None
     ):
         self.session: YoutubeUrllibSession = session
         self.url = URL
         self._id = channel_id
-        self.channel_name = "N/A"
+        self._name: Optional[str] = name
 
         self._home_videos: List[VideoPost] = None
         self._public_videos: List[VideoPost] = None
@@ -145,7 +153,7 @@ class YoutubeChannel:
         self._endpoints: Optional[Dict] = None
 
         self.notifier: NotificationDispatcher = notifier
-        self.hooks = hooks
+        self.hooks = hooks if hooks is not None else {}
         self._hooked_videos = []
         if not output_dir:
             output_dir = Path().cwd()
@@ -155,7 +163,7 @@ class YoutubeChannel:
     @property
     def cached_json(self) -> Dict:
         """
-        The currently tab data as JSON currently kept in memory.
+        The current tab data as JSON currently kept in memory.
         Initially, this gets data from the "Home" tab json.
         """
         if self._cached_json is None:
@@ -184,18 +192,22 @@ class YoutubeChannel:
         self._id = _id
         return _id
 
-    def get_channel_name(self) -> Optional[str]:
+    @property
+    def name(self) -> str:
+        if self._name is None:
+            self._name = self._get_channel_name()
+        return self._name
+
+    def _get_channel_name(self) -> str:
         """
         Get the name of the channel from the home JSON (once retrieved).
         """
         # FIXME this method pre-fetches the json if called before
         # TODO handle channel names which are not IDs
         # => get "videos" tab html page and grab externalId value from it?
-        if _cached_json := self.cached_json:
-            self.channel_name = _cached_json.get('metadata', {})\
+        return self.cached_json.get('metadata', {})\
                 .get('channelMetadataRenderer', {})\
-                .get('title')
-        return self.channel_name
+                .get('title', 'Unknown channel name')
 
     def get_public_videos_html(self, update=False) -> str:
         # NOTE active livestreams are also displayed in /featured tab:
@@ -754,7 +766,7 @@ class YoutubeChannel:
         Return videos attached to posts in available "tab" section in JSON response.
         tabtype is either "Videos" "Community", "Membership", "Home" etc.
         """
-        # The format depends on the client (user-agent) used to make the 
+        # The format depends on the client (user-agent) used to make the
         # request, so either grid_renderer or list_renderer will be used.
         for tab in tabs:
             if tab.get('tabRenderer', {}).get('title') != tabtype:
@@ -814,7 +826,7 @@ def _get_content_from_grid_renderer(
                 for griditem in griditems:
                     if data :=  griditem.get('gridVideoRenderer'):
                         try:
-                            vid_metadata = VideoPost.from_post(data, channel)
+                            vid_metadata = VideoPost.from_post(data, channel.name)
                         except Exception as e:
                             logger.debug(e)
                         else:
@@ -823,7 +835,7 @@ def _get_content_from_grid_renderer(
                 # New structure
                 if data := __item.get("videoRenderer"):
                     try:
-                        vid_metadata = VideoPost.from_post(data, channel)
+                        vid_metadata = VideoPost.from_post(data, channel.name)
                     except Exception as e:
                         logger.debug(e)
                     else:
@@ -858,7 +870,7 @@ def _get_content_from_list_renderer(
                             # some posts don't have attached videos
                             try:
                                 vid_metadata = VideoPost.from_post(
-                                    videoRenderer, channel)
+                                    videoRenderer, channel.name)
                             except Exception as e:
                                 logger.debug(e)
                             else:
@@ -867,7 +879,7 @@ def _get_content_from_list_renderer(
                 elif videoRenderer := __item.get('videoRenderer', {}):
                     try:
                         vid_metadata = VideoPost.from_post(
-                            videoRenderer, channel)
+                            videoRenderer, channel.name)
                     except Exception as e:
                         logger.debug(e)
                     else:
@@ -878,7 +890,7 @@ def _get_content_from_list_renderer(
                 for griditem in griditems:
                     try:
                         vid_metadata = VideoPost.from_post(
-                            griditem.get('gridVideoRenderer'), channel)
+                            griditem.get('gridVideoRenderer'), channel.name)
                     except Exception as e:
                         logger.debug(e)
                     else:
@@ -891,7 +903,7 @@ def _get_content_from_list_renderer(
                     if videoRenderer := cfcItem.get('videoRenderer'):
                         try:
                             vid_metadata = VideoPost.from_post(
-                                videoRenderer, channel)
+                                videoRenderer, channel.name)
                         except Exception as e:
                             logger.debug(e)
                         else:
