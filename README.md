@@ -120,7 +120,7 @@ optional arguments:
 
 # Dependencies
 
-* python >=3.8
+* python >= 3.10
 * yt-dlp (preferrably always the latest version)
 * [pytube](https://github.com/pytube/pytube) 10.9.2
 * ffmpeg (and ffprobe) to concatenate segments and merge them into one file 
