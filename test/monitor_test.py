@@ -106,9 +106,24 @@ class TestGetVideosFromTabs(unittest.TestCase):
             session=YoutubeUrllibSession(),
             notifier=NotificationDispatcher()
         )
-        self.video_post = VideoPost.from_post(
+        self.video_post1 = VideoPost.from_post(
             post={
-                "videoId": "test_id",
+                "videoId": "test_id1",
+                "isLive": True,
+                "isLiveNow": True,
+                "navigationEndpoint": {
+                    "commandMetadata": {
+                        "webCommandMetadata": {
+                            "url": "test_url"
+                        }
+                    }
+                }
+            },
+            channel_name="channel name"
+        )
+        self.video_post2 = VideoPost.from_post(
+            post={
+                "videoId": "test_id2",
                 "isLive": True,
                 "isLiveNow": True,
                 "navigationEndpoint": {
@@ -133,18 +148,69 @@ class TestGetVideosFromTabs(unittest.TestCase):
         urlopen: Mock,
         configparser: Mock,
         load_endpoints: Mock,
-        get_videos_from_tab: Mock
+        get_videos_from_tab: Mock,
     ):
         """
         A given video Id may be found on multiple tabs. The filter_videos method
         should only return one unique Id per video post found.
         """
-        get_videos_from_tab.return_value = [self.video_post,]
+
+        get_videos_from_tab.return_value = [self.video_post1,]
         videos = self.ch.filter_videos('isLiveNow')
+        # If we have 5 tabs, we should have 5 calls here
         self.assertTrue(get_videos_from_tab.call_count > 1)
 
-        # Only one Id should be returned, despite being present on all tas
+        # Only one Id should be returned, despite being present on all tabs
         self.assertEqual(len(videos), 1)
+
+
+    @patch("livestream_saver.channel.YoutubeChannel.warn_of_new")
+    @patch("livestream_saver.channel.YoutubeChannel.get_videos_from_tab")
+    @patch("livestream_saver.channel.YoutubeChannel.load_endpoints")
+    @patch("configparser.ConfigParser")
+    @patch("urllib.request.urlopen")
+    @patch("livestream_saver.channel.YoutubeChannel.get_json_and_cache")
+    def test_warn_of_new_is_only_called_for_new_video_id(
+        self,
+        get_json_and_cache: Mock,
+        urlopen: Mock,
+        configparser: Mock,
+        load_endpoints: Mock,
+        get_videos_from_tab: Mock,
+        warn_of_new: Mock
+    ):
+        """
+        Ensure that warn_of_new is only called once for the same video Ids on
+        a given tab.
+        """
+        # Assuming 5 tabs, so 5 calls
+        get_videos_from_tab.side_effect = [[self.video_post1], [], [], [], []]
+        videos = self.ch.filter_videos('isLiveNow')
+        # If we have 5 tabs, we should have 5 calls here
+        self.assertEqual(get_videos_from_tab.call_count, 5)
+        # All videos are printed the very first time
+        warn_of_new.assert_not_called()
+        self.assertEqual(len(videos), 1)
+
+        warn_of_new.reset_mock()
+        get_videos_from_tab.reset_mock()
+        get_videos_from_tab.side_effect = [
+            [self.video_post1, self.video_post2], [], [], [], []]
+
+        videos = self.ch.filter_videos('isLiveNow')
+        self.assertEqual(get_videos_from_tab.call_count, 5)
+        warn_of_new.assert_called_once()
+
+        self.assertEqual(len(videos), 2)
+
+        warn_of_new.reset_mock()
+        get_videos_from_tab.reset_mock()
+        get_videos_from_tab.side_effect = [
+            [self.video_post1, self.video_post2], [], [], [], []]
+
+        videos = self.ch.filter_videos('isLiveNow')
+        self.assertEqual(len(videos), 2)
+        warn_of_new.assert_not_called()
 
     @patch("livestream_saver.channel.YoutubeChannel.load_endpoints")
     @patch("configparser.ConfigParser")
@@ -161,38 +227,22 @@ class TestGetVideosFromTabs(unittest.TestCase):
         Ensure that only new video Ids are returned by YoutubeChannel.get_changes
         """
         previously = []
-        newly      = [self.video_post]
+        newly      = [self.video_post1]
         new, removed = self.ch.get_changes(
             videos=newly,
             previous=previously
         )
-        self.assertEqual(new, [self.video_post])
+        self.assertEqual(new, [self.video_post1])
         self.assertEqual(removed, [])
 
-        new_video = VideoPost.from_post(
-            post={
-                "videoId": "test_id2",
-                "isLive": True,
-                "isLiveNow": True,
-                "navigationEndpoint": {
-                    "commandMetadata": {
-                        "webCommandMetadata": {
-                            "url": "test_url"
-                        }
-                    }
-                }
-            },
-            channel_name="channel name"
-        )
-
-        previously.append(self.video_post)
-        previously.append(new_video)
+        previously.append(self.video_post1)
+        previously.append(self.video_post2)
         new, removed = self.ch.get_changes(
             videos=newly,
             previous=previously
         )
         self.assertEqual(new, [])
-        self.assertEqual(removed, [new_video])
+        self.assertEqual(removed, [self.video_post2])
 
     # @patch("configparser.ConfigParser")
     # @patch("urllib.request.urlopen")
