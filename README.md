@@ -27,26 +27,32 @@ Basic usage example: `python livestream_saver.py monitor --cookies /path/to/cook
 ```
 > python3 livestream_saver.py monitor --help
 
-usage: livestream_saver.py monitor [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONFIG_FILE] [--cookies COOKIES_PATH] [-q MAX_VIDEO_QUALITY] [-o OUTPUT_DIR] [--channel-name CHANNEL_NAME] [-s SECTION] [-d] [-n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] [--skip-download] [YOUTUBE_CHANNEL_URL]
+usage: livestream_saver.py monitor [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONFIG_FILE] [--cookies COOKIES_PATH] [-q MAX_VIDEO_QUALITY] [-o OUTPUT_DIR]
+                                   [--channel-name CHANNEL_NAME] [-s SECTION] [-d] [-n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] [--skip-download]
+                                   [--ignore-quality-change] [--max-simultaneous-streams MAX_SIMULTANEOUS_STREAMS]
+                                   [YOUTUBE_CHANNEL_URL]
 
 positional arguments:
   YOUTUBE_CHANNEL_URL   The Youtube channel to monitor for live streams. Either a full youtube URL, /channel/ID, or /c/name format. (default: None)
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
                         Log level. (Default: INFO)
   -c CONFIG_FILE, --config-file CONFIG_FILE
                         Path to config file to use. (Default: ~/.config/livestream_saver/livestream_saver.cfg)
-  --cookies COOKIES_PATH  Path to Netscape formatted cookies file.
+  --cookies COOKIES_PATH
+                        Path to Netscape formatted cookies file.
   -q MAX_VIDEO_QUALITY, --max-video-quality MAX_VIDEO_QUALITY
-                        Use best available video resolution up to this height in pixels. Example: "360" for maximum height 360p. Get the highest available resolution by default.
+                        Use best available video resolution up to this height in pixels. Example: "360" for maximum height 360p. Get the highest available resolution by
+                        default.
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
                         Output directory where to save channel data. (Default: CWD)
   --channel-name CHANNEL_NAME
                         User-defined name of the channel to monitor. Will fallback to channel ID deduced from the URL otherwise.
   -s SECTION, --section SECTION
-                        Override values from the section [monitor NAME] found in config file. If none is specified, will load the first section in config with that name pattern. (default: None)
+                        Override values from the section [monitor NAME] found in config file. If none is specified, will load the first section in config with that name
+                        pattern. (default: None)
   -d, --delete-source   Delete source segment files once the final merging of them has been done. (default: False)
   -n, --no-merge        Do not merge segments after live streams has ended. (default: False)
   -k, --keep-concat     Keep concatenated intermediary files even if merging of streams has been successful. Only useful for troubleshooting. (default: False)
@@ -55,6 +61,10 @@ optional arguments:
   --email-notifications
                         Enables sending e-mail reports to administrator. (Default: False)
   --skip-download       Skip the download phase (useful to run hook scripts instead). (Default: False)
+  --ignore-quality-change
+                        If stream resolution changes during live-stream, keep downloading anyway. (Default: False)
+  --max-simultaneous-streams MAX_SIMULTANEOUS_STREAMS
+                        If more than one stream is being broadcast, download up to this number of videos simultaneously. (Default: 2)
 ```
 
 # Downloading a live stream

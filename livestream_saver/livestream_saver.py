@@ -31,8 +31,10 @@ log.setLevel(logging.DEBUG)
 
 NOTIFIER = NotificationDispatcher()
 
+TIME_VARIANCE = 3.0  # in minutes
+MAX_SIMULTANEOUS_LIVE_DOWNLOAD = 2
 
-# HACK forcing use of yt-dlp for the time being.
+# HACK forcing use of yt-dlp for the time being. 2024/02
 use_ytdl = True
 
 
@@ -149,7 +151,16 @@ merging of streams has been successful. Only useful for troubleshooting.'
         help='If stream resolution changes during live-stream, keep downloading anyway.'\
             f' (Default: {config.getboolean("monitor", "ignore_quality_change")})'
     )
-
+    monitor_parser.add_argument('--max-simultaneous-streams',
+        action='store',
+        type=int,
+        default=argparse.SUPPRESS,
+        help=(
+            'If more than one stream is being broadcast, download up to this '
+            'number of videos simultaneously.'
+            f' (Default: {MAX_SIMULTANEOUS_LIVE_DOWNLOAD})'
+        )
+    )
 
     # Sub-command "download"
     download_parser = subparsers.add_parser('download',
@@ -481,10 +492,6 @@ def _get_target_params(
     return params
 
 
-TIME_VARIANCE = 3.0  # in minutes
-# TODO allow configuration by user
-MAX_SIMULTANEOUS_LIVE_DOWNLOAD = 2
-
 video_queue: Queue[VideoPost] = Queue(maxsize=4)
 video_processing = set()
 video_processed = set()
@@ -510,9 +517,9 @@ def video_feeder(queue: Queue, channel: YoutubeChannel, scan_delay: float):
 
 
 def download_task(
-    video: VideoPost, 
-    config: ConfigParser, 
-    args: Dict, 
+    video: VideoPost,
+    config: ConfigParser,
+    args: Dict,
     session: YoutubeUrllibSession
 ):
     if video in video_processing or video in video_processed:
@@ -522,7 +529,7 @@ def download_task(
 
     video_id = video.get("videoId")
     # Build the full "/watch?v=..." URL
-    video_url = f"https://www.youtube.com{video.get('url')}" 
+    video_url = f"https://www.youtube.com{video.get('url')}"
 
     if not video_id:
         try:
@@ -655,7 +662,7 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
     log.info(f"Monitoring channel: {channel._id}")
 
     feeder_thread = threading.Thread(
-        target=video_feeder, 
+        target=video_feeder,
         args=(video_queue, channel, scan_delay)
     )
     feeder_thread.daemon = True
