@@ -146,6 +146,53 @@ class TestGetVideosFromTabs(unittest.TestCase):
         # Only one Id should be returned, despite being present on all tas
         self.assertEqual(len(videos), 1)
 
+    @patch("livestream_saver.channel.YoutubeChannel.load_endpoints")
+    @patch("configparser.ConfigParser")
+    @patch("urllib.request.urlopen")
+    @patch("livestream_saver.channel.YoutubeChannel.get_json_and_cache")
+    def test_get_changes(
+        self,
+        get_json_and_cache: Mock,
+        urlopen: Mock,
+        configparser: Mock,
+        load_endpoints: Mock,
+    ):
+        """
+        Ensure that only new video Ids are returned by YoutubeChannel.get_changes
+        """
+        previously = []
+        newly      = [self.video_post]
+        new, removed = self.ch.get_changes(
+            videos=newly,
+            previous=previously
+        )
+        self.assertEqual(new, [self.video_post])
+        self.assertEqual(removed, [])
+
+        new_video = VideoPost.from_post(
+            post={
+                "videoId": "test_id2",
+                "isLive": True,
+                "isLiveNow": True,
+                "navigationEndpoint": {
+                    "commandMetadata": {
+                        "webCommandMetadata": {
+                            "url": "test_url"
+                        }
+                    }
+                }
+            },
+            channel_name="channel name"
+        )
+
+        previously.append(self.video_post)
+        previously.append(new_video)
+        new, removed = self.ch.get_changes(
+            videos=newly,
+            previous=previously
+        )
+        self.assertEqual(new, [])
+        self.assertEqual(removed, [new_video])
 
     # @patch("configparser.ConfigParser")
     # @patch("urllib.request.urlopen")
