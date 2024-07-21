@@ -183,6 +183,12 @@ class YoutubeChannel:
         return self._endpoints
 
     @property
+    def endpoints(self) -> Dict[str, Any]:
+        if self._endpoints is None:
+            self._endpoints = self.load_endpoints()
+        return self._endpoints
+
+    @property
     def id(self) -> str:
         _id = extract.get_browseId_from_json(self.cached_json)
 
@@ -652,9 +658,6 @@ class YoutubeChannel:
         Return a list of videos that are live, from all channel tabs combined.
         There may be more than one active broadcast.
         """
-        if not self._endpoints:
-            self.load_endpoints()
-
         # Only collect videos for which the field has a value
         filtered_videos = DedupedVideoList()
         missing_endpoints = []
@@ -724,12 +727,12 @@ class YoutubeChannel:
         which shouldd be dereferenced by its tab name in most cases
         (ie. Home, Videos, Live, Community, Membership)
         """
-        endpoint = self._endpoints.get(tab_name)
+        endpoint = self.endpoints.get(tab_name)
         if not endpoint:
             if tab_name == "Upcoming":
                 raise TabNotFound("No Upcoming endpoint found{}".format(
                     ", but Live tab found"
-                    if "Live" in self._endpoints.keys() else "")
+                    if "Live" in self.endpoints.keys() else "")
                 )
             else:
                 raise TabNotFound(f"No endpoint found for tab named {tab_name}")
