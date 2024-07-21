@@ -10,7 +10,7 @@ The example config file `livestream_saver.cfg` is optional and is meant as a con
 
 The download feature is currently half-broken (see issue [#63](https://github.com/glubsy/livestream_saver/issues/63)) so we rely on yt-dlp for the time being.
 
-As a result, many native config file (and some hooks) are currently **ignored**.
+As a result, many native configuration settings from the config file and CLI arguments (and some hooks) are **ignored**.
 
 The `ytdlp_config.json` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited there, otherwise the default provided template will be used as fallback.
 
