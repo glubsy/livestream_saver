@@ -298,7 +298,6 @@ class YoutubeUrllibSession:
 
         endpoint = endpoint + '?' + urlencode(
             {
-                "key": INNERTUBE_CLIENTS[client]["INNERTUBE_API_KEY"],
                 "prettyPrint": "false"
             }
         )
