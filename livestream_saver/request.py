@@ -15,20 +15,6 @@ from livestream_saver.cookies import get_cookie
 
 from yt_dlp.extractor.youtube import INNERTUBE_CLIENTS
 
-# Patch with updated client version, temporary fix 20230511 
-INNERTUBE_CLIENTS["android"].update(
-    {
-        'INNERTUBE_CONTEXT': {
-        'client': {
-            'clientName': 'ANDROID',
-            'clientVersion': '18.20.99',
-            'androidSdkVersion': 99,
-            'userAgent': 'com.google.android.youtube/18.20.99'
-        }
-    }
-})
-
-
 log = logging.getLogger(__name__)
 
 
