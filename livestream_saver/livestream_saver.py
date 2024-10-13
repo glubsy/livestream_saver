@@ -904,8 +904,12 @@ def load_commented_json(path: Path) -> Dict:
     Remove comments from JSON file and load as mapping.
     """
     with open(path, "r") as f:
-        return json.loads(
+        data = json.loads(
             '\n'.join(row for row in f if not row.lstrip().startswith("//")))
+        if (extractor_args := data.get("extractor-args"))\
+                and "PO_TOKEN_VALUE_HERE" in extractor_args:
+            raise Exception("Default PO token value should be replaced")
+        return data
 
 
 def main():

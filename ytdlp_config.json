@@ -9,6 +9,13 @@
     // submitted via the --cookies parameter to livestream_saver)
     // "cookiefile": "",
     
+
+    // Pass the PO token to the extractor (avoid IP blocking)
+    // See this page for more information
+    // https://github.com/yt-dlp/yt-dlp/wiki/Extractors
+    // REPLACE PO_TOKEN_VALUE_HERE with your PO token!
+    "extractor-args": "youtube:player-client=web,default;po_token=web+PO_TOKEN_VALUE_HERE",
+
     // Do not stop on download/postprocessing errors.
     // Can be "only_download" to ignore only download errors.
     // Default is "only_download" for CLI, but False for API

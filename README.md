@@ -6,15 +6,18 @@ Cookies (in Netscape format) are needed to access membership-only videos as well
 The example config file `livestream_saver.cfg` is optional and is meant as a convenience to override the default values.
 
 
-# NOTICE
+> [!IMPORTANT]
+> The download feature is currently half-broken (see issue [#63](https://github.com/glubsy/livestream_saver/issues/63)) so we rely on yt-dlp for the time being.
+> 
+> As a result, many native configuration settings from the config file and CLI arguments (and some hooks) are **ignored**.
+> 
+> The `ytdlp_config.json` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited, otherwise the default provided template will be used as fallback.
+> 
+> This is confusing but will be fixed eventually.
 
-The download feature is currently half-broken (see issue [#63](https://github.com/glubsy/livestream_saver/issues/63)) so we rely on yt-dlp for the time being.
-
-As a result, many native configuration settings from the config file and CLI arguments (and some hooks) are **ignored**.
-
-The `ytdlp_config.json` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited there, otherwise the default provided template will be used as fallback.
-
-This may be confusing but will be fixed soon (hopefully).
+> [!CAUTION]
+> Youtube is banning IPs that does not pass a [Proof of Origin (PO) token](https://github.com/yt-dlp/yt-dlp/wiki/Extractors) to their requests. 
+> It is advised to generate the token (from the same IP address) and store it in the `ytdlp_config.json` file accordingly so that it get passed to the downloader.
 
 
 # Monitoring a channel
@@ -280,7 +283,6 @@ This is beta software. It should work, but in case it doesn't, feel free to repo
 * Fetch segments in parallel to catch up faster (WIP).
 * Make sure age-restricted videos are not blocked (we rely on Pytube for this).
 * Monitor Twitch channels.
-* Make Docker container.
 * Make web interface.
 
 # License
