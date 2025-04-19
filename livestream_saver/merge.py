@@ -7,7 +7,7 @@ from pathlib import Path
 from shutil import copyfileobj, which
 import logging
 import re
-from imghdr import what
+from filetype import guess_extension
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -886,9 +886,10 @@ def print_missing_segments(filelist: List[Path], filetype: str) -> List[Path]:
 
 
 def metadata_arguments(
-        info: Dict,
-        data_path: Path,
-        want_thumb: bool = True) -> List[str]:
+    info: Dict,
+    data_path: Path,
+    want_thumb: bool = True
+) -> List[str]:
     cmd = []
     # Embed thumbnail if a valid one is found
     if want_thumb:
@@ -906,18 +907,22 @@ def metadata_arguments(
     return cmd
 
 
+def get_filetype(path: Path) -> str | None:
+    return guess_extension(path)
+
+
 def get_thumbnail_command_prefix(data_path: Path) -> List:
     thumb_path = get_thumbnail_pathname(data_path)
     if not thumb_path:
         return []
 
-    _type = what(thumb_path)
+    _type = get_filetype(thumb_path)
     logger.info(f"Detected thumbnail \"{thumb_path}\" type: {_type}.")
 
     if _type is None:
         return []
 
-    if _type != "jpeg" and _type != "png":
+    if _type not in ("jpg", "jpeg", "png"):
         try:
             convert_thumbnail(thumb_path, _type)
         except Exception as e:

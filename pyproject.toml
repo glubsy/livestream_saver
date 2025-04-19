@@ -1,18 +1,15 @@
 [project]
 name = "livestream_saver"
-version = "0.2.0"
+version = "0.2.1"
 description = "Monitor Youtube channels to download live streams"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = {file = "LICENSE"}
 keywords = ["youtube", "python"]
 authors = [
   {name = "glubsy", email = "glubsy@users.noreply.github.com" }
 ]
 
-# Classifiers help users find your project by categorizing it.
-#
-# For a list of valid classifiers, see https://pypi.org/classifiers/
 classifiers = [  # Optional
   "Development Status :: 4 - Beta",
   "Intended Audience :: End Users/Desktop",
@@ -22,13 +19,15 @@ classifiers = [  # Optional
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3 :: Only",
 ]
 
 dependencies = [
-    "pytube == 10.9.2"
-    "Pillow"
-    "git+https://github.com/yt-dlp/yt-dlp"
+    "pytube == 10.9.2",
+    "Pillow",
+    "git+https://github.com/yt-dlp/yt-dlp",
+    "filetype == 1.2.0"
 ]
 
 [project.urls]  # Optional

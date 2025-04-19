@@ -13,7 +13,7 @@ import hashlib
 from livestream_saver.util import UA, str_as_json
 from livestream_saver.cookies import get_cookie
 
-from yt_dlp.extractor.youtube import INNERTUBE_CLIENTS
+from yt_dlp.extractor.youtube._base import INNERTUBE_CLIENTS
 
 log = logging.getLogger(__name__)
 

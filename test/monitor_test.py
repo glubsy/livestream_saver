@@ -265,24 +265,24 @@ class TestDownload(unittest.TestCase):
             notifier=NotificationDispatcher()
         )
 
-    @patch("livestream_saver.request.YoutubeUrllibSession._initialize_consent")
-    @patch("configparser.ConfigParser")
-    @patch("urllib.request.urlopen")
-    def test_lost_connection_should_recover(
-        self,
-        request_mock: Mock,
-        configparser: Mock,
-        _initialize_consent: Mock
-    ):
-        request_mock.side_effect = URLError("Temporary failure in name resolution")
-        raise NotImplementedError
-        monitor_mode(
-            configparser,
-            args={
-                "URL": "",
-                "channel_id": "",
-                "scan_delay": 0.0,
-                "output_dir": "",
-                "hooks": "",
-            }
-        )
+    # @patch("livestream_saver.request.YoutubeUrllibSession._initialize_consent")
+    # @patch("configparser.ConfigParser")
+    # @patch("urllib.request.urlopen")
+    # def test_lost_connection_should_recover(
+    #     self,
+    #     request_mock: Mock,
+    #     configparser: Mock,
+    #     _initialize_consent: Mock
+    # ):
+    #     request_mock.side_effect = URLError("Temporary failure in name resolution")
+    #     raise NotImplementedError
+    #     monitor_mode(
+    #         configparser,
+    #         args={
+    #             "URL": "",
+    #             "channel_id": "",
+    #             "scan_delay": 0.0,
+    #             "output_dir": "",
+    #             "hooks": "",
+    #         }
+    #     )

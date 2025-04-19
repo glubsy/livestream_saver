@@ -123,7 +123,7 @@ pytube.cipher.throttling_array_split = throttling_array_split
 
 # Another temporary hotfix https://github.com/pytube/pytube/issues/1199
 def patched__init__(self, js: str):
-    self.transform_plan: List[str] = pytube.cipher.get_transform_plan(js)
+    self.transform_plan = pytube.cipher.get_transform_plan(js)
     var_regex = re.compile(r"^\$*\w+\W")
     var_match = var_regex.search(self.transform_plan[0])
     if not var_match:
