@@ -1,4 +1,4 @@
-FROM python:3.12.2-bookworm
+FROM python:3.13.3-bookworm
 
 RUN apt update && apt -y install ffmpeg
 

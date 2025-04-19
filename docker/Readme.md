@@ -1,7 +1,7 @@
 # Build the image:
 
 ```
-docker build -f ./docker/Dockerfile -t livestream_saver:latest
+docker buildx build -f ./docker/Dockerfile -t livestream_saver:latest .
 ```
 
 # Run in a container:
