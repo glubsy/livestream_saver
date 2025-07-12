@@ -3,7 +3,10 @@
 
 Cookies (in Netscape format) are needed to access membership-only videos as well as age-restricted videos (which would also mean that you sold your soul to Youtube and your account is "verified"). You may use [this](https://github.com/hrdl-github/cookies-txt) or [that](https://github.com/dandv/convert-chrome-cookies-to-netscape-format) depending on the browser you used to log into that dis-service.
 
-The example config file `livestream_saver.cfg` is optional and is meant as a convenience to override the default values.
+The example files from the `/config` directory should be copied to `$HOME/.config/livestream_saver/` and updated manually:
+* `livestream_saver.cfg`
+* `ytdlp_config.json`
+* `.env`
 
 
 > [!IMPORTANT]
@@ -12,6 +15,7 @@ The example config file `livestream_saver.cfg` is optional and is meant as a con
 > As a result, many native configuration settings from the config file and CLI arguments (and some hooks) are **ignored**.
 > 
 > The `ytdlp_config.json` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited, otherwise the default provided template will be used as fallback.
+> The .env file should also contain your PO_TOKEN (or at least should be loaded as an environment variable)
 > 
 > This is confusing but will be fixed eventually.
 
@@ -248,13 +252,13 @@ The following placeholders variables will be replaced with the corresponding val
 
 ## E-mails
 
-The e-mail options can be overriden via environment variables for improved security practices. simply use the same key names (case insensitive). 
+Whenever a crash, or an error occurs, the program should send you a notification at the configured e-mail address via the configured smtp server.
+
+The e-mail options can only be specified via environment variables, as shown in the `.env_example` file.
 
 Example: ```export SMTP_SERVER="my.smtp.server"; export SMTP_LOGIN="john"; export SMTP_PASSWORD="hunter2"```
 
 Login and password are not mandatory. That depends on your smtp server configuration.
-
-Whenever a crash, or an error occurs, the program should send you a notification at the configured e-mail address via the configured smtp server.
 
 
 ## Testing notifications

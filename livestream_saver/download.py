@@ -21,12 +21,20 @@ import yt_dlp
 import pytube.cipher
 import pytube
 
-from livestream_saver import exceptions
-from livestream_saver import extract
-from livestream_saver import util
 from livestream_saver.notifier import NotificationDispatcher
 from livestream_saver.request import YoutubeUrllibSession
 from livestream_saver.channel import VideoPost
+from livestream_saver.util import wait_block, create_output_dir, none_filtered_out
+from livestream_saver.extract import publish_date
+from livestream_saver.exceptions import (
+    WaitingException,
+    OfflineException,
+    NoLoginException,
+    UnplayableException, 
+    OutdatedAppException,
+    EmptySegmentException,
+    ForbiddenSegmentException,
+)
 
 SYSTEM = system()
 ISPOSIX = SYSTEM == 'Linux' or SYSTEM == 'Darwin'
@@ -199,13 +207,13 @@ class BaseURL(str):
 
 
 class ParamURL(BaseURL):
-    """Old-school url with parameters."""
+    """Plain url with parameters."""
     def add_seg(self, seg_num: int) -> str:
         return self + f"&sq={seg_num}"
 
 
 class PathURL(BaseURL):
-    """URL made with lots of "/" for them fancy new APIs."""
+    """URI for GraphQL API style."""
     def add_seg(self, seg_num: int) -> str:
         return self + f"/sq/{seg_num}"
 
@@ -301,7 +309,7 @@ class YoutubeLiveStream:
 
         if use_ytdl and output_dir is not None:
             if not output_dir.exists():
-                self.output_dir = util.create_output_dir(
+                self.output_dir = create_output_dir(
                     output_dir=output_dir, video_id=None
                 )
 
@@ -326,7 +334,7 @@ class YoutubeLiveStream:
         self.allow_regex: Optional[re.Pattern] = filters.get("allow_regex")
         self.block_regex: Optional[re.Pattern] = filters.get("block_regex")
 
-    def setup_logger(self, output_path: Path, log_level):
+    def setup_logger(self, output_path: Path, log_level: str | int):
         if isinstance(log_level, str):
             log_level = str.upper(log_level)
 
@@ -341,9 +349,7 @@ class YoutubeLiveStream:
             return logger
 
         if logger.hasHandlers():
-            logger.debug(
-                f"Logger {logger} already had handlers!"
-            )
+            logger.debug(f"Logger {logger} already had handlers!")
             return logger
 
         logger.setLevel(logging.DEBUG)
@@ -399,7 +405,7 @@ class YoutubeLiveStream:
         if not description and self._initial_metadata is not None:
             self.description = self._initial_metadata.get("description")
 
-        return util.none_filtered_out(
+        return none_filtered_out(
             (self.title, self.description),
             self.allow_regex, self.block_regex)
 
@@ -428,29 +434,29 @@ class YoutubeLiveStream:
                 if not (Status.LIVE in self.status):
                     self.log.info("Stream is not live anymore.")
                     break
-            except exceptions.WaitingException:
+            except WaitingException:
                 self.log.info(
                     f"Stream {self.video_id} status is: {self.status}. "
                     f"Waiting {long_wait} minutes...")
-            except exceptions.OfflineException:
+            except OfflineException:
                 self.log.info(f"Stream {self.video_id} status is now offline.")
                 break
             except (
-                exceptions.NoLoginException,
-                exceptions.UnplayableException
+                NoLoginException,
+                UnplayableException
             ) as e:
                 self.log.warning(e)
                 if not (Status.LIVE in self.status):
                     self.log.info("Stream is not live anymore.")
                     break
-                util.wait_block(long_wait)
+                wait_block(long_wait)
                 continue
-            except exceptions.OutdatedAppException as e:
+            except OutdatedAppException as e:
                 self.log.warning(f"Outdated client error. Retrying shortly...")
                 if not (Status.LIVE in self.status):
                     self.log.info("Stream is not live anymore.")
                     break
-                util.wait_block(2)
+                wait_block(2)
                 continue
             except Exception as e:
                 self.log.error(f"Error getting status for stream {self.video_id}: {e}")
@@ -473,7 +479,7 @@ class YoutubeLiveStream:
 
             # Longer delay in minutes between updates since we don't download
             # we don't care about accuracy that much.
-            util.wait_block(long_wait)
+            wait_block(long_wait)
             continue
         return download_wanted
 
@@ -609,7 +615,7 @@ class YoutubeLiveStream:
         """
         if self._publish_date:
             return self._publish_date
-        self._publish_date = extract.publish_date(self.watch_html)
+        self._publish_date = publish_date(self.watch_html)
         return self._publish_date
 
     @publish_date.setter
@@ -1018,19 +1024,19 @@ class YoutubeLiveStream:
 
                 self.log.warning(f"{playability_reason}")
 
-                raise exceptions.WaitingException(
+                raise WaitingException(
                     self.video_id, playability_reason, scheduled_time)
 
             elif (Status.LIVE | Status.VIEWED_LIVE) not in self.status:
-                raise exceptions.WaitingException(self.video_id, playability_reason)
+                raise WaitingException(self.video_id, playability_reason)
 
-            raise exceptions.OfflineException(self.video_id, playability_reason)
+            raise OfflineException(self.video_id, playability_reason)
 
         elif status == 'LOGIN_REQUIRED':
-            raise exceptions.NoLoginException(self.video_id, playability_reason)
+            raise NoLoginException(self.video_id, playability_reason)
 
         elif status == 'UNPLAYABLE':
-            raise exceptions.UnplayableException(self.video_id, playability_reason)
+            raise UnplayableException(self.video_id, playability_reason)
 
         elif status != 'OK':
             self.log.warning(
@@ -1043,7 +1049,7 @@ class YoutubeLiveStream:
             if (error_reason and "not available on this app" in error_reason)\
                 or (subreason and "Watch on the latest version of YouTube" in subreason):
                 # Video might still be available if we retry with different client
-                raise exceptions.OutdatedAppException(self.video_id, error_reason)
+                raise OutdatedAppException(self.video_id, error_reason)
 
             self.status &= ~Status.AVAILABLE
 
@@ -1167,17 +1173,17 @@ class YoutubeLiveStream:
                         "stream unavailable or not a livestream.")
                     return
 
-            except exceptions.WaitingException as e:
+            except WaitingException as e:
                 self.log.warning(
                     f"Status is {self.status}. "
                     f"Waiting for {wait_delay} minutes...")
                 sleep(wait_delay * 60)
                 continue
-            except exceptions.OutdatedAppException as e:
+            except OutdatedAppException as e:
                 self.log.warning(f"Outdated client error. Retrying shortly...")
-                util.wait_block(2)
+                wait_block(2)
                 continue
-            except exceptions.OfflineException as e:
+            except OfflineException as e:
                 self.log.critical(e)
                 raise e
             except Exception as e:
@@ -1205,8 +1211,8 @@ class YoutubeLiveStream:
                 try:
                     self.do_download()
                 except (
-                    exceptions.EmptySegmentException,
-                    exceptions.ForbiddenSegmentException,
+                    EmptySegmentException,
+                    ForbiddenSegmentException,
                     IncompleteRead,
                     ValueError,
                     ConnectionError,  # ConnectionResetError - Connection reset by peer
@@ -1276,7 +1282,7 @@ class YoutubeLiveStream:
 
             if not self.write_to_file(in_stream, segment_filename):
                 if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
-                    raise exceptions.EmptySegmentException(\
+                    raise EmptySegmentException(\
                         f"Segment {self.seg} (video) is empty, stream might have ended...")
                 return False
         return True
@@ -1327,7 +1333,7 @@ class YoutubeLiveStream:
                 if e.reason == 'Forbidden':
                     # Usually this means the stream has ended and parts
                     # are now unavailable.
-                    raise exceptions.ForbiddenSegmentException(e.reason)
+                    raise ForbiddenSegmentException(e.reason)
                 if attempts_left < 0:
                     raise e
                 attempts_left -= 1

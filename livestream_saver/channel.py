@@ -3,11 +3,11 @@ from pathlib import Path
 import logging
 from dataclasses import dataclass, field
 
-from livestream_saver import extract
 from livestream_saver.exceptions import TabNotFound, MissingVideoId
 from livestream_saver.hooks import HookCommand
 from livestream_saver.notifier import WebHookFactory, NotificationDispatcher
 from livestream_saver.request import YoutubeUrllibSession
+from livestream_saver.extract import get_browseId_from_json, initial_player_response
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ class YoutubeChannel:
 
     @property
     def id(self) -> str:
-        _id = extract.get_browseId_from_json(self.cached_json)
+        _id = get_browseId_from_json(self.cached_json)
 
         if self._id != _id:
             self.log.warning(f"Replacing channel id \"{self._id}\" with \"{_id}\".")
@@ -265,7 +265,7 @@ class YoutubeChannel:
         """
         if update or self._cached_json_tab != "Home":
             try:
-                self._cached_json = extract.initial_player_response(
+                self._cached_json = initial_player_response(
                     self.session.make_request(self.url))
                 # Probably similar to doing:
                 # self.session.make_request(self.url + '/featured')
@@ -287,7 +287,7 @@ class YoutubeChannel:
         """
         if update or self._cached_json_tab != tab_name:
             # In the past we got it from the HTML page:
-            # self._cached_json = extract.initial_player_response(
+            # self._cached_json = initial_player_response(
             #     self.membership_videos_html)
             self._cached_json = self.get_tab_json_from_api(tab_name)
             self._cached_json_tab = tab_name
@@ -632,7 +632,7 @@ class YoutubeChannel:
                 f"Fetching {videoId=} info from HTML page because it failed through the API...")
             try:
                 html_page = self.session.make_request(url)
-                return extract.initial_player_response(html_page)
+                return initial_player_response(html_page)
             except Exception as e:
                 logger.error(f"Error fetching metadata for video {videoId}: {e}")
 

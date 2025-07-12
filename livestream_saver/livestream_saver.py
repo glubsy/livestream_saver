@@ -1,5 +1,5 @@
 from typing import Iterable, Optional, Any, List, Dict, Union
-from os import sep, makedirs, getcwd, environ, getenv
+from os import sep, makedirs, getcwd, environ
 from sys import platform
 from sys import argv
 import argparse
@@ -16,8 +16,6 @@ import re
 from shlex import split
 from time import sleep
 
-from livestream_saver import extract, util
-import livestream_saver
 from livestream_saver.channel import YoutubeChannel, VideoPost
 from livestream_saver.download import YoutubeLiveStream
 from livestream_saver.merge import merge, get_metadata_info
@@ -25,8 +23,13 @@ from livestream_saver.util import get_channel_id, event_props
 from livestream_saver.request import YoutubeUrllibSession
 from livestream_saver.notifier import NotificationDispatcher, WebHookFactory
 from livestream_saver.hooks import HookCommand
+from livestream_saver.util import (
+    create_output_dir, sanitize_channel_url, wait_block
+)
+from livestream_saver.extract import get_video_id
 
-log = logging.getLogger('livestream_saver')
+
+log: logging.Logger = logging.getLogger('livestream_saver')
 log.setLevel(logging.DEBUG)
 
 NOTIFIER = NotificationDispatcher()
@@ -290,13 +293,14 @@ def _get_hook_from_config(
     cmd = None
     url = None
     if suffix == "_command":
-        cmd = config.getlist(section, full_hook_name, fallback=None)
+        cmd = config.getlist(section, full_hook_name, fallback=None)  # type: ignore
     else:
         # This is the data payload part
         cmd = config.get(section, full_hook_name, fallback=None)
         url = config.get(section, full_hook_name + "_url", fallback=None)
-        if not url:
-            return
+
+    if not url:
+        return
     if not cmd:
         return
 
@@ -513,7 +517,7 @@ def video_feeder(queue: Queue, channel: YoutubeChannel, scan_delay: float):
         except Exception as e:
             # Handle urllib.error.URLError <urlopen error [Errno -3] Temporary failure in name resolution>
             log.exception(f"Error while getting live videos: {e}")
-        util.wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
+        wait_block(min_minutes=scan_delay, variance=TIME_VARIANCE)
 
 
 def download_task(
@@ -533,7 +537,7 @@ def download_task(
 
     if not video_id:
         try:
-            video_id = extract.get_video_id(video_url)
+            video_id = get_video_id(video_url)
         except ValueError as e:
             log.critical(e)
             video_processing.remove(video)
@@ -557,13 +561,13 @@ def download_task(
         session=session,
         notifier=NOTIFIER,
         max_video_quality=config.getint(
-            "monitor", "max_video_quality", vars=args, fallback=None),
+            "monitor", "max_video_quality", vars=args, fallback=None),  # type: ignore
         hooks=args["hooks"],
         skip_download=skip_download,
         filters=args["filters"],
         ignore_quality_change=config.getboolean(
             "monitor", "ignore_quality_change", vars=args, fallback=False),
-        log_level=config.get("monitor", "log_level", vars=args),
+        log_level=config.get("monitor", "log_level", vars=args),  # type: ignore
         initial_metadata=video,
         use_ytdl=use_ytdl,
         ytdl_opts=deepcopy(args["ytdlp_config"])
@@ -593,7 +597,7 @@ def download_task(
         # We have already waited on the current stream for status update
         # Add a small wait to read debug output in case of network errors
         # cf issue #76
-        util.wait_block(min_minutes=0.5, variance=0.1)
+        wait_block(min_minutes=0.5, variance=0.1)
         return
 
     if live_video.done:
@@ -651,7 +655,7 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
     )
     session._initialize_consent()
 
-    URL = util.sanitize_channel_url(URL)
+    URL = sanitize_channel_url(URL)
     channel = YoutubeChannel(
         URL, channel_id, session,
         output_dir=args["output_dir"],
@@ -696,7 +700,7 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
         notifier=NOTIFIER,
         max_video_quality=config.getint(
             "download", "max_video_quality", vars=args, fallback=None
-        ),
+        ), # type: ignore
         hooks=args["hooks"],
         skip_download=config.getboolean(
             "download", "skip_download", vars=args, fallback=False
@@ -705,7 +709,7 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
         filters={},
         ignore_quality_change=config.getboolean(
             "download", "ignore_quality_change", vars=args, fallback=False),
-        log_level=config.get("download", "log_level", vars=args),
+        log_level=config.get("download", "log_level", vars=args),  # type: ignore
         use_ytdl=use_ytdl,
         ytdl_opts=args["ytdlp_config"]
     )
@@ -749,7 +753,7 @@ def merge_mode(config, args):
     return 0
 
 
-def log_enabled(config, args, mode_str):
+def log_enabled(config: ConfigParser, args: dict[str, Any], mode_str: str):
     """Sanitize log level input value, return False if disabled by user."""
     if level := config.get(mode_str, "log_level", vars=args):
         # if level == "NONE":
@@ -757,14 +761,15 @@ def log_enabled(config, args, mode_str):
         log_level = getattr(logging, level, None)
         if not isinstance(log_level, int):
             raise ValueError(f'Invalid log-level for {mode_str} mode: {level}')
-    return True
+        return True
+    return False
 
 
-def setup_logger(*, output_filepath, loglevel, log_to_file=True) -> logging.Logger:
+def setup_logger(*, output_filepath, loglevel, log_to_file=True) -> None:
     # This uses the global variable "logger"
     if loglevel is None:
         log.disabled = True
-        return log
+        return
 
     if isinstance(loglevel, str):
         loglevel = str.upper(loglevel)
@@ -787,21 +792,22 @@ def setup_logger(*, output_filepath, loglevel, log_to_file=True) -> logging.Logg
     conhandler.setLevel(loglevel)
     conhandler.setFormatter(formatter)
     log.addHandler(conhandler)
-    return log
 
 
 def init_config() -> ConfigParser:
     """Get a ConfigParser with sane default values."""
     # Create user config directory if it doesn't already exist
     conf_filename = "livestream_saver.cfg"
+    default_conf_path = Path.home() / ".config" / "livestream_saver"
 
     if platform == "win32":
         config_dir = Path.home()
     elif env_path := environ.get("LSS_CONFIG_DIR"):
         config_dir = Path(env_path)
+    elif default_conf_path.exists():
+        config_dir = default_conf_path
     else:
-        config_dir = Path.home() / ".config" / "livestream_saver"
-        # config_dir.mkdir(exist_ok=True)
+        config_dir = Path.cwd() / "config"
 
     CONFIG_DEFAULTS = {
         "config_dir": str(config_dir),
@@ -818,14 +824,6 @@ def init_config() -> ConfigParser:
         "ignore_quality_change": "False",
     }
     other_defaults = {
-        "email": {
-            "smtp_server": "",
-            "smtp_port": "",
-            "smtp_login": "",
-            "smtp_password": "",
-            "to_email": "",
-            "from_email": "",
-        },
         "monitor": {
             "scan_delay": 15.0  # minutes
         },
@@ -855,7 +853,7 @@ def init_config() -> ConfigParser:
     return config
 
 
-def update_config(config: ConfigParser, args: Dict[str, Any]) -> None:
+def update_config(config: ConfigParser, args: dict[str, Any]) -> None:
     """
     Load the configuration file specified as argument into config object.
     If none is specified, load the configuration file located in the current
@@ -906,10 +904,40 @@ def load_commented_json(path: Path) -> Dict:
     with open(path, "r") as f:
         data = json.loads(
             '\n'.join(row for row in f if not row.lstrip().startswith("//")))
-        if (extractor_args := data.get("extractor-args"))\
-                and "PO_TOKEN_VALUE_HERE" in extractor_args:
-            raise Exception("Default PO token value should be replaced")
         return data
+
+
+def interpolate_ytdlp_config(data: dict[str, Any]) -> None:
+    """
+    Interpolate the ytdlp config file with values from the environment variables.
+    """
+    # currently this is only used to replace the default PO token value
+    if not (extractor_args := data.get("extractor-args")):
+        return
+    if "<PO_TOKEN_VALUE>" not in extractor_args:
+        return
+
+    token = environ.get("PO_TOKEN", None)
+    if not token:
+        raise ValueError(
+            "PO_TOKEN environment variable not set. "
+            "Please set the value with export PO_TOKEN=<your_token_value>"
+        )
+    data["extractor-args"] = extractor_args.replace(
+        "<PO_TOKEN_VALUE>", token
+    )
+
+
+def load_env_file(path: Path) -> None:
+    """
+    Load environment variables from a .env file.
+    """
+    with open(path, "r") as f:
+        for line in f:
+            if line.startswith("#") or not line.strip():
+                continue
+            key, value = line.strip().split("=", 1)
+            environ[key] = value.strip('"').strip("'")  # remove quotes if any
 
 
 def main():
@@ -919,11 +947,11 @@ def main():
     # used in config via interpolation when loading the config file.
     # For now we only look for the urls (sometimes holding secret tokens).
     if found_vars := get_from_env(("webhook_url",)):
-        env_vars = { "env": found_vars }
+        env_vars = {"env": found_vars}
         config.read_dict(env_vars)
 
     # We'll need to mutate args further down
-    args: Dict[str, Any] = vars(parse_args(config))
+    args: dict[str, Any] = vars(parse_args(config))
     update_config(config, args)
 
     # DEBUG
@@ -933,7 +961,7 @@ def main():
 
     global NOTIFIER
 
-    sub_cmd = args.get("sub-command")
+    sub_cmd: str | None = args.get("sub-command", None)
     if sub_cmd is None:
         print("No sub-command used. Exiting.")
         return
@@ -941,13 +969,23 @@ def main():
     global log
     log_enabled(config, args, sub_cmd)
 
-    ytdlp_conf = "ytdlp_config.json"
+    # Fallback strategy in case the user did not load environment variables
     config_dir = Path(config.get("DEFAULT", "config_dir"))
+    env_file = Path(config_dir) / ".env"
+    if env_file.exists():
+        log.info(f"Loading env variables from file: {env_file}")
+        load_env_file(env_file)
+
+    ytdlp_conf = "ytdlp_config.json"
     ytdlp_conf_file = config_dir / ytdlp_conf
     if not ytdlp_conf_file.exists():
-        log.warning(f"{ytdlp_conf_file} not found. Falling back to using template.")
-        ytdlp_conf_file = Path(__file__).parent.parent.absolute() / ytdlp_conf
-    args["ytdlp_config"] = load_commented_json(ytdlp_conf_file)
+        fallback = Path(__file__).parent.parent.absolute() / "config" / ytdlp_conf
+        log.warning(f"{ytdlp_conf_file} not found. Falling back to {fallback}")
+        ytdlp_conf_file = fallback
+
+    loaded_ytdlp_conf = load_commented_json(ytdlp_conf_file)
+    interpolate_ytdlp_config(loaded_ytdlp_conf)
+    args["ytdlp_config"] = loaded_ytdlp_conf
 
     logfile_path = Path("")  # cwd by default
     if sub_cmd == "monitor":
@@ -980,7 +1018,7 @@ def main():
 
         logfile_path = output_path / f'monitor_{channel_id}.log'
 
-        log = setup_logger(
+        setup_logger(
             output_filepath=logfile_path,
             loglevel=config.get(sub_cmd, "log_level", vars=args)
         )
@@ -999,24 +1037,24 @@ def main():
         NOTIFIER.webhooks = get_hooks_for_section(sub_cmd, config, "_webhook")
         NOTIFIER.setup(config, args)
 
-        video_id = extract.get_video_id(url=URL)
+        video_id = get_video_id(url=URL)
         args["video_id"] = video_id
 
 
-        output_path = Path(output_dir) if output_dir else None
+        output_path: Path | None = Path(output_dir) if output_dir else None
         args["output_dir"] = output_path
 
         if not use_ytdl:
-            output_dir = util.create_output_dir(
+            output_path = create_output_dir(
                 output_dir=output_path, video_id=video_id)
         else:
             # We don't want a stream_capture_xxxx directory, but we need to
             # ensure output path exists because we create the download log now
-            output_dir = util.create_output_dir(
+            output_path = create_output_dir(
                 output_dir=output_path, video_id=None)
 
         logfile_path = output_dir / f"download_{video_id}.log"
-        log = setup_logger(
+        setup_logger(
             output_filepath=logfile_path,
             loglevel=config.get(sub_cmd, "log_level", vars=args)
         )

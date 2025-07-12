@@ -1,5 +1,6 @@
 from os import getenv
 from re import Pattern
+from configparser import ConfigParser
 # import email.message
 from typing import Optional, Dict, List
 from tempfile import SpooledTemporaryFile
@@ -20,6 +21,8 @@ from urllib.request import Request, urlopen
 from urllib.parse import urlparse
 from urllib.error import HTTPError
 from json import dumps, loads
+
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -221,7 +224,7 @@ class EmailHandler:
         self.sender_email = None
         self.receiver_email = None
 
-    def setup(self, config, args):
+    def setup(self, config: ConfigParser, args: dict) -> None:
         self.disabled = not config.getboolean(
             "DEFAULT", "email_notifications", vars=args, fallback=True
         )
@@ -233,43 +236,32 @@ class EmailHandler:
 
         # Override from env variables (which may be all-uppercase)
         env_keys = (
-            "smtp_server", "smtp_port",
-            "smtp_login", "smtp_password",
-            "from_email", "to_email"
+            "SMTP_SERVER", "SMTP_PORT",
+            "SMTP_LOGIN", "SMTP_PASSWORD",
+            "FROM_EMAIL", "TO_EMAIL"
         )
         env_vars = {}
         for key in env_keys:
-            if (value := getenv(key)) or (value := getenv(key.upper())):
+            if (value := getenv(key)):
                 env_vars[key] = value
 
-        self.smtp_server = config.get(
-            "email", "smtp_server", vars=env_vars, fallback=None
-        )
-        self.smtp_port = config.getint(
-            "email", "smtp_port", vars=env_vars, fallback=None
-        )
-        self.smtp_login = config.get(
-            "email", "smtp_login", vars=env_vars, fallback=None
-        )
-        self.smtp_password = config.get(
-            "email", "smtp_password", vars=env_vars, fallback=None
-        )
-        self.sender_email = config.get(
-            "email", "from_email", vars=env_vars, fallback=None
-        )
-        self.receiver_email = config.get(
-            "email", "to_email", vars=env_vars, fallback=None
-        )
+        self.smtp_server = env_vars.get("SMTP_SERVER")
+        self.smtp_port = env_vars.get("SMTP_PORT")
+        self.smtp_login = env_vars.get("SMTP_LOGIN")
+        self.smtp_password = env_vars.get("SMTP_PASSWORD")
+        self.sender_email = env_vars.get("FROM_EMAIL")
+        self.receiver_email = env_vars.get("TO_EMAIL")
 
         if (not self.smtp_server
         or not self.smtp_port
         or not self.receiver_email):
             self.disabled = True
+            logger.warning(
+                "E-mail notifications are disabled due to missing SMTP "
+                "configuration. Please set the environment variables "
+                "SMTP_SERVER, SMTP_PORT, SMTP_LOGIN, SMTP_PASSWORD, FROM_EMAIL, TO_EMAIL"
+            )
             return
-
-        # Fallback in case it is not set
-        if not self.sender_email:
-            self.sender_email = self.receiver_email
 
     def create_email(self, subject, message_text, attachments=List[Path]):
         """Create an email object.

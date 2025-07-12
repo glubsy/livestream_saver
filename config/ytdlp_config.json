@@ -13,8 +13,10 @@
     // Pass the PO token to the extractor (avoid IP blocking)
     // See this page for more information
     // https://github.com/yt-dlp/yt-dlp/wiki/Extractors
-    // REPLACE PO_TOKEN_VALUE_HERE with your PO token!
-    "extractor-args": "youtube:player-client=web,default;po_token=web+PO_TOKEN_VALUE_HERE",
+    // You can load one PO_TOKEN value into environment variables with 
+    // export PO_TOKEN="your_token"
+    // and it will be automatically replaced in the config.
+    "extractor-args": "youtube:player-client=web,default;po_token=web+<PO_TOKEN_VALUE>",
 
     // Do not stop on download/postprocessing errors.
     // Can be "only_download" to ignore only download errors.
