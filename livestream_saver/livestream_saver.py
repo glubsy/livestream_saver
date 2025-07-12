@@ -930,13 +930,16 @@ def interpolate_ytdlp_config(data: dict[str, Any]) -> None:
 
 def load_env_file(path: Path) -> None:
     """
-    Load environment variables from a .env file.
+    Load environment variables from a .env file but only update the variables
+    that are not already set in the environment.
     """
     with open(path, "r") as f:
         for line in f:
             if line.startswith("#") or not line.strip():
                 continue
             key, value = line.strip().split("=", 1)
+            if key in environ:
+                continue
             environ[key] = value.strip('"').strip("'")  # remove quotes if any
 
 
