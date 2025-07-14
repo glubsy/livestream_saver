@@ -527,7 +527,7 @@ def download_task(
     session: YoutubeUrllibSession
 ):
     if video in video_processing or video in video_processed:
-        logging.debug(f"Video already processed or being processed: {video}")
+        log.debug(f"Video already processed or being processed: {video}")
         return
     video_processing.add(video)
 

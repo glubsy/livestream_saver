@@ -702,7 +702,7 @@ class YoutubeLiveStream:
         try:
             query = pytube.StreamQuery(self.fmt_streams)
         except Exception as e:
-            self.log.error(e, exc_info=1)
+            self.log.error(e, exc_info=True)
             self.log.warning("Failed to get streams from fmt_streams (pytube error).")
 
         # BUG in pytube, livestreams with resolution higher than 1080 do not
@@ -1134,10 +1134,7 @@ class YoutubeLiveStream:
 
         if self.use_ytdl:
             with yt_dlp.YoutubeDL(self.ytdl_opts) as ydl:
-                error_code = ydl.download(self.url)
-                if error_code:
-                    logging.error(f"yt-dlp error: {error_code}")
-                    self.error = error_code
+                self.error = ydl.download(self.url)
             return
 
         # If one of the directories exists, assume we are resuming a previously
