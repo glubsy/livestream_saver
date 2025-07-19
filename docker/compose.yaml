@@ -34,6 +34,6 @@ services:
     <<: *defaults
     command: monitor -s Prune
   # You can also provide the URL to monitor as argument
-  Gura:
+  Saba:
     <<: *defaults
-    command: monitor https://www.youtube.com/channel/UCoSrY_IQQVpmIRZ9Xf-y93g
+    command: monitor https://www.youtube.com/channel/UCxsZ6NCzjU_t4YSxQLBcM5A

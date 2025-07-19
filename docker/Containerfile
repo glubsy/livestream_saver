@@ -10,9 +10,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY "./livestream_saver/" ./livestream_saver/
 COPY "livestream_saver.py" .
 
-# Provide default files, but this directory path should be mounted instead
-COPY "./ytdlp_config.json" "/root/.config/livestream_saver/ytdlp_config.json"
-COPY "./livestream_saver.cfg" "/root/.config/livestream_saver/livestream_saver.cfg"
+# Provide default config files, but this directory path should be mounted instead
+# and these files should be replaced (masked) with user-specific configurations.
+COPY "./config/ytdlp_config.json" "/root/.config/livestream_saver/ytdlp_config.json"
+COPY "./config/livestream_saver.cfg" "/root/.config/livestream_saver/livestream_saver.cfg"
+COPY "./config/.env" "/root/.config/livestream_saver/.env"
 
 ENV LSS_OUTPUT_DIR="/downloads"
 ENV LSS_CONFIG_DIR="/root/.config/livestream_saver"
