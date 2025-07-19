@@ -1,7 +1,11 @@
 # Build the image:
 
 ```
-docker buildx build -f ./docker/Dockerfile -t livestream_saver:latest .
+docker buildx build -f ./docker/Containerfile -t livestream_saver:latest .
+```
+or now with podman
+```
+podman build -f ./docker/Containerfile -t livestream_saver:latest -t livestream_saver:$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml) .
 ```
 
 # Run in a container:
