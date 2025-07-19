@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - BREAKING: Support for loading PO_TOKEN from environment variables.
 - BREAKING: Enhanced .env file loading capabilities. PO_TOKEN is now loaded from that file.
+- BREAKING: SMTP related variables are now loaded from environment variables or .env file
+- BREAKING: PO_TOKEN value must be loaded from .env file or environment variable
 
 ### Changed
 - Updated pyproject.toml and dependencies for uv package manager
