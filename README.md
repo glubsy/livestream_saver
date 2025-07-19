@@ -275,10 +275,7 @@ Youtube may log you out if you actively use the session from which you have expo
 
 As of 2024/02/15 simply exporting cookies from an "incognito" session seems to reduce the chances of experiencing this issue.
 
-
-# Notes:
-
-This is beta software. It should work, but in case it doesn't, feel free to report issues. Or better yet, fix them yourself and submit a merge request. Keep in mind that these mega corporations will often attempt to break our things.
+This is beta software. It should work, but in case it doesn't, feel free to report issues. Better yet, fix them yourself and submit a merge request. Keep in mind that these mega corporations will often attempt to break our things.
 
 # TODO
 
