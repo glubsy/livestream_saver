@@ -1,14 +1,15 @@
-
 x-defaults:
   &defaults
   # Remove "build" section below and only use this "image" section 
   # to avoid building the image yourself:
   # image: glubsy/livestream_saver:latest
   build:
-    context: .
-    dockerfile: Dockerfile
+    context: ..
+    dockerfile: docker/Containerfile
   image: livestream_saver:latest
   restart: always
+  # to upgrade yt-dlp on every container start
+  init: true
   volumes:
     - type: bind
       # This path is relative to this here file

@@ -1,4 +1,4 @@
-FROM python:3.13.3-bookworm
+FROM python:3.13-slim-trixie
 
 RUN apt update && apt -y install ffmpeg
 
@@ -16,10 +16,13 @@ COPY "./config/ytdlp_config.json" "/root/.config/livestream_saver/ytdlp_config.j
 COPY "./config/livestream_saver.cfg" "/root/.config/livestream_saver/livestream_saver.cfg"
 COPY "./config/.env" "/root/.config/livestream_saver/.env"
 
+COPY "./docker/entrypoint.sh" ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+
 ENV LSS_OUTPUT_DIR="/downloads"
 ENV LSS_CONFIG_DIR="/root/.config/livestream_saver"
 ENV LSS_COOKIES_FILE="/root/.config/livestream_saver/cookies.txt"
 
-ENTRYPOINT [ "python", "./livestream_saver.py" ]
+ENTRYPOINT [ "./entrypoint.sh" ]
 
 CMD [ "monitor", ]
