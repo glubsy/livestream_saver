@@ -34,7 +34,7 @@ services:
   Prune:
     <<: *defaults
     command: monitor -s Prune
-  # You can also provide the URL to monitor as argument
+  # A channel URL to monitor can also be provided as argument
   Saba:
     <<: *defaults
     command: monitor https://www.youtube.com/channel/UCxsZ6NCzjU_t4YSxQLBcM5A

@@ -43,3 +43,13 @@ Edit the `docker-compose.yml` file, create the download directory and point to i
 ```
 docker-compose -f ./docker/compose.yaml --env-file "$(echo $HOME)/.config/livestream_saver/.env" up 
 ```
+
+# Maintainer notes
+
+As a memo, to push a new image to Docker Hub:
+
+```sh
+VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+podman push localhost/livestream_saver:$VERSION docker://docker.io/glubsy/livestream_saver:$VERSION
+podman push localhost/livestream_saver:latest docker://docker.io/glubsy/livestream_saver:latest
+```
