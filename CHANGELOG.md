@@ -5,23 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v0.3.0] - 2025-07-19
+## [v0.3.1] - 2025-08-24
 
 ### Added
 - BREAKING: Support for loading PO_TOKEN from environment variables.
 - BREAKING: Enhanced .env file loading capabilities. PO_TOKEN is now loaded from that file.
 - BREAKING: SMTP related variables are now loaded from environment variables or .env file
 - BREAKING: PO_TOKEN value must be loaded from .env file or environment variable
+- Auto upgrade of yt-dlp on container start to use latest version from PyPI
 
 ### Changed
 - Updated pyproject.toml and dependencies for uv package manager
 - Replaced obsolete Docker Compose examples
-- Updated Dockerfile configuration
-- Updated README documentation
+- Renamed Dockerfile to Containerfile (more generic container name)
+- Updated Docker/container configuration
+- Updated README documentation and template config file
+- Replaced stale example channels in configuration templates
+- Enhanced logger configuration for better debugging
 
 ### Fixed
-- Fixed .env file loading mechanism
+- Fixed .env file loading mechanism (only load variables not already present in environment)
 - Minor bug fixes and improvements
+- Fixed log level reset issues after calling yt-dlp
 
 ---
 
