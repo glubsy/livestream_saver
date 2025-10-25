@@ -907,25 +907,52 @@ def load_commented_json(path: Path) -> Dict:
         return data
 
 
-def interpolate_ytdlp_config(data: dict[str, Any]) -> None:
+def interpolate_ytdlp_config(data: dict[str, Any], po_token: str) -> None:
     """
     Interpolate the ytdlp config file with values from the environment variables.
     """
     # currently this is only used to replace the default PO token value
     if not (extractor_args := data.get("extractor-args")):
         return
-    if "<PO_TOKEN_VALUE>" not in extractor_args:
-        return
+    if type(extractor_args) is str:
+        if "<PO_TOKEN_VALUE>" not in extractor_args:
+            return
+        data["extractor-args"] = extractor_args.replace(
+            "<PO_TOKEN_VALUE>", po_token
+        )
+    # Looks like passing a list to ytdlp works as if passing multiple --extractor-args flags
+    elif type(extractor_args) is list:
+        for i, val in enumerate(extractor_args):
+            if type(val) is str and "<PO_TOKEN_VALUE>" in val:
+                extractor_args[i] = val.replace("<PO_TOKEN_VALUE>", po_token)
+    else:
+        log.warning(
+            "extractor-args in ytdlp config is neither a string, list or dict."
+            "Cannot interpolate PO token."
+        )
 
+
+def load_po_token(config_dir: Path) -> str:
+    """
+    Load the PO token either from environment variable or from file (env variable
+    takes precedence).
+    Raise ValueError if none was found.
+    """
     token = environ.get("PO_TOKEN", None)
+    if token and len(token) > 0:
+        return token.strip()
+
+    with open(config_dir / "po_token.txt", "r") as f:
+        token = f.read().strip()
+    
     if not token:
         raise ValueError(
-            "PO_TOKEN environment variable not set. "
-            "Please set the value with export PO_TOKEN=<your_token_value>"
+            "Failed to load PO token from environment variable or po_token file."
+            "Please set the value with export PO_TOKEN=<your_token_value> "
+            "or create a file named 'po_token' in the config directory."
         )
-    data["extractor-args"] = extractor_args.replace(
-        "<PO_TOKEN_VALUE>", token
-    )
+    return token
+
 
 
 def load_env_file(path: Path) -> None:
@@ -987,7 +1014,7 @@ def main():
         ytdlp_conf_file = fallback
 
     loaded_ytdlp_conf = load_commented_json(ytdlp_conf_file)
-    interpolate_ytdlp_config(loaded_ytdlp_conf)
+    interpolate_ytdlp_config(loaded_ytdlp_conf, po_token=load_po_token(config_dir))
     args["ytdlp_config"] = loaded_ytdlp_conf
 
     logfile_path = Path("")  # cwd by default
