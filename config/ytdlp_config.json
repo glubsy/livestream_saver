@@ -17,8 +17,13 @@
     // https://github.com/yt-dlp/yt-dlp/wiki/Extractors
     // You can load one PO_TOKEN value into environment variables with 
     // export PO_TOKEN="your_token"
+    // or you can put it into a file named "po_token.txt" in the config directory
     // and it will be automatically replaced in the config.
-    "extractor-args": "youtube:player-client=web,default;po_token=web+<PO_TOKEN_VALUE>",
+    // This can be a single string value or a list of strings for multiple args.
+    "extractor-args": [
+        "youtube:player-client=web,default;po_token=web+<PO_TOKEN_VALUE>",
+        "youtube:po_token=web.subs+<PO_TOKEN_VALUE>"
+    ],
 
     // Do not stop on download/postprocessing errors.
     // Can be "only_download" to ignore only download errors.
