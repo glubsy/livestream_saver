@@ -15,6 +15,7 @@ COPY "livestream_saver.py" .
 COPY "./config/ytdlp_config.json" "/root/.config/livestream_saver/ytdlp_config.json"
 COPY "./config/livestream_saver.cfg" "/root/.config/livestream_saver/livestream_saver.cfg"
 COPY "./config/.env" "/root/.config/livestream_saver/.env"
+COPY "./config/po_token.txt" "/root/.config/livestream_saver/po_token.txt"
 
 COPY "./docker/entrypoint.sh" ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
