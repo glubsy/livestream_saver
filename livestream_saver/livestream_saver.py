@@ -914,9 +914,17 @@ def interpolate_ytdlp_config(data: dict[str, Any], po_token: str) -> None:
     # currently this is only used to replace the default PO token value
     if not (extractor_args := data.get("extractor-args")):
         return
+
     if type(extractor_args) is str:
         if "<PO_TOKEN_VALUE>" not in extractor_args:
             return
+
+        if not po_token:
+            raise ValueError(
+                "PO token placeholder found in ytdlp config but no PO token"
+                " value provided."
+            )
+
         data["extractor-args"] = extractor_args.replace(
             "<PO_TOKEN_VALUE>", po_token
         )
@@ -924,6 +932,12 @@ def interpolate_ytdlp_config(data: dict[str, Any], po_token: str) -> None:
     elif type(extractor_args) is list:
         for i, val in enumerate(extractor_args):
             if type(val) is str and "<PO_TOKEN_VALUE>" in val:
+                if not po_token:
+                    raise ValueError(
+                        "PO token placeholder found in ytdlp config but no PO token"
+                        " value provided."
+                    )
+
                 extractor_args[i] = val.replace("<PO_TOKEN_VALUE>", po_token)
     else:
         log.warning(
@@ -945,14 +959,7 @@ def load_po_token(config_dir: Path) -> str:
     with open(config_dir / "po_token.txt", "r") as f:
         token = f.read().strip()
     
-    if not token:
-        raise ValueError(
-            "Failed to load PO token from environment variable or po_token file."
-            "Please set the value with export PO_TOKEN=<your_token_value> "
-            "or create a file named 'po_token' in the config directory."
-        )
     return token
-
 
 
 def load_env_file(path: Path) -> None:
@@ -1014,7 +1021,15 @@ def main():
         ytdlp_conf_file = fallback
 
     loaded_ytdlp_conf = load_commented_json(ytdlp_conf_file)
-    interpolate_ytdlp_config(loaded_ytdlp_conf, po_token=load_po_token(config_dir))
+
+    # Try to load PO token if needed
+    po_token = load_po_token(config_dir)
+    try:
+        interpolate_ytdlp_config(loaded_ytdlp_conf, po_token=po_token)
+    except ValueError as exc:
+        log.critical("Error interpolating ytdlp config: %s", exc)
+        return
+
     args["ytdlp_config"] = loaded_ytdlp_conf
 
     logfile_path = Path("")  # cwd by default
