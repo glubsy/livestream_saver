@@ -53,3 +53,15 @@ VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
 podman push localhost/livestream_saver:$VERSION docker://docker.io/glubsy/livestream_saver:$VERSION
 podman push localhost/livestream_saver:latest docker://docker.io/glubsy/livestream_saver:latest
 ```
+
+GitHub Actions now handles this automatically from `.github/workflows/docker-publish.yml`.
+Set these repository secrets before enabling the workflow:
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
+
+Tag behavior:
+
+- pushes to `main` publish `latest`
+- git tags like `v0.3.3` publish that same version tag
+- every publish also gets a short SHA tag for traceability
