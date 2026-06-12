@@ -769,30 +769,22 @@ class YoutubeChannel:
         Return videos attached to posts in available "tab" section in JSON response.
         tabtype is either "Videos" "Community", "Membership", "Home" etc.
         """
-        # The format depends on the client (user-agent) used to make the
-        # request, so either grid_renderer or list_renderer will be used.
+        # The format might depend on the client (user-agent) used to make the request
         for tab in tabs:
             if tab.get('tabRenderer', {}).get('title') != tabtype:
                 continue
 
-            if richGridRenderer := tab.get('tabRenderer', {})\
-                        .get('content', {})\
-                        .get('richGridRenderer'):
-                return _get_content_from_grid_renderer(
-                    tabtype,
-                    richGridRenderer.get('contents', []),
-                    self)
-
-            # This is the way the Home tab renders
-            if sectionListRenderer := tab.get('tabRenderer', {})\
-                        .get('content', {})\
-                        .get('sectionListRenderer'):
-                return _get_content_from_list_renderer(
-                    tabtype,
-                    sectionListRenderer.get('contents', []),
-                    self)
-
-            raise Exception(f"No valid content renderer found for \"{tabtype=}\".")
+            content = tab.get('tabRenderer', {}).get('content', {})
+            videos = _get_content_from_any_renderer(
+                tabtype,
+                content,
+                self
+            )
+            if not videos:
+                self.log.debug(
+                    f"No video posts found in {tabtype} tab content."
+                )
+            return videos
         return []
 
 
@@ -847,6 +839,139 @@ def _get_content_from_grid_renderer(
         logger.debug(
             f"Filtered duplicate video Ids from tab {tabtype}: {videos.duplicates}")
     return list(videos)
+
+
+def _get_content_from_any_renderer(
+    tabtype: str,
+    content: Any,
+    channel: YoutubeChannel,
+) -> List[VideoPost]:
+    """
+    Recursively collect video posts from a tab content tree.
+
+    YouTube has changed channel tab renderers multiple times over the years.
+    Rather than hard-coding every renderer shape, we walk the tree and keep any
+    renderer that looks like a video post.
+    """
+    videos = DedupedVideoList()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+            return
+
+        if not isinstance(node, dict):
+            return
+
+        if lockup := node.get("lockupViewModel"):
+            try:
+                vid_metadata = _video_post_from_lockup_view_model(
+                    lockup,
+                    channel.name
+                )
+            except Exception as e:
+                logger.debug(e)
+            else:
+                videos.append(vid_metadata)
+            return
+
+        if node.get("videoId") and node.get("navigationEndpoint") and node.get("title"):
+            try:
+                vid_metadata = VideoPost.from_post(node, channel.name)
+            except Exception as e:
+                logger.debug(e)
+            else:
+                videos.append(vid_metadata)
+
+        for value in node.values():
+            if isinstance(value, (dict, list)):
+                walk(value)
+
+    walk(content)
+
+    if videos.duplicates:
+        logger.debug(
+            f"Filtered duplicate video Ids from tab {tabtype}: {videos.duplicates}")
+    return list(videos)
+
+
+def _video_post_from_lockup_view_model(
+    lockup: Dict[str, Any],
+    channel_name: str,
+) -> VideoPost:
+    """
+    Convert a modern YouTube lockupViewModel card into a VideoPost.
+    """
+    content_type = lockup.get("contentType")
+    if content_type != "LOCKUP_CONTENT_TYPE_VIDEO":
+        raise MissingVideoId(f"Unsupported lockupViewModel contentType: {content_type}")
+
+    content_id = lockup.get("contentId")
+    if not content_id:
+        raise MissingVideoId("Missing contentId in lockupViewModel video card")
+
+    metadata = lockup.get("metadata", {}).get("lockupMetadataViewModel", {})
+    title = metadata.get("title", {}).get("content")
+    if not title:
+        title = lockup.get("rendererContext", {}) \
+            .get("accessibilityContext", {}) \
+            .get("label", "No title")
+
+    post: Dict[str, Any] = {
+        "videoId": content_id,
+        "title": {
+            "runs": [{"text": title}]
+        },
+        "navigationEndpoint": {
+            "commandMetadata": {
+                "webCommandMetadata": {
+                    "url": f"/watch?v={content_id}"
+                }
+            }
+        },
+        "thumbnail": {},
+        "thumbnailOverlays": [],
+    }
+
+    image = lockup.get("contentImage", {}) \
+        .get("thumbnailViewModel", {}) \
+        .get("image", {})
+    if image:
+        post["thumbnail"] = image
+
+    badge_text = None
+    for overlay in lockup.get("contentImage", {}) \
+        .get("thumbnailViewModel", {}) \
+        .get("overlays", []):
+        if bottom_overlay := overlay.get("thumbnailBottomOverlayViewModel", {}):
+            if badges := bottom_overlay.get("badges", []):
+                if badge := badges[0].get("thumbnailBadgeViewModel", {}):
+                    badge_text = badge.get("text")
+                    break
+
+    if badge_text:
+        style = badge_text.upper()
+        text_value = badge_text
+        if badge_text.lower().startswith("live"):
+            style = "LIVE"
+            text_value = "LIVE"
+        elif badge_text.lower().startswith("upcoming"):
+            style = "UPCOMING"
+            text_value = "UPCOMING"
+
+        post["thumbnailOverlays"].append(
+            {
+                "thumbnailOverlayTimeStatusRenderer": {
+                    "style": style,
+                    "text": {
+                        "runs": [{"text": text_value}]
+                    }
+                }
+            }
+        )
+
+    return VideoPost.from_post(post, channel_name)
 
 
 def _get_content_from_list_renderer(
@@ -983,9 +1108,9 @@ def get_endpoints_from_json(json: Dict) -> Dict[str, Any]:
     }
     """
     endpoints = {}
-    tabs = json.get("contents", {})\
-                .get("twoColumnBrowseResultsRenderer", {})\
-                .get("tabs", [])
+    tabs = get_tabs_from_json(json)
+    if not tabs:
+        return endpoints
     for tab in tabs:
         tabRenderer = tab.get("tabRenderer", {})
         title = tabRenderer.get("title")

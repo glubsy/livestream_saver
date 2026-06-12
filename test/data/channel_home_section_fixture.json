@@ -1,0 +1,80 @@
+{
+  "sectionListRenderer": {
+    "contents": [
+      {
+        "itemSectionRenderer": {
+          "contents": []
+        }
+      },
+      {
+        "itemSectionRenderer": {
+          "contents": [
+            {
+              "shelfRenderer": {
+                "content": {
+                  "horizontalListRenderer": {
+                    "items": [
+                      {
+                        "lockupViewModel": {
+                          "contentId": "home_fixture_1",
+                          "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+                          "metadata": {
+                            "lockupMetadataViewModel": {
+                              "title": {
+                                "content": "Home fixture title"
+                              }
+                            }
+                          },
+                          "rendererContext": {
+                            "accessibilityContext": {
+                              "label": "Home fixture title"
+                            }
+                          },
+                          "contentImage": {
+                            "thumbnailViewModel": {
+                              "overlays": [
+                                {
+                                  "thumbnailBottomOverlayViewModel": {
+                                    "badges": [
+                                      {
+                                        "thumbnailBadgeViewModel": {
+                                          "text": "Upcoming"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "lockupViewModel": {
+                          "contentId": "PLfscyjL54skIAJeAmta4PtHRpfAWVppGs",
+                          "contentType": "LOCKUP_CONTENT_TYPE_PLAYLIST",
+                          "metadata": {
+                            "lockupMetadataViewModel": {
+                              "title": {
+                                "content": "Playlist fixture title"
+                              }
+                            }
+                          },
+                          "rendererContext": {
+                            "accessibilityContext": {
+                              "label": "Playlist fixture title"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "richGridRenderer": {
+    "contents": [
+      {
+        "richItemRenderer": {
+          "content": {
+            "lockupViewModel": {
+              "contentId": "videos_fixture_1",
+              "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+              "metadata": {
+                "lockupMetadataViewModel": {
+                  "title": {
+                    "content": "Videos fixture title"
+                  },
+                  "metadata": {
+                    "contentMetadataViewModel": {
+                      "metadataRows": [
+                        {
+                          "metadataParts": [
+                            {
+                              "text": {
+                                "content": "123 views"
+                              }
+                            },
+                            {
+                              "text": {
+                                "content": "1 day ago"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "rendererContext": {
+                "accessibilityContext": {
+                  "label": "Videos fixture title"
+                }
+              },
+              "contentImage": {
+                "thumbnailViewModel": {
+                  "overlays": []
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

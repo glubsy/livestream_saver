@@ -7,7 +7,12 @@ from json import load
 from urllib.error import URLError
 
 
-from livestream_saver.channel import YoutubeChannel, VideoPost, DedupedVideoList
+from livestream_saver.channel import (
+    YoutubeChannel,
+    VideoPost,
+    DedupedVideoList,
+    get_endpoints_from_json,
+)
 from livestream_saver.request import YoutubeUrllibSession
 from livestream_saver.exceptions import MissingVideoId
 from livestream_saver.notifier import NotificationDispatcher
@@ -212,6 +217,119 @@ class TestGetVideosFromTabs(unittest.TestCase):
         self.assertEqual(len(videos), 2)
         warn_of_new.assert_not_called()
 
+    def test_get_videos_from_tab_handles_nested_renderers(self):
+        """
+        YouTube sometimes nests channel videos inside extra renderer wrappers.
+        The parser should still find the actual video post.
+        """
+        self.ch._name = "channel name"
+        tabs = [{
+            "tabRenderer": {
+                "title": "Home",
+                "content": {
+                    "richGridRenderer": {
+                        "contents": [{
+                            "richItemRenderer": {
+                                "content": {
+                                    "richSectionRenderer": {
+                                        "content": {
+                                            "videoRenderer": {
+                                                "videoId": "nested_id",
+                                                "title": {
+                                                    "runs": [{
+                                                        "text": "Nested video"
+                                                    }]
+                                                },
+                                                "navigationEndpoint": {
+                                                    "commandMetadata": {
+                                                        "webCommandMetadata": {
+                                                            "url": "test_url"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }]
+                    }
+                }
+            }
+        }]
+
+        videos = self.ch.get_videos_from_tab("Home", tabs)
+
+        self.assertEqual(len(videos), 1)
+        self.assertEqual(videos[0].videoId, "nested_id")
+
+    def test_get_videos_from_tab_returns_empty_list_for_empty_home_tab(self):
+        """
+        An offline channel may still expose a Home tab without any video cards.
+        That should not abort monitoring.
+        """
+        tabs = [{
+            "tabRenderer": {
+                "title": "Home",
+                "content": {
+                    "richGridRenderer": {
+                        "contents": []
+                    }
+                }
+            }
+        }]
+
+        videos = self.ch.get_videos_from_tab("Home", tabs)
+
+        self.assertEqual(videos, [])
+
+    def test_get_videos_from_home_fixture(self):
+        """
+        Parse a minimal anonymized Home tab fixture that matches the current
+        live sectionListRenderer shape.
+        """
+        self.ch._name = "channel name"
+        fixture_path = Path("test/data/channel_home_section_fixture.json")
+        with fixture_path.open("r", encoding="utf-8") as f:
+            content = load(f)
+
+        tabs = [{
+            "tabRenderer": {
+                "title": "Home",
+                "content": content,
+            }
+        }]
+
+        videos = self.ch.get_videos_from_tab("Home", tabs)
+
+        self.assertEqual(len(videos), 1)
+        self.assertEqual(videos[0].videoId, "home_fixture_1")
+        self.assertTrue(videos[0].upcoming)
+        self.assertNotIn("PLfscyjL54skIAJeAmta4PtHRpfAWVppGs", [v.videoId for v in videos])
+
+    def test_get_videos_from_videos_fixture(self):
+        """
+        Parse a minimal anonymized Videos tab fixture that matches the current
+        live richGridRenderer shape.
+        """
+        self.ch._name = "channel name"
+        fixture_path = Path("test/data/channel_videos_richgrid_fixture.json")
+        with fixture_path.open("r", encoding="utf-8") as f:
+            content = load(f)
+
+        tabs = [{
+            "tabRenderer": {
+                "title": "Videos",
+                "content": content,
+            }
+        }]
+
+        videos = self.ch.get_videos_from_tab("Videos", tabs)
+
+        self.assertEqual(len(videos), 1)
+        self.assertEqual(videos[0].videoId, "videos_fixture_1")
+        self.assertEqual(videos[0].title, "Videos fixture title")
+
     @patch("livestream_saver.channel.YoutubeChannel.load_endpoints")
     @patch("configparser.ConfigParser")
     @patch("urllib.request.urlopen")
@@ -243,6 +361,45 @@ class TestGetVideosFromTabs(unittest.TestCase):
         )
         self.assertEqual(new, [])
         self.assertEqual(removed, [self.video_post2])
+
+    def test_get_endpoints_from_single_column_browse_results(self):
+        """
+        Some channel pages return singleColumnBrowseResultsRenderer instead of
+        the older two-column shape. Endpoint discovery should still work.
+        """
+        json_obj = {
+            "contents": {
+                "singleColumnBrowseResultsRenderer": {
+                    "tabs": [
+                        {
+                            "tabRenderer": {
+                                "title": "Home",
+                                "endpoint": {
+                                    "browseEndpoint": {
+                                        "browseId": "CHANNEL_ID",
+                                        "params": "PARAMS",
+                                        "canonicalBaseUrl": "/@example",
+                                    }
+                                },
+                                "content": {
+                                    "sectionListRenderer": {
+                                        "contents": []
+                                    }
+                                },
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+
+        endpoints = get_endpoints_from_json(json_obj)
+
+        self.assertIn("Home", endpoints)
+        self.assertEqual(
+            endpoints["Home"]["browseEndpoint"]["browseId"],
+            "CHANNEL_ID",
+        )
 
     # @patch("configparser.ConfigParser")
     # @patch("urllib.request.urlopen")
