@@ -55,7 +55,7 @@ def interpolated(key, value, args) -> Optional[str]:
                 start_timestamp = "Scheduled for " + str(
                     datetime.utcfromtimestamp(int(start_time))) + " GMT+0"
             except Exception as e:
-                logger.debug(f"Error converting startTime: {e}")
+                logger.debug("Error converting startTime: %s", e)
         value = value.replace("%START_TIME%", start_timestamp)
     if "%VIDEO_ID%" in value:
         value = value.replace("%VIDEO_ID%", args.get('videoId', default))
@@ -152,8 +152,10 @@ class WebHook():
     def call_api(self):
         """Payload should be a json in binary format."""
         logger.debug(
-            f"Sending POST to {urlparse(self.url).netloc} "
-            f"with payload:\n{loads(self.payload)}")
+            "Sending POST to %s with payload:\n%s",
+            urlparse(self.url).netloc,
+            loads(self.payload),
+        )
         req = Request(
             self.url,
             headers=self.headers,
@@ -162,7 +164,7 @@ class WebHook():
         )
         try:
             with urlopen(req, timeout=10.0) as res:
-                logger.debug(f"Response status: {res.status}")
+                logger.debug("Response status: %s", res.status)
         except HTTPError as e:
             logger.warning(f"Error calling webhook: {e}")
             # logger.warning(f"{e.reason}")
@@ -311,7 +313,7 @@ class EmailHandler:
         if self.disabled:
             return
         
-        logger.info(f"Sending email: {email}")
+        logger.info("Sending email: %s", email)
 
         context = create_default_context()
         server = SMTP(self.smtp_server, self.smtp_port)
@@ -335,7 +337,7 @@ class EmailHandler:
             server.quit()
 
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Sent email {email.get('subject')}")
+            logger.debug("Sent email %s", email.get("subject"))
 
 
 class NotificationDispatcher:

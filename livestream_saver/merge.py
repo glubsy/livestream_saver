@@ -90,7 +90,7 @@ class ConcatMethod():
                 check=True,
                 capture_output=True,
                 text=True)
-            logger.debug(f"{cproc.args} stderr output:\n{cproc.stderr}")
+            logger.debug("%s stderr output:\n%s", cproc.args, cproc.stderr)
         except subprocess.CalledProcessError as e:
             logger.exception(
                 f"{e.cmd} returned error {e.returncode}. "
@@ -185,11 +185,14 @@ class ConcatMethod():
         round_dur = round(duration)
 
         logger.info(
-            f"Checking duration of {filepath.name} ({round_dur}) against the "
-            f"total expected duration {total_expected_duration} ...")
+            "Checking duration of %s (%s) against the total expected duration %s ...",
+            filepath.name,
+            round_dur,
+            total_expected_duration,
+        )
 
         if round_min <= round_dur <= round_max:
-            logger.info(f"{filepath.name} duration of {round_dur} seems valid.")
+            logger.info("%s duration of %s seems valid.", filepath.name, round_dur)
             return True
 
         last_segnum = segname_to_int(self.segment_list[-1])
@@ -199,8 +202,11 @@ class ConcatMethod():
         theoretical_dur = round(theoretical_total * self.segment_duration)
 
         logger.debug(
-            f"A total of {theoretical_total} segments * {self.segment_duration}"
-            f" seconds = {theoretical_dur} theoretical total duration.")
+            "A total of %s segments * %s seconds = %s theoretical total duration.",
+            theoretical_total,
+            self.segment_duration,
+            theoretical_dur,
+        )
         if round_dur == theoretical_dur:
             logger.warning(
                 "Duration is invalid, but it seems to correspond to the total "
@@ -236,12 +242,13 @@ class ConcatDemuxer(ConcatMethod):
     def make(self, overwrite=False):
         if self._final_file.exists() and not overwrite:
             logger.info(
-                f"Skipping concatenation because \"{self._final_file}\" "
-                "already exists from a previous run. Not rebuilding.")
+                'Skipping concatenation because "%s" already exists from a previous run. Not rebuilding.',
+                self._final_file,
+            )
             return self._final_file
         cmd = self.setup_command()
         try:
-            logger.info(f"Muxing {self.datatype} track file...")
+            logger.info("Muxing %s track file...", self.datatype)
             self.run_ffmpeg(cmd)
 
             duration = probe(self._final_file).get("duration", 0.0)
@@ -256,7 +263,7 @@ class ConcatDemuxer(ConcatMethod):
                     filter(lambda f: segname_to_int(f) not in corrupt_ints,
                     self.segment_list))
                 cmd = self.setup_command()
-                logger.info(f"Re-Muxing {self.datatype} track file...")
+                logger.info("Re-Muxing %s track file...", self.datatype)
                 self.run_ffmpeg(cmd)
             elif not self._final_file.exists():
                 # Something else is wrong. Bail out.
@@ -268,7 +275,7 @@ class ConcatDemuxer(ConcatMethod):
                 # self.list_file_path.unlink(missing_ok=True)
                 pass
 
-        logger.info(f"Successfully wrote {self.name}.")
+        logger.info("Successfully wrote %s.", self.name)
 
     def setup_command(self) -> List:
         # http://ffmpeg.org/ffmpeg-formats.html#concat-1
@@ -320,7 +327,7 @@ class NativeConcatFile(ConcatMethod):
             # Run again, but with the proper extension this time
             # UPDATE: this seems unnecessary after all.
             # cmd = self.setup_command()
-            logger.info(f"Muxing {self.datatype} track file...")
+            logger.info("Muxing %s track file...", self.datatype)
             self.run_ffmpeg(cmd)
 
             duration = probe(self._final_file).get("duration", 0.0)
@@ -345,7 +352,7 @@ class NativeConcatFile(ConcatMethod):
                 # self.run_ffmpeg(cmd)
 
                 cmd = self.setup_command()
-                logger.info(f"Re-Muxing {self.datatype} track file...")
+                logger.info("Re-Muxing %s track file...", self.datatype)
                 self.run_ffmpeg(cmd)
 
                 duration = probe(self._final_file).get("duration", 0.0)
@@ -371,13 +378,13 @@ class NativeConcatFile(ConcatMethod):
             if self.temp_concat.exists():
                 self.temp_concat.unlink()
 
-        logger.info(f"Successfully wrote {self.name}.")
+        logger.info("Successfully wrote %s.", self.name)
 
     def native_concat(self, overwrite=False) -> Optional[Path]:
         """Concatenate into a broken container that needs to be fixed by ffmpeg."""
         # TODO write this into a fifo/pipe and call ffmpeg on it in parallel?
         if not self.temp_concat.exists() or overwrite:
-            logger.debug(f"Writing native concat file {self.temp_concat.name} ...")
+            logger.debug("Writing native concat file %s ...", self.temp_concat.name)
             with open(self.temp_concat, "wb") as f:
                 for i in self.segment_list:
                     with open(i, "rb") as ff:
@@ -565,7 +572,7 @@ def merge(info: Dict, data_dir: Path,
     corrupt_vid_segs: Optional[List[Path]] = None
     corrupt_aud_segs: Optional[List[Path]] = None
     while attempt < len(methods):
-        logger.info(f"Performing concat method {methods[attempt].__name__}")
+        logger.info("Performing concat method %s", methods[attempt].__name__)
         try:
             concat_video_file = methods[attempt](
                 video_files, vid_props.get("codec_name", "video"),
@@ -698,10 +705,14 @@ def merge(info: Dict, data_dir: Path,
                 text=True,
                 encoding="utf-8"
             )
-            logger.debug(f"{cproc.args} stderr output:\n{cproc.stderr}")
+            logger.debug("%s stderr output:\n%s", cproc.args, cproc.stderr)
         except subprocess.CalledProcessError as e:
             logger.debug(
-                f"{e.cmd} return code {e.returncode}. STDERR:\n{e.stderr}")
+                "%s return code %s. STDERR:\n%s",
+                e.cmd,
+                e.returncode,
+                e.stderr,
+            )
 
             if try_thumb \
             and 'Unable to parse option value "attached_pic"' in e.stderr:
@@ -734,12 +745,14 @@ def merge(info: Dict, data_dir: Path,
 
     # TODO check final duration just in case.
 
-    logger.info(f"Successfully wrote file \"{final_output_file.name}\".")
+    logger.info('Successfully wrote file "%s".', final_output_file.name)
 
     if not keep_concat:
         logger.debug(
-            f"Removing temporary audio/video concatenated files "
-            "{} and {}".format(concat_audio_file.name, concat_video_file.name))
+            "Removing temporary audio/video concatenated files %s and %s",
+            concat_audio_file.name,
+            concat_video_file.name,
+        )
         concat_audio_file.unlink()
         concat_video_file.unlink()
 
@@ -777,7 +790,7 @@ def get_corrupt(filelist: List[Path]) -> List[Path]:
     for f in filelist:
         num += 1
         if num % 100 == 0:
-            logger.info(f"{num} files scanned...")
+            logger.info("%s files scanned...", num)
         try:
             probeproc = subprocess.run(probecmd + [str(f)],
                 capture_output=True, text=True
@@ -917,7 +930,7 @@ def get_thumbnail_command_prefix(data_path: Path) -> List:
         return []
 
     _type = get_filetype(thumb_path)
-    logger.info(f"Detected thumbnail \"{thumb_path}\" type: {_type}.")
+    logger.info('Detected thumbnail "%s" type: %s.', thumb_path, _type)
 
     if _type is None:
         return []
@@ -927,8 +940,10 @@ def get_thumbnail_command_prefix(data_path: Path) -> List:
             convert_thumbnail(thumb_path, _type)
         except Exception as e:
             logger.error(
-                f"Failed converting thumbnail \"{thumb_path}\" "
-                f"from detected {_type} format. {e}"
+                'Failed converting thumbnail "%s" from detected %s format. %s',
+                thumb_path,
+                _type,
+                e,
             )
             return []
 
@@ -962,11 +977,11 @@ def convert_thumbnail(thumb_path: Path, fromformat: str) -> Path:
         thumb_path.rename(new_name)
 
     # TODO Pillow can detect and try all available formats
-    logger.info(f"Converting \"{new_name}\" to PNG...")
+    logger.info('Converting "%s" to PNG...', new_name)
     with Image.open(new_name) as im:
         im.convert("RGB")
         im.save(thumb_path, "PNG")
-    logger.info(f"Saved PNG thumbnail as \"{thumb_path}\"")
+    logger.info('Saved PNG thumbnail as "%s"', thumb_path)
     return thumb_path
 
 
@@ -1006,22 +1021,28 @@ def sanitize_filename(filename: str) -> str:
     filename = "".join(
         c for c in filename if 31 < ord(c) and c not in r'<>:"/\|?*'
     )
-    logger.debug(f"filename {filename}, extension {extension}")
+    logger.debug("filename %s, extension %s", filename, extension)
 
     if not filename.isascii():
         name_bytes = filename.encode('utf-8')
         length_bytes = len(name_bytes)
         logger.debug(
-            f"Length of problematic filename is {length_bytes} bytes "
-            f"{'<' if length_bytes < MAX_NAME_LEN else '>='} {MAX_NAME_LEN}")
+            "Length of problematic filename is %s bytes %s %s",
+            length_bytes,
+            "<" if length_bytes < MAX_NAME_LEN else ">=",
+            MAX_NAME_LEN,
+        )
         if length_bytes > MAX_NAME_LEN:
             filename = simple_truncate(filename, MAX_NAME_LEN - len(extension))
     else:
         # Coerce filename length to 255 characters which is a common limit.
         filename = filename[:MAX_NAME_LEN - len(extension)]
 
-    logger.debug(f"Sanitized name: {filename + extension} "
-              f"({len((filename + extension).encode('utf-8'))} bytes)")
+    logger.debug(
+        "Sanitized name: %s (%s bytes)",
+        filename + extension,
+        len((filename + extension).encode("utf-8")),
+    )
     assert(
         len(
             filename.encode('utf-8') + extension.encode('utf-8')

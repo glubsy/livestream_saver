@@ -30,21 +30,21 @@ def _get_cookie_jar(cookiefile_path: str):
         else CompatMozillaCookieJar(policy=policy)
 
     if not cookiefile_path:
-        logger.info(f"No cookie file path submitted. Using a blank cookie jar.")
+        logger.info("No cookie file path submitted. Using a blank cookie jar.")
         return cj
 
     cp = Path(cookiefile_path).expanduser()
 
     if not cp.is_file():  # either file doesn't exist, or it's a directory
         cp_str = str(cp)
-        logger.debug(f"Cookie file path \"{cp_str}\" is not a file...")
+        logger.debug('Cookie file path "%s" is not a file...', cp_str)
 
         if not cp.exists():
             # Get base directory, remove bogus filename
             found = cp_str.rfind(sep)
             if found != -1:
                 cp_str = cp_str[:found]
-            logger.debug(f"Creating directory for cookies: \"{cp_str}\"")
+            logger.debug('Creating directory for cookies: "%s"', cp_str)
             makedirs(cp_str, exist_ok=True)
             cp_str = str(cp)
         elif cp.is_dir():

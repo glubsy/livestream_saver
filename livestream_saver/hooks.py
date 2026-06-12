@@ -116,8 +116,7 @@ class HookCommand():
                 cmd,
                 **self._kwargs
             )
-            logger.info(f"Spawned: {p.args} with PID={p.pid}")
+            logger.info("Spawned: %s with PID=%s", p.args, p.pid)
         except Exception as e:
             logger.warning(f"Error spawning {cmd}: {e}")
             pass
-

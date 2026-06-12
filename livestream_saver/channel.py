@@ -615,7 +615,7 @@ class YoutubeChannel:
         if not videoId:
             return None
 
-        logger.debug(f"Fetching extra info from API for {videoId=} ...")
+        logger.debug("Fetching extra info from API for videoId=%s ...", videoId)
         try:
             return self.session.make_api_request(
                 endpoint="https://www.youtube.com/youtubei/v1/player",
@@ -837,7 +837,7 @@ def _get_content_from_grid_renderer(
                         videos.append(vid_metadata)
     if videos.duplicates:
         logger.debug(
-            f"Filtered duplicate video Ids from tab {tabtype}: {videos.duplicates}")
+            "Filtered duplicate video Ids from tab %s: %s", tabtype, videos.duplicates)
     return list(videos)
 
 
@@ -892,7 +892,7 @@ def _get_content_from_any_renderer(
 
     if videos.duplicates:
         logger.debug(
-            f"Filtered duplicate video Ids from tab {tabtype}: {videos.duplicates}")
+            "Filtered duplicate video Ids from tab %s: %s", tabtype, videos.duplicates)
     return list(videos)
 
 
@@ -1116,7 +1116,7 @@ def get_endpoints_from_json(json: Dict) -> Dict[str, Any]:
         title = tabRenderer.get("title")
 
         if tabRenderer.get("selected"):
-            logger.debug(f"Parsing json of selected tab: \"{title}\"...")
+            logger.debug('Parsing json of selected tab: "%s"...', title)
 
         _endpoint = tabRenderer.get("endpoint")
         if not tabRenderer or not title or not _endpoint:

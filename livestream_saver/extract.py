@@ -63,7 +63,7 @@ def get_video_id_re(url_pattern: str) -> str:
     if not results:
         logger.warning(f"Error while looking for {url_pattern}.")
         raise Exception
-    logger.info(f"matched regex search: {url_pattern}.")
+    logger.info("matched regex search: %s.", url_pattern)
     return results.group(1)
 
 
@@ -105,5 +105,5 @@ def publish_date(watch_html: Optional[str]=None):
         if match := regex.search(watch_html):
             return datetime.strptime(match.group(0), '%Y-%m-%d')
     except Exception as e:
-        logger.debug(f"Error looking for publish date: {e}")
+        logger.debug("Error looking for publish date: %s", e)
     return None

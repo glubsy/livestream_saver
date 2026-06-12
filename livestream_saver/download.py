@@ -349,7 +349,7 @@ class YoutubeLiveStream:
             return logger
 
         if logger.hasHandlers():
-            logger.debug(f"Logger {logger} already had handlers!")
+            logger.debug("Logger %s already had handlers!", logger)
             return logger
 
         logger.setLevel(logging.DEBUG)
