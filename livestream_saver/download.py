@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import json
 from typing import Optional, Dict, List, Any
 from os import sep, path, makedirs, listdir
 from sys import stderr
@@ -1134,6 +1135,9 @@ class YoutubeLiveStream:
 
         if self.use_ytdl:
             with yt_dlp.YoutubeDL(self.ytdl_opts) as ydl:
+                # info = ydl.extract_info(self.url, download=False)
+                # sanitize_info makes the info json-serializable
+                # print(json.dumps(ydl.sanitize_info(info)))
                 self.error = ydl.download(self.url)
             return
 

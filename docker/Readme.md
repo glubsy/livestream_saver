@@ -16,7 +16,7 @@ For a quick local development loop, use [`dev.sh`](./dev.sh). It builds the imag
   * `livestream_saver.cfg`
   * `ytdlp_config.json`
   * your netscape-formatted cookies as `cookies.txt`
-  * a `.env` file (to load a PO_TOKEN as mentioned in the `ytdlp_config.json` file)
+  * a `.env` file (to override some optional variables)
 
 Then you can mount that directory inside the container as `/root/.config/livestream_saver`.
 Don't forget to mount your `downloads` directory where both logs and data will be output.

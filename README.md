@@ -15,14 +15,8 @@ The example files from the `/config` directory should be copied to `$HOME/.confi
 > As a result, many native configuration settings from the config file and CLI arguments (and some hooks) are **ignored**.
 > 
 > The `ytdlp_config.json` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited, otherwise the default provided template will be used as fallback.
-> The .env file should also contain your PO_TOKEN (or at least should be loaded as an environment variable)
 > 
-> This is confusing but will be fixed eventually.
-
-> [!CAUTION]
-> Youtube is banning IPs that does not pass a [Proof of Origin (PO) token](https://github.com/yt-dlp/yt-dlp/wiki/Extractors) to their requests. 
-> It is advised to generate the token (from the same IP address) and store it in the `ytdlp_config.json` file accordingly so that it get passed to the downloader.
-
+> This is confusing but may be improved eventually once we remove yt-dlp as the downloader.
 
 # Monitoring a channel
 
