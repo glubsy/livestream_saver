@@ -1035,7 +1035,7 @@ def main():
             output_path = create_output_dir(
                 output_dir=output_path, video_id=None)
 
-        logfile_path = output_dir / f"download_{video_id}.log"
+        logfile_path = output_path / f"download_{video_id}.log"
         setup_logger(
             output_filepath=logfile_path,
             loglevel=config.get(sub_cmd, "log_level", vars=args)
