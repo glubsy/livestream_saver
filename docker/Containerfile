@@ -1,6 +1,13 @@
+FROM denoland/deno:bin-2.8.2 AS deno-bin
+
 FROM python:3.13-slim-trixie
 
-RUN apt update && apt -y install ffmpeg
+COPY --from=deno-bin /deno /usr/local/bin/deno
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

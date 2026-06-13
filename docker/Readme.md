@@ -4,7 +4,7 @@
 docker buildx build -f ./docker/Containerfile -t livestream_saver:latest .
 ```
 or now with podman
-```
+```sh
 podman build -f ./docker/Containerfile -t livestream_saver:latest -t livestream_saver:$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml) .
 ```
 

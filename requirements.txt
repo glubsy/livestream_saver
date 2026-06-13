@@ -5,4 +5,5 @@ Pillow
 yt-dlp
 # git+https://github.com/yt-dlp/yt-dlp
 bgutil-ytdlp-pot-provider
+yt-dlp-ejs
 filetype==1.2.0
