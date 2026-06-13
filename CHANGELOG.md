@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.0.1] - 2026-06-13
 
 - Fix video Ids being wrongly detected as newly added to the channel
+- Add deno as dependency from yt-dlp
+- Add ejs as dependency from yt-dlp
 
 ## [v1.0.0] - 2026-06-13
 
