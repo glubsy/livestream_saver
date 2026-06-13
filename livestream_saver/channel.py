@@ -876,14 +876,11 @@ def _get_content_from_any_renderer(
             return
 
         if lockup := node.get("lockupViewModel"):
-            try:
-                vid_metadata = _video_post_from_lockup_view_model(
-                    lockup,
-                    channel.name
-                )
-            except Exception as e:
-                logger.debug(e)
-            else:
+            vid_metadata = _video_post_from_lockup_view_model(
+                lockup,
+                channel.name
+            )
+            if vid_metadata:
                 videos.append(vid_metadata)
             return
 
@@ -910,17 +907,17 @@ def _get_content_from_any_renderer(
 def _video_post_from_lockup_view_model(
     lockup: Dict[str, Any],
     channel_name: str,
-) -> VideoPost:
+) -> Optional[VideoPost]:
     """
     Convert a modern YouTube lockupViewModel card into a VideoPost.
     """
     content_type = lockup.get("contentType")
     if content_type != "LOCKUP_CONTENT_TYPE_VIDEO":
-        raise MissingVideoId(f"Unsupported lockupViewModel contentType: {content_type}")
+        return None
 
     content_id = lockup.get("contentId")
     if not content_id:
-        raise MissingVideoId("Missing contentId in lockupViewModel video card")
+        return None
 
     metadata = lockup.get("metadata", {}).get("lockupMetadataViewModel", {})
     title = metadata.get("title", {}).get("content")
