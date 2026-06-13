@@ -330,6 +330,77 @@ class TestGetVideosFromTabs(unittest.TestCase):
         self.assertEqual(videos[0].videoId, "videos_fixture_1")
         self.assertEqual(videos[0].title, "Videos fixture title")
 
+    @patch("livestream_saver.channel.YoutubeChannel.warn_of_new")
+    @patch("livestream_saver.channel.YoutubeChannel.get_videos_from_tab")
+    @patch("livestream_saver.channel.get_tabs_from_json")
+    @patch("livestream_saver.channel.YoutubeChannel.get_json_and_cache")
+    def test_home_tab_ignores_vod_churn_for_new_warning(
+        self,
+        get_json_and_cache: Mock,
+        get_tabs_from_json: Mock,
+        get_videos_from_tab: Mock,
+        warn_of_new: Mock,
+    ):
+        """
+        The Home/Featured tab should not report ordinary VOD churn as new
+        content. Only live or upcoming items should trigger the warning.
+        """
+        get_json_and_cache.return_value = {}
+        get_tabs_from_json.return_value = [{}]
+
+        live_video = VideoPost.from_post(
+            {
+                "videoId": "live_1",
+                "isLive": True,
+                "isLiveNow": True,
+                "navigationEndpoint": {
+                    "commandMetadata": {
+                        "webCommandMetadata": {
+                            "url": "test_url"
+                        }
+                    }
+                }
+            },
+            channel_name="channel name"
+        )
+        vod_1 = VideoPost.from_post(
+            {
+                "videoId": "vod_1",
+                "navigationEndpoint": {
+                    "commandMetadata": {
+                        "webCommandMetadata": {
+                            "url": "test_url"
+                        }
+                    }
+                }
+            },
+            channel_name="channel name"
+        )
+        vod_2 = VideoPost.from_post(
+            {
+                "videoId": "vod_2",
+                "navigationEndpoint": {
+                    "commandMetadata": {
+                        "webCommandMetadata": {
+                            "url": "test_url"
+                        }
+                    }
+                }
+            },
+            channel_name="channel name"
+        )
+
+        get_videos_from_tab.side_effect = [
+            [live_video, vod_1],
+            [live_video, vod_2],
+        ]
+
+        self.ch.get_home_videos()
+        warn_of_new.assert_not_called()
+
+        self.ch.get_home_videos()
+        warn_of_new.assert_not_called()
+
     @patch("livestream_saver.channel.YoutubeChannel.load_endpoints")
     @patch("configparser.ConfigParser")
     @patch("urllib.request.urlopen")

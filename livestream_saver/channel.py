@@ -316,9 +316,20 @@ class YoutubeChannel:
                 )
             )
         else:
+            # The Home tab mixes stable live/upcoming entries with a churny
+            # featured shelf of regular VODs. Only treat live/upcoming items as
+            # news so that non-live featured reshuffles do not spam alerts.
+            current_notable = [
+                vid for vid in home_videos
+                if vid.isLiveNow or vid.isLive or vid.upcoming
+            ]
+            previous_notable = [
+                vid for vid in self._home_videos
+                if vid.isLiveNow or vid.isLive or vid.upcoming
+            ]
             new_videos, _ = self.get_changes(
-                videos=home_videos,
-                previous=self._home_videos
+                videos=current_notable,
+                previous=previous_notable
             )
             # TODO warn of removed live VODs (requires keeping memory of all
             # Ids in the channel by using Shelve or Sqlite)
