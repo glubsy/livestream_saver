@@ -3,20 +3,20 @@
 
 Cookies (in Netscape format) are needed to access membership-only videos as well as age-restricted videos (which would also mean that you sold your soul to Youtube and your account is "verified"). You may use [this](https://github.com/hrdl-github/cookies-txt) or [that](https://github.com/dandv/convert-chrome-cookies-to-netscape-format) depending on the browser you used to log into that dis-service.
 
-The example files from the `/config` directory should be copied to `$HOME/.config/livestream_saver/` and updated manually:
+The example files from the `config` directory should be copied to `$HOME/.config/livestream_saver/` and updated manually:
 * `livestream_saver.cfg`
 * `ytdlp_config.json`
 * `.env`
 
 
 > [!IMPORTANT]
-> The download feature is currently half-broken (see issue [#63](https://github.com/glubsy/livestream_saver/issues/63)) so we rely on yt-dlp for the time being.
+> `yt-dlp` is now used to probe livestream metadata and available formats before downloading.
 > 
-> As a result, many native configuration settings from the config file and CLI arguments (and some hooks) are **ignored**.
+> By default, the project still uses its native downloader to fetch segments, but you can opt into using `yt-dlp` as the downloader as well with the `use_ytdl` setting from the config file.
 > 
-> The `ytdlp_config.json` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited, otherwise the default provided template will be used as fallback.
+> The `ytdlp_config.json` file holds the default options passed to `yt-dlp` as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited, otherwise the default provided template will be used as fallback.
 > 
-> This is confusing but may be improved eventually once we remove yt-dlp as the downloader.
+> Some `yt-dlp` options are intentionally ignored during probing, such as format-selection settings, because livestream_saver performs its own format selection after collecting the full list of available formats.
 
 # Monitoring a channel
 
@@ -169,9 +169,9 @@ pip3 install .[pot]
 
 ## Docker container
 
-If you prefer to build and use a Docker container, look at the Readme inside the `docker` directory.
+If you prefer to build and use a container image, look at the Readme inside the `docker` directory.
 
-Docker image also available at https://hub.docker.com/r/glubsy/livestream_saver (can also be referenced in docker-compose)
+A prebuilt Docker image is available at https://hub.docker.com/r/glubsy/livestream_saver (it can be referenced in docker-compose also)
 
 # Configuration
 

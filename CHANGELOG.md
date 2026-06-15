@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configurable `use_ytdl` setting in the template configuration file to let users choose the downloader
 - Support for resuming muxed HLS downloads from existing segment output directories
 - Support for merging single-track muxed segment downloads without requiring an `aud/` directory
+- Dedicated Docker Compose service for the external bgutil POT provider
+- Podman-specific Compose override file using host networking
+- Optional dependency group / requirements file for POT-related yt-dlp integration
 
 ### Changed
 - BREAKING: Renamed `max_video_quality` to `max_video_width` in configuration handling
@@ -20,11 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reduced dependency on pytube metadata lookups in the yt-dlp/HLS download path
 - Improved merge logging for valid partial-duration recordings
 - Renamed extracted thumbnails to match the final output filename and correct image extension
+- Moved the bgutil POT provider out of the downloader container image and into a separate service
+- Moved POT-related Python package out of the default dependency set and into optional installation paths
+- Updated Docker and installation documentation to describe the external POT provider requirement
 
 ### Fixed
 - Fixed selection of the most appropriate muxed HLS format based on the configured maximum video width
 - Fixed incorrect fallback to old YouTube API metadata calls during yt-dlp-driven HLS downloads
 - Fixed noisy segment progress messages being written to download log files
+- Fixed cookie path handling when paths contain `~`, including `_updated.txt` cookie jar writes
+- Fixed Podman Compose progress display by disabling TTY in the Podman override
+- Fixed muxed HLS resume behavior when playlist media sequence has already advanced
 
 ## [v1.0.1] - 2026-06-13
 
