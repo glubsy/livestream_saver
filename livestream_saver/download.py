@@ -1770,7 +1770,7 @@ class YoutubeLiveStream:
             clear_line = ('\r\x1b[K' if stderr.isatty() else '\r')
 
         print(clear_line + fullmsg, end='')
-        self.log.info(fullmsg)
+        self.log.debug(fullmsg)
 
     # OBSOLETE
     def print_found_quality(self, item, datatype):

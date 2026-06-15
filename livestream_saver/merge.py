@@ -208,10 +208,10 @@ class ConcatMethod():
             theoretical_dur,
         )
         if round_dur == theoretical_dur:
-            logger.warning(
-                "Duration is invalid, but it seems to correspond to the total "
-                f"number of files we should have in theory ({last_segnum})."
-                " We assume we recorded only part of the stream & duration is valid.")
+            logger.info(
+                "Duration differs from ffprobe's expected total, but it matches "
+                "the duration implied by the available segments. "
+                "Assuming the recording is valid.")
             return True
 
         logger.warning(
@@ -464,10 +464,16 @@ def path_list_to_int(seg_list: List[Path]) -> Iterator[int]:
     return (int(i.stem[:-6]) for i in seg_list)
 
 
-def merge(info: Dict, data_dir: Path,
-          output_dir: Optional[Path] = None,
-          keep_concat: bool = False,
-          delete_source: bool = False) -> Optional[Path]:
+def merge(
+    info: Dict,
+    data_dir: Path,
+    output_dir: Optional[Path] = None,
+    keep_concat: bool = False,
+    delete_source: bool = False
+) -> Optional[Path]:
+    """
+    Merge the video and audio segments into a single file.
+    """
     if not output_dir:
         output_dir = data_dir
 
@@ -505,7 +511,7 @@ def merge(info: Dict, data_dir: Path,
     audio_seg_dir = data_dir / "aud"
 
     video_files = collect(video_seg_dir)
-    audio_files = collect(audio_seg_dir)
+    audio_files = collect(audio_seg_dir, warn_missing=False)
 
     if not video_files and not audio_files:
         raise Exception("Missing video or audio segment source files!")
@@ -757,6 +763,7 @@ def merge(info: Dict, data_dir: Path,
     # TODO check final duration just in case.
 
     logger.info('Successfully wrote file "%s".', final_output_file.name)
+    rename_thumbnail(data_dir, final_output_file)
 
     if not keep_concat:
         if concat_audio_file:
@@ -791,7 +798,7 @@ def merge(info: Dict, data_dir: Path,
                 logger.info("Deleting source segments in %s...", video_seg_dir)
             else:
                 logger.info(
-                    "Deleting source segments in %s and %s...", 
+                    "Deleting source segments in %s and %s...",
                     video_seg_dir, audio_seg_dir
                 )
             rmtree(video_seg_dir)
@@ -1015,9 +1022,37 @@ def get_thumbnail_pathname(data_path: Path) -> Optional[Path]:
     return None
 
 
-def collect(data_path: Path) -> List[Path]:
+def rename_thumbnail(data_path: Path, final_output_file: Path) -> Optional[Path]:
+    thumb_path = get_thumbnail_pathname(data_path)
+    if not thumb_path or not thumb_path.exists():
+        return None
+
+    filetype = get_filetype(thumb_path)
+    if not filetype:
+        logger.warning('Could not determine thumbnail type for "%s".', thumb_path)
+        return None
+
+    suffix = ".jpg" if filetype == "jpeg" else f".{filetype}"
+    new_path = final_output_file.with_suffix(suffix)
+    if thumb_path == new_path:
+        return new_path
+
+    try:
+        thumb_path.rename(new_path)
+    except FileExistsError:
+        logger.info('Thumbnail "%s" already exists. Keeping it.', new_path)
+    except OSError as exc:
+        logger.warning('Failed to rename thumbnail "%s" to "%s": %s', thumb_path, new_path, exc)
+        return None
+    else:
+        logger.info('Renamed thumbnail "%s" to "%s".', thumb_path.name, new_path.name)
+    return new_path
+
+
+def collect(data_path: Path, warn_missing: bool = True) -> List[Path]:
     if not data_path.exists():
-        logger.warning(f"{data_path} does not exist!")
+        if warn_missing:
+            logger.warning("%s does not exist!", data_path)
         return []
     files = [p for p in data_path.glob('*.ts')]
     files.sort()
