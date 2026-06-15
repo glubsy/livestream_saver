@@ -49,6 +49,12 @@ def apply_pot_provider_config(ytdlp_config: Dict[str, Any]) -> Dict[str, Any]:
     return ytdlp_config
 
 
+def normalize_path_str(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return value
+    return str(Path(value).expanduser())
+
+
 def parse_args(config) -> argparse.Namespace:
     parent_parser = argparse.ArgumentParser(
         description='Monitor a Youtube channel for any active live stream and \
@@ -997,7 +1003,7 @@ def main():
         args["channel_name"] = channel_name
         args["scan_delay"] = params.get("scan_delay")
         args["hooks"] = params.get("hooks")
-        args["cookies"] = params.get("cookies")
+        args["cookies"] = normalize_path_str(params.get("cookies"))
         args["skip_download"] = params.get("skip_download")
         args["ignore_quality_change"] = params.get("ignore_quality_change")
         args["filters"] = params.get("filters", {})
@@ -1028,7 +1034,9 @@ def main():
         )
         URL = args.get("URL", "")  # pass empty string for get_video_id()
         args["hooks"] = get_hooks_for_section(sub_cmd, config, "_command")
-        args["cookies"] = config.get(sub_cmd, "cookies", vars=args, fallback=None)
+        args["cookies"] = normalize_path_str(
+            config.get(sub_cmd, "cookies", vars=args, fallback=None)
+        )
         args["ignore_quality_change"] = config.getboolean(
             sub_cmd, "ignore_quality_change", vars=args, fallback=False)
 
@@ -1135,6 +1143,8 @@ def main():
 
     if "cookiefile" not in args["ytdlp_config"] and (cookies := args.get("cookies")):
         args["ytdlp_config"]["cookiefile"] = cookies
+    elif cookiefile := args["ytdlp_config"].get("cookiefile"):
+        args["ytdlp_config"]["cookiefile"] = normalize_path_str(cookiefile)
 
     error = 0
     try:
