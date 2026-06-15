@@ -10,6 +10,8 @@ x-defaults:
   restart: always
   # to upgrade yt-dlp on every container start
   init: true
+  tty: true         # interactive terminal for carriage-return progress updates
+  stdin_open: true  # keep stdin open
   volumes:
     - type: bind
       # This path is relative to this here file

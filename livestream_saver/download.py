@@ -2,7 +2,7 @@
 import json
 from typing import Optional, Dict, List, Any
 from os import sep, path, makedirs, listdir
-from sys import stderr
+from sys import stderr, stdout
 from platform import system
 import logging
 from datetime import date, datetime, timezone
@@ -1760,16 +1760,20 @@ class YoutubeLiveStream:
     def print_progress(self, seg: int) -> None:
         # TODO display rotating wheel in interactive mode
         fullmsg = f"Downloading segment {seg}..."
-        if ISWINDOWS:
-            prev_len = getattr(self, '_report_progress_prev_line_length', 0)
-            if prev_len > len(fullmsg):
-                fullmsg += ' ' * (prev_len - len(fullmsg))
-            self._report_progress_prev_line_length = len(fullmsg)
-            clear_line = '\r'
-        else:
-            clear_line = ('\r\x1b[K' if stderr.isatty() else '\r')
+        if stdout.isatty():
+            if ISWINDOWS:
+                prev_len = getattr(self, '_report_progress_prev_line_length', 0)
+                if prev_len > len(fullmsg):
+                    fullmsg += ' ' * (prev_len - len(fullmsg))
+                self._report_progress_prev_line_length = len(fullmsg)
+                clear_line = '\r'
+            else:
+                clear_line = ('\r\x1b[K' if stderr.isatty() else '\r')
 
-        print(clear_line + fullmsg, end='')
+            print(clear_line + fullmsg, end='', flush=True)
+        else:
+            print(fullmsg, flush=True)
+
         self.log.debug(fullmsg)
 
     # OBSOLETE
