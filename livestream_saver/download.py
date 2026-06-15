@@ -357,8 +357,8 @@ class YoutubeLiveStream:
         try:
             with yt_dlp.YoutubeDL(self.get_ytdl_info_opts()) as ydl:
                 self._ytdlp_info = ydl.extract_info(self.url, download=False)
-        except Exception as e:
-            self.log.debug(f"Error getting metadata from yt-dlp: {e}")
+        except Exception as exc:
+            self.log.debug("Error getting metadata from yt-dlp: %s", exc)
             return self._ytdlp_info
 
         self.hydrate_metadata_from_ytdlp_info(self._ytdlp_info)
@@ -465,9 +465,9 @@ class YoutubeLiveStream:
         try:
             title = self.title
             description = self.description
-        except Exception as e:
+        except Exception as exc:
             # Default to allowing download in that case.
-            self.log.error(f"Failed getting some metadata for regex matching: {e}")
+            self.log.error("Failed getting some metadata for regex matching: %s", exc)
 
         # Fallback to using data from monitoring phase
         if not title and self._initial_metadata is not None:
@@ -515,28 +515,28 @@ class YoutubeLiveStream:
             except (
                 NoLoginException,
                 UnplayableException
-            ) as e:
-                self.log.warning(e)
+            ) as exc:
+                self.log.warning(exc)
                 if not (Status.LIVE in self.status):
                     self.log.info("Stream is not live anymore.")
                     break
                 wait_block(long_wait)
                 continue
-            except OutdatedAppException as e:
-                self.log.warning(f"Outdated client error. Retrying shortly...")
+            except OutdatedAppException as exc:
+                self.log.warning("Outdated client error. Retrying shortly...")
                 if not (Status.LIVE in self.status):
                     self.log.info("Stream is not live anymore.")
                     break
                 wait_block(2)
                 continue
-            except Exception as e:
-                self.log.error(f"Error getting status for stream {self.video_id}: {e}")
+            except Exception as exc:
+                self.log.error("Error getting status for stream %s: %s", self.video_id, exc)
 
             if not self.status == Status.OK:
-                self.log.info(f"Stream {self.video_id} status is not active.")
+                self.log.info("Stream %s status is not active.", self.video_id)
                 break
 
-            self.log.info(f"Stream {self.video_id} is still active...")
+            self.log.info("Stream %s is still active...", self.video_id)
 
             # Keep checking in case the metadata changed
             self.get_ytdlp_info(force_update=True)

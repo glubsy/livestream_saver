@@ -760,14 +760,14 @@ def merge(info: Dict, data_dir: Path,
 
     if not keep_concat:
         if concat_audio_file:
-            logger.debug(
+            logger.info(
                 "Removing temporary audio/video concatenated files %s and %s",
                 concat_audio_file.name,
                 concat_video_file.name,
             )
             concat_audio_file.unlink()
         else:
-            logger.debug(
+            logger.info(
                 "Removing temporary muxed concatenated file %s",
                 concat_video_file.name,
             )
@@ -776,22 +776,23 @@ def merge(info: Dict, data_dir: Path,
     if delete_source:
         action_msg = "Not deleting source segments."
         if segment_number_mismatch:
-            logger.warning(f"Some segments are missing. {action_msg}")
+            logger.warning("Some segments are missing. %s", action_msg)
         elif concats_have_different_durations:
             logger.warning(
-                f"There was a track duration mismatch. {action_msg}")
+                "There was a track duration mismatch. %s", action_msg)
         elif corrupt_aud_segs or corrupt_vid_segs:
-            logger.warning(f"Some segments were corrupted! {action_msg}")
+            logger.warning("Some segments were corrupted! %s", action_msg)
         elif attempt > 0:
-            logger.warning(f"A concat method failed. {action_msg}")
+            logger.warning("A concat method failed. %s", action_msg)
         elif got_errors:
-            logger.warning(f"We got suspicious errors while concatenating. {action_msg}")
+            logger.warning("We got suspicious errors while concatenating. %s", action_msg)
         else:
             if muxed_only:
                 logger.info("Deleting source segments in %s...", video_seg_dir)
             else:
-                logger.info("Deleting source segments in {} and {}...".format(
-                    video_seg_dir, audio_seg_dir)
+                logger.info(
+                    "Deleting source segments in %s and %s...", 
+                    video_seg_dir, audio_seg_dir
                 )
             rmtree(video_seg_dir)
             if audio_seg_dir.exists():
@@ -817,18 +818,18 @@ def get_corrupt(filelist: List[Path]) -> List[Path]:
                 capture_output=True, text=True
             )
             # logger.debug(f"{probeproc.args} stderr output:\n{probeproc.stderr}")
-        except FileNotFoundError as e:
-            logger.error(f"Failed to use ffprobe: {e}.")
+        except FileNotFoundError as exc:
+            logger.error("Failed to use ffprobe: %s.", exc)
         else:
             if "Packet corrupt" in probeproc.stderr:
-                logger.warning(f"File segment \"{f}\" is corrupt!")
+                logger.warning("File segment \"%s\" is corrupt!", f)
                 corrupt.append(f)
 
     if corrupt:
         logger.warning(
-            f"Found {len(corrupt)} corrupt packets via ffprobe: "
-            f"{[f.name for f in corrupt]}."
-            " Will not use them anymore")
+            "Found %s corrupt packets via ffprobe: "
+            "%s."
+            " Will not use them anymore", len(corrupt), [f.name for f in corrupt])
     else:
         logger.info("No corrupt file detected.")
     return corrupt
@@ -960,12 +961,12 @@ def get_thumbnail_command_prefix(data_path: Path, input_count: int = 2) -> List:
     if _type not in ("jpg", "jpeg", "png"):
         try:
             convert_thumbnail(thumb_path, _type)
-        except Exception as e:
+        except Exception as exc:
             logger.error(
                 'Failed converting thumbnail "%s" from detected %s format. %s',
                 thumb_path,
                 _type,
-                e,
+                exc,
             )
             return []
 
@@ -985,9 +986,9 @@ def convert_thumbnail(thumb_path: Path, fromformat: str) -> Path:
     then convert the file to PNG and saves it as 'filename' from thumb_path."""
     try:
         from PIL import Image
-    except ImportError as e:
-        logger.error(f"Failed loading PIL (pillow) module. {e}")
-        raise e
+    except ImportError as exc:
+        logger.error("Failed loading PIL (pillow) module. %s", exc)
+        raise
 
     # old_path = str(thumb_path)
     # new_name = ".".join((old_path, fromformat))
