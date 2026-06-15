@@ -7,24 +7,13 @@ COPY --from=deno-bin /deno /usr/local/bin/deno
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ffmpeg \
-        git \
     && rm -rf /var/lib/apt/lists/*
-
-ENV PATH="/root/.deno/bin:${PATH}"
-
-RUN git init /opt/bgutil-ytdlp-pot-provider \
-    && cd /opt/bgutil-ytdlp-pot-provider \
-    && git remote add origin https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git \
-    && git fetch --depth 1 origin 6b497de5a6cbaf106bd94a934c5d2794c3fdf8bb \
-    && git checkout FETCH_HEAD \
-    && cd ./server \
-    && deno install --allow-scripts=npm:canvas --frozen \
-    && rm -rf .git
 
 WORKDIR /app
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-opt.txt ./
+RUN pip install --no-cache-dir -r requirements-opt.txt
 
 COPY "./livestream_saver/" ./livestream_saver/
 COPY "livestream_saver.py" .

@@ -38,6 +38,17 @@ TIME_VARIANCE = 3.0  # in minutes
 MAX_SIMULTANEOUS_LIVE_DOWNLOAD = 2
 
 
+def apply_pot_provider_config(ytdlp_config: Dict[str, Any]) -> Dict[str, Any]:
+    pot_provider_url = environ.get("LSS_POT_PROVIDER_URL")
+    if not pot_provider_url:
+        return ytdlp_config
+
+    extractor_args = ytdlp_config.setdefault("extractor_args", {})
+    provider_args = extractor_args.setdefault("youtubepot-bgutilhttp", {})
+    provider_args["base_url"] = [pot_provider_url]
+    return ytdlp_config
+
+
 def parse_args(config) -> argparse.Namespace:
     parent_parser = argparse.ArgumentParser(
         description='Monitor a Youtube channel for any active live stream and \
@@ -967,7 +978,9 @@ def main():
         log.warning(f"{ytdlp_conf_file} not found. Falling back to {fallback}")
         ytdlp_conf_file = fallback
 
-    loaded_ytdlp_conf = load_commented_json(ytdlp_conf_file)
+    loaded_ytdlp_conf = apply_pot_provider_config(
+        load_commented_json(ytdlp_conf_file)
+    )
 
     args["ytdlp_config"] = loaded_ytdlp_conf
     args["use_ytdl"] = config.getboolean(sub_cmd, "use_ytdl", vars=args, fallback=False)

@@ -134,6 +134,8 @@ optional arguments:
 * python >= 3.10
 * yt-dlp (preferrably always the latest version)
 * (optional) some [POT provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)
+* (optional) `bgutil-ytdlp-pot-provider` yt-dlp plugin to talk to an external POT provider
+* (optional) `yt-dlp-ejs` for enhanced yt-dlp extraction support
 * [pytube](https://github.com/pytube/pytube) 10.9.2
 * ffmpeg (and ffprobe) to concatenate segments and merge them into one file 
 * [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional) to convert webp thumbnail
@@ -149,6 +151,18 @@ optional arguments:
 python3 -m venv venv  # or virtualenv -p python3 venv
 source ./venv/bin/activate
 pip3 install -r requirements.txt
+```
+
+* If you want more reliable extraction support for yt-dlp, install the optional dependencies as well (recommended):
+
+```
+pip3 install -r requirements-opt.txt
+```
+
+* If you install from the Python package metadata instead, the optional POT-related extras are available with:
+
+```
+pip3 install .[pot]
 ```
 
 * If you don't want to use a venv (to avoid having to activate the venv everytime you need to start the program, with `source /path/to/venv/bin/activate`), you *could* install dependencies system-wide. Remember to use `sudo pip3` then.

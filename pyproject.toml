@@ -27,8 +27,13 @@ dependencies = [
     "pytube == 10.9.2",
     "Pillow",
     "yt-dlp",
-    "bgutil_ytdlp_pot_provider",
     "filetype == 1.2.0"
+]
+
+[project.optional-dependencies]
+opt = [
+    "bgutil_ytdlp_pot_provider",
+    "yt-dlp-ejs",
 ]
 
 [project.urls]  # Optional

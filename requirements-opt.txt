@@ -1,0 +1,3 @@
+-r requirements.txt
+bgutil-ytdlp-pot-provider
+yt-dlp-ejs
