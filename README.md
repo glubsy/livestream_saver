@@ -133,6 +133,7 @@ optional arguments:
 
 * python >= 3.10
 * yt-dlp (preferrably always the latest version)
+* (optional) some [POT provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)
 * [pytube](https://github.com/pytube/pytube) 10.9.2
 * ffmpeg (and ffprobe) to concatenate segments and merge them into one file 
 * [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional) to convert webp thumbnail

@@ -1,4 +1,6 @@
 {
+    // "verbose": true,
+
     // Stream selection format.
     // For example "134+140/mp4+m4a/bestvideo+bestaudio"
     // would prefer 360p video + AAC 128kpbs audio to be muxed with ffmpeg,
@@ -27,7 +29,10 @@
 
     // "wait_for_video": (60, 120),
 
-    "live_from_start": true,
+    // A bug prevents us from using yt-dlp reliably for live streams when passing
+    // this option, so we will use the built-in downloader instead.
+    // See: https://github.com/yt-dlp/yt-dlp/issues/15274
+    // "live_from_start": true,
 
     "writethumbnail": true,
 
@@ -35,6 +40,8 @@
 
     // Abort download if some fragments are unavailable, we will retry
     "abort-on-unavailable-fragments": true,
+
+    // "wait_for_video" = (60, 120),
 
     "postprocessors": [
         {
