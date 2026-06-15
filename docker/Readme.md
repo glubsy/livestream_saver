@@ -76,6 +76,7 @@ podman-compose -f ./docker/compose.yaml -f ./docker/compose.podman.yaml --env-fi
 ```
 
 This override switches the services to host networking and points the downloader containers to the POT provider at `http://127.0.0.1:4416`.
+It also disables TTY allocation for the downloader services so segment progress is printed as normal log lines instead of carriage-return updates, which `podman-compose` does not render reliably.
 
 # Maintainer notes
 

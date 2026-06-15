@@ -1,28 +1,45 @@
 services:
   pot-provider:
+    # Rootless Podman networking may fail with the default Compose setup
+    # because podman-compose can rely on pasta/tun. Host networking avoids
+    # those issues for the standalone POT provider HTTP service.
     network_mode: host
 
   Panko:
+    # Disable TTY so download progress is printed as normal lines instead
+    # of carriage-return updates, which podman-compose does not render well.
+    tty: false
+    stdin_open: false
+    # With host networking, the downloader must reach the shared POT
+    # provider via localhost instead of the Compose service name.
     network_mode: host
     environment:
       LSS_POT_PROVIDER_URL: http://127.0.0.1:4416
 
   Bijou:
+    tty: false
+    stdin_open: false
     network_mode: host
     environment:
       LSS_POT_PROVIDER_URL: http://127.0.0.1:4416
 
   Fuwamoco:
+    tty: false
+    stdin_open: false
     network_mode: host
     environment:
       LSS_POT_PROVIDER_URL: http://127.0.0.1:4416
 
   Prune:
+    tty: false
+    stdin_open: false
     network_mode: host
     environment:
       LSS_POT_PROVIDER_URL: http://127.0.0.1:4416
 
   Saba:
+    tty: false
+    stdin_open: false
     network_mode: host
     environment:
       LSS_POT_PROVIDER_URL: http://127.0.0.1:4416
