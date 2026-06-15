@@ -369,7 +369,7 @@ class YoutubeLiveStream:
             return
 
         if not self._title:
-            self._title = info.get("title") or info.get("fulltitle")
+            self._title = info.get("fulltitle") or info.get("title")
         if not self._author:
             self._author = info.get("channel") or info.get("uploader")
         if not self._description:
