@@ -89,7 +89,8 @@ Either a full youtube URL, /channel/ID, or /c/name format.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookies file.'
     )
-    monitor_parser.add_argument('-q', '--max-video-quality', action='store',
+    monitor_parser.add_argument('-q', '--max-video-width', '--max-video-quality',
+        dest='max_video_width', action='store',
         default=argparse.SUPPRESS, type=int,
         help='Use best available video resolution up to this height in pixels.'\
              ' Example: "360" for maximum height 360p. Get the highest available'
@@ -181,8 +182,8 @@ merging of streams has been successful. Only useful for troubleshooting.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookies file.'
     )
-    download_parser.add_argument('-q', '--max-video-quality',
-        action='store', type=int,
+    download_parser.add_argument('-q', '--max-video-width', '--max-video-quality',
+        dest='max_video_width', action='store', type=int,
         default=argparse.SUPPRESS,
         help='Use best available video resolution up to this height in pixels.'\
              ' Example: "360" for maximum height 360p. Get the highest available'
@@ -560,8 +561,8 @@ def download_task(
         output_dir=sub_output_dir,
         session=session,
         notifier=NOTIFIER,
-        max_video_quality=config.getint(
-            "monitor", "max_video_quality", vars=args, fallback=None),  # type: ignore
+        max_video_width=config.getint(
+            "monitor", "max_video_width", vars=args, fallback=None),  # type: ignore
         hooks=args["hooks"],
         skip_download=skip_download,
         filters=args["filters"],
@@ -698,8 +699,8 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
         output_dir=args["output_dir"],
         session=session,
         notifier=NOTIFIER,
-        max_video_quality=config.getint(
-            "download", "max_video_quality", vars=args, fallback=None
+        max_video_width=config.getint(
+            "download", "max_video_width", vars=args, fallback=None
         ), # type: ignore
         hooks=args["hooks"],
         skip_download=config.getboolean(
