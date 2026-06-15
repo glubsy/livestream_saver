@@ -12,7 +12,8 @@ from contextlib import closing
 from enum import Flag, auto
 from pathlib import Path
 import re
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
+from urllib.parse import urljoin
 import urllib.error
 from http.client import IncompleteRead
 import xml.etree.ElementTree as ET
@@ -21,6 +22,7 @@ import yt_dlp
 
 import pytube.cipher
 import pytube
+from copy import deepcopy
 
 from livestream_saver.notifier import NotificationDispatcher
 from livestream_saver.request import YoutubeUrllibSession
@@ -298,6 +300,7 @@ class YoutubeLiveStream:
 
         self.video_base_url = None
         self.audio_base_url = None
+        self.is_muxed_hls = False
         self.seg = 0
         self.seg_attempt = 0
         self.status = Status.OFFLINE
@@ -334,6 +337,16 @@ class YoutubeLiveStream:
 
         self.allow_regex: Optional[re.Pattern] = filters.get("allow_regex")
         self.block_regex: Optional[re.Pattern] = filters.get("block_regex")
+
+    def get_ytdl_info_opts(self) -> Dict[str, Any]:
+        """Return yt-dlp options suitable for probing all available formats."""
+        opts = deepcopy(self.ytdl_opts) if self.ytdl_opts else {}
+
+        # We want the full formats list here and do our own selection later.
+        for key in ("format", "format_sort"):
+            opts.pop(key, None)
+
+        return opts
 
     def setup_logger(self, output_path: Path, log_level: str | int):
         if isinstance(log_level, str):
@@ -917,18 +930,29 @@ class YoutubeLiveStream:
             except Exception as e:
                 self.log.warning(f"Error writing thumbnails: {e}")
 
+    @staticmethod
+    def _stream_value(stream: Any, key: str) -> Any:
+        if stream is None:
+            return None
+        if isinstance(stream, dict):
+            if key == "itag":
+                return stream.get("format_id") or stream.get("itag")
+            if key == "resolution":
+                if height := stream.get("height"):
+                    return f"{height}p"
+                return stream.get("resolution")
+            if key == "abr":
+                return stream.get("abr")
+            if key == "mime_type":
+                return stream.get("ext") or stream.get("protocol")
+            return stream.get(key)
+        return getattr(stream, key, None)
+
     def update_metadata(self):
         """
         Write some basic metadata to a file and download thumbnail onto storage
         device.
         """
-        if self.video_itag:
-            if info := pytube.itags.ITAGS.get(self.video_itag):
-                self.video_resolution = info[0]
-        if self.audio_itag:
-            if info := pytube.itags.ITAGS.get(self.audio_itag):
-                self.audio_bitrate = info[0]
-
         self.download_thumbnail()
 
         # TODO get the description once the stream has started
@@ -962,11 +986,11 @@ class YoutubeLiveStream:
             ).__str__()
 
         if self.video_itag:
-            info["video_itag"] = self.video_itag.itag
-            info["video_resolution"] = self.video_itag.resolution
+            info["video_itag"] = self._stream_value(self.video_itag, "itag")
+            info["video_resolution"] = self._stream_value(self.video_itag, "resolution")
         if self.audio_itag:
-            info["audio_itag"] = self.audio_itag.itag
-            info["audio_bitrate"] = self.audio_itag.abr
+            info["audio_itag"] = self._stream_value(self.audio_itag, "itag")
+            info["audio_bitrate"] = self._stream_value(self.audio_itag, "abr")
         return info
 
     def update_status(self):
@@ -1132,13 +1156,31 @@ class YoutubeLiveStream:
 
 
     def download(self, wait_delay: float = 1.0):
+        with yt_dlp.YoutubeDL(self.get_ytdl_info_opts()) as ydl:
+            info = ydl.extract_info(self.url, download=False)
+            # sanitize_info makes the info json-serializable
+            # print(json.dumps(ydl.sanitize_info(info)))
 
         if self.use_ytdl:
             with yt_dlp.YoutubeDL(self.ytdl_opts) as ydl:
-                # info = ydl.extract_info(self.url, download=False)
-                # sanitize_info makes the info json-serializable
-                # print(json.dumps(ydl.sanitize_info(info)))
                 self.error = ydl.download(self.url)
+            return
+
+        if self.prepare_hls_download(info):
+            self.update_metadata()
+            self.trigger_hooks('on_download_started')
+
+            if self.skip_download:
+                self.done = True
+                return
+
+            self.do_download_hls(wait_delay=wait_delay)
+            if self.done:
+                self.log.info(f"Finished downloading {self.video_id}.")
+                self.trigger_hooks("on_download_ended")
+            if self.error:
+                self.log.critical(
+                    f"Some kind of error occured during download? {self.error}")
             return
 
         # If one of the directories exists, assume we are resuming a previously
@@ -1261,6 +1303,237 @@ class YoutubeLiveStream:
             self.trigger_hooks("on_download_ended")
         if self.error:
             self.log.critical(f"Some kind of error occured during download? {self.error}")
+
+    def prepare_hls_download(self, info: Optional[Dict[str, Any]]) -> bool:
+        if not info:
+            return False
+
+        selected = self.get_best_hls_format(info)
+        if not selected:
+            return False
+
+        self.video_itag = selected
+        self.audio_itag = None
+        self.video_base_url = selected.get("url") or selected.get("manifest_url")
+        self.audio_base_url = None
+        self.is_muxed_hls = True
+
+        if not self.video_base_url:
+            self.log.warning("Selected HLS format had no playlist URL.")
+            self.is_muxed_hls = False
+            return False
+
+        dir_existed = False
+        try:
+            makedirs(self.video_outpath, 0o770)
+        except FileExistsError:
+            dir_existed = True
+
+        if dir_existed:
+            self.seg = self.get_first_segment((self.video_outpath,))
+        else:
+            self.seg = 0
+
+        self.log.info(
+            "Selected muxed HLS itag %s at %s via yt-dlp.",
+            self._stream_value(selected, "itag"),
+            self._stream_value(selected, "resolution"),
+        )
+        self.log.info(f"Will start downloading from segment number {self.seg}.")
+        return True
+
+    def get_best_hls_format(self, info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        formats = info.get("formats") or []
+        if not isinstance(formats, list):
+            return None
+
+        maxq = self.max_video_width
+        if maxq is not None and not isinstance(maxq, int):
+            match = re.search(r"(\d{3,4})", str(maxq))
+            maxq = int(match.group(1)) if match else None
+
+        candidates = [
+            fmt for fmt in formats
+            if isinstance(fmt, dict)
+            and fmt.get("protocol") == "m3u8_native"
+            and fmt.get("vcodec") not in (None, "none")
+            and fmt.get("acodec") not in (None, "none")
+            and (fmt.get("url") or fmt.get("manifest_url"))
+        ]
+        if not candidates:
+            return None
+
+        if maxq is not None:
+            within_limit = [
+                fmt for fmt in candidates
+                if isinstance(fmt.get("height"), int) and fmt["height"] <= maxq
+            ]
+            if within_limit:
+                candidates = within_limit
+
+        return sorted(
+            candidates,
+            key=lambda fmt: (fmt.get("height") or -1, fmt.get("tbr") or -1),
+            reverse=True
+        )[0]
+
+    def refresh_hls_format(self) -> None:
+        with yt_dlp.YoutubeDL(self.get_ytdl_info_opts()) as ydl:
+            info = ydl.extract_info(self.url, download=False)
+
+        selected = self.get_best_hls_format(info)
+        if not selected:
+            raise Exception("Failed to refresh muxed HLS format from yt-dlp.")
+
+        if self.video_itag and \
+        self._stream_value(self.video_itag, "itag") != self._stream_value(selected, "itag"):
+            self.log.warning(
+                "Muxed HLS itag changed from %s to %s while refreshing.",
+                self._stream_value(self.video_itag, "itag"),
+                self._stream_value(selected, "itag"),
+            )
+
+        self.video_itag = selected
+        self.video_base_url = selected.get("url") or selected.get("manifest_url")
+
+    def make_request_obj(
+        self,
+        url: str,
+        extra_headers: Optional[Dict[str, str]] = None
+    ) -> Request:
+        headers = self.session.headers.copy()
+        if extra_headers:
+            headers.update(extra_headers)
+        req = Request(url, headers=headers)
+        self.session.cookie_jar.add_cookie_header(req)
+        return req
+
+    def get_hls_playlist_segments(
+        self,
+        playlist_url: str,
+        extra_headers: Optional[Dict[str, str]] = None
+    ) -> tuple[List[tuple[int, str]], bool]:
+        req = self.make_request_obj(playlist_url, extra_headers=extra_headers)
+        content = self.session.get_response_as_str(req)
+
+        media_sequence = 0
+        end_list = False
+        segments: List[tuple[int, str]] = []
+        seg_num: Optional[int] = None
+
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+                media_sequence = int(line.rsplit(":", 1)[-1])
+                seg_num = media_sequence
+                continue
+            if line == "#EXT-X-ENDLIST":
+                end_list = True
+                continue
+            if line.startswith("#"):
+                continue
+
+            if seg_num is None:
+                seg_num = media_sequence
+            segments.append((seg_num, urljoin(playlist_url, line)))
+            seg_num += 1
+
+        return segments, end_list
+
+    def download_hls_segment(
+        self,
+        segment_url: str,
+        seg_num: int,
+        stream_type: str = "video",
+        extra_headers: Optional[Dict[str, str]] = None
+    ) -> bool:
+        segment_filename = f'{self.video_outpath}{sep}{seg_num:0{10}}_video.ts'
+        req = self.make_request_obj(segment_url, extra_headers=extra_headers)
+
+        with closing(urlopen(req)) as in_stream:
+            headers = in_stream.headers
+            status = in_stream.status
+            if status >= 204:
+                self.log.debug(f"Seg {seg_num} {stream_type} URL: {segment_url}")
+                self.log.debug(f"Seg status: {status}")
+                self.log.debug(f"Seg headers:\n{headers}")
+
+            if not self.write_to_file(in_stream, segment_filename):
+                if status == 204 and headers.get('X-Segment-Lmt', "0") == "0":
+                    raise EmptySegmentException(
+                        f"Segment {seg_num} ({stream_type}) is empty, stream might have ended...")
+                return False
+        return True
+
+    def do_download_hls(self, wait_delay: float = 1.0):
+        if not self.video_base_url:
+            raise Exception("Missing HLS playlist url!")
+
+        wait_sec = max(1, round(wait_delay))
+        last_refresh_time = datetime.now()
+
+        while not self.done and not self.error:
+            try:
+                now = datetime.now()
+                if (now - last_refresh_time).total_seconds() > 5 * 60:
+                    self.refresh_hls_format()
+                    last_refresh_time = now
+
+                extra_headers = self.video_itag.get("http_headers") \
+                    if isinstance(self.video_itag, dict) else None
+                segments, end_list = self.get_hls_playlist_segments(
+                    self.video_base_url,
+                    extra_headers=extra_headers
+                )
+                next_segments = [
+                    (seg_num, seg_url)
+                    for seg_num, seg_url in segments
+                    if seg_num >= self.seg
+                ]
+
+                if not next_segments:
+                    if end_list:
+                        self.done = True
+                        break
+                    sleep(wait_sec)
+                    continue
+
+                for seg_num, seg_url in next_segments:
+                    self.print_progress(seg_num)
+                    if not self.download_hls_segment(
+                        seg_url,
+                        seg_num,
+                        extra_headers=extra_headers
+                    ):
+                        break
+                    self.seg = seg_num + 1
+
+                if end_list and self.seg > next_segments[-1][0]:
+                    self.done = True
+                    break
+
+            except (
+                EmptySegmentException,
+                ForbiddenSegmentException,
+                IncompleteRead,
+                ValueError,
+                ConnectionError,
+                urllib.error.HTTPError,
+                urllib.error.URLError
+            ) as e:
+                self.log.warning(e)
+                try:
+                    self.refresh_hls_format()
+                except Exception as refresh_err:
+                    self.error = f"{refresh_err}"
+                    break
+                sleep(wait_sec)
+            except Exception as e:
+                self.log.exception("Unhandled exception in HLS download. Aborting.")
+                self.error = f"{e}"
+                break
 
     def download_seg(self, baseurl: BaseURL, seg, type):
         segment_url: str = baseurl.add_seg(seg)

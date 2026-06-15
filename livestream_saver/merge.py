@@ -510,9 +510,11 @@ def merge(info: Dict, data_dir: Path,
     if not video_files and not audio_files:
         raise Exception("Missing video or audio segment source files!")
 
+    muxed_only = bool(video_files and not audio_files)
+
     # Various checks on source segments to detect any missing:
     segment_number_mismatch = False
-    if len(video_files) != len(audio_files):
+    if not muxed_only and len(video_files) != len(audio_files):
         logger.warning(
             "Number of audio and video segments do not match! "
             f"{len(video_files)} video segments, {len(audio_files)} audio segments."
@@ -521,7 +523,7 @@ def merge(info: Dict, data_dir: Path,
 
     # FIXME this is redundant with checks below
     missing_video_paths = print_missing_segments(video_files, "_video")
-    missing_audio_paths = print_missing_segments(audio_files, "_audio")
+    missing_audio_paths = [] if muxed_only else print_missing_segments(audio_files, "_audio")
     if missing_video_paths or missing_audio_paths:
         segment_number_mismatch = True
         logger.warning(f"Some segments appear to be missing!")
@@ -530,23 +532,27 @@ def merge(info: Dict, data_dir: Path,
     missing_video_ints = []
     missing_audio_ints = []
     video_as_int = list(path_list_to_int(video_files))
-    audio_as_int = list(path_list_to_int(audio_files))
+    audio_as_int = [] if muxed_only else list(path_list_to_int(audio_files))
     seg_list_as_ints = video_as_int + audio_as_int
 
-    affected_segs = [
-        i for i in seg_list_as_ints
-        if i not in video_as_int or i not in audio_as_int
-    ]
-    missing_audio_ints = [i for i in video_as_int if i not in audio_as_int]
-    missing_video_ints = [i for i in audio_as_int if i not in video_as_int]
-    if affected_segs:
-        logger.warning(
-            "Some segments appear to be missing! "
-            f" Affected segments: {affected_segs}. "
-            f" Missing video segments: {missing_video_ints}."
-            f" Missing audio segments: {missing_audio_ints}")
+    if muxed_only:
+        affected_segs = []
+        logger.info("Detected a single muxed segment track. Skipping A/V parity checks.")
     else:
-        logger.info("No missing segment detected. All good.")
+        affected_segs = [
+            i for i in seg_list_as_ints
+            if i not in video_as_int or i not in audio_as_int
+        ]
+        missing_audio_ints = [i for i in video_as_int if i not in audio_as_int]
+        missing_video_ints = [i for i in audio_as_int if i not in video_as_int]
+        if affected_segs:
+            logger.warning(
+                "Some segments appear to be missing! "
+                f" Affected segments: {affected_segs}. "
+                f" Missing video segments: {missing_video_ints}."
+                f" Missing audio segments: {missing_audio_ints}")
+        else:
+            logger.info("No missing segment detected. All good.")
     del video_as_int
     del audio_as_int
     del seg_list_as_ints
@@ -554,14 +560,15 @@ def merge(info: Dict, data_dir: Path,
 
     # Determine codec from one file
     vid_props = probe(video_files[0])
-    aud_props = probe(audio_files[0])
+    aud_props = {} if muxed_only else probe(audio_files[0])
 
     # We could either remove to balance both lists, or fill in. Removing
     # is probably better here, especially regarding audio.
     video_files = list(filter(
         lambda f: segname_to_int(f) not in missing_video_ints, video_files))
-    audio_files = list(filter(
-        lambda f: segname_to_int(f) not in missing_audio_ints, audio_files))
+    if not muxed_only:
+        audio_files = list(filter(
+            lambda f: segname_to_int(f) not in missing_audio_ints, audio_files))
 
     # There is only one method that works currently
     methods = (NativeConcatFile,)
@@ -597,25 +604,26 @@ def merge(info: Dict, data_dir: Path,
                 # audio_files = list(filter(
                 #    lambda f: segname_to_int(f) not in new_missing, audio_files))
 
-            concat_audio_file = methods[attempt](
-                audio_files, aud_props.get("codec_name", "audio"),
-                info.get("id", "UNKNOWN_ID"), output_dir,
-                missing_audio_ints, corrupt_aud_segs)
-            concat_audio_file.make()
-            if concat_audio_file.error is not None:
-                got_errors = True
+            if not muxed_only:
+                concat_audio_file = methods[attempt](
+                    audio_files, aud_props.get("codec_name", "audio"),
+                    info.get("id", "UNKNOWN_ID"), output_dir,
+                    missing_audio_ints, corrupt_aud_segs)
+                concat_audio_file.make()
+                if concat_audio_file.error is not None:
+                    got_errors = True
 
-            # We have to rebuild the video after removing video segments
-            # corresponding to the corrupt audio segments:
-            # FIXME this is untested! Need some corrupt audio segments.
-            if concat_audio_file._corrupt_segments:
-                corrupt_aud_segs = concat_audio_file._corrupt_segments
-                new_missing = list(path_list_to_int(corrupt_aud_segs))
-                video_files = list(filter(
-                    lambda f: segname_to_int(f) not in new_missing, video_files))
-                concat_video_file.unlink(missing_ok=True)
-                concat_video_file.segment_list = video_files
-                concat_video_file.make(overwrite=True)
+                # We have to rebuild the video after removing video segments
+                # corresponding to the corrupt audio segments:
+                # FIXME this is untested! Need some corrupt audio segments.
+                if concat_audio_file._corrupt_segments:
+                    corrupt_aud_segs = concat_audio_file._corrupt_segments
+                    new_missing = list(path_list_to_int(corrupt_aud_segs))
+                    video_files = list(filter(
+                        lambda f: segname_to_int(f) not in new_missing, video_files))
+                    concat_video_file.unlink(missing_ok=True)
+                    concat_video_file.segment_list = video_files
+                    concat_video_file.make(overwrite=True)
             break
         except Exception as e:
             logger.exception(e)
@@ -633,30 +641,33 @@ def merge(info: Dict, data_dir: Path,
 
     if not concat_video_file or not concat_video_file.exists():
         raise Exception(f"Missing concat video file: {concat_video_file}")
-    if not concat_audio_file or not concat_audio_file.exists():
+    if not muxed_only and (not concat_audio_file or not concat_audio_file.exists()):
         raise Exception(f"Missing concat audio file: {concat_audio_file}")
 
     # Compare durations of each track:
     concats_have_different_durations = False
     concat_vid_props = probe(concat_video_file._final_file)
-    concat_aud_props = probe(concat_audio_file._final_file)
+    concat_aud_props = probe(concat_audio_file._final_file) if concat_audio_file else {}
     # cast to int to round down
-    dur_dirr = abs(
-        round(concat_aud_props.get("duration", 0.0)) \
-        - round(concat_vid_props.get("duration", 0.0))
-    )
-    if dur_dirr <= 1:
-        logger.info("No duration mismatch between concat files. All good.")
-    # We may tolerate up to 2 seconds delta, but won't delete source files:
-    if dur_dirr > 1:
-        logger.warning( "Track duration mismatch: "
-            f"Audio duration {concat_aud_props.get('duration')}, "
-            f"Video duration {concat_vid_props.get('duration')}. ")
-        concats_have_different_durations = True
-    if dur_dirr > 2:
-        logger.warning(
-            "Aborting due to concat files duration difference superior to 2 seconds.")
-        return None
+    if muxed_only:
+        dur_dirr = 0
+    else:
+        dur_dirr = abs(
+            round(concat_aud_props.get("duration", 0.0)) \
+            - round(concat_vid_props.get("duration", 0.0))
+        )
+        if dur_dirr <= 1:
+            logger.info("No duration mismatch between concat files. All good.")
+        # We may tolerate up to 2 seconds delta, but won't delete source files:
+        if dur_dirr > 1:
+            logger.warning( "Track duration mismatch: "
+                f"Audio duration {concat_aud_props.get('duration')}, "
+                f"Video duration {concat_vid_props.get('duration')}. ")
+            concats_have_different_durations = True
+        if dur_dirr > 2:
+            logger.warning(
+                "Aborting due to concat files duration difference superior to 2 seconds.")
+            return None
 
     ext = "mp4"
     # Seems like an MP4 container can handle vp9 just fine. Perhaps we don't
@@ -682,15 +693,15 @@ def merge(info: Dict, data_dir: Path,
     # Final muxing of tracks, plus thumbnail and metadata embedding:
     try_thumb = True
     while True:
-        ffmpeg_command = [
-            "ffmpeg", "-hide_banner", "-y",
-            # "-vsync", "2",
-            "-i", str(concat_video_file),
-            "-i", str(concat_audio_file)
-        ]
+        ffmpeg_command = ["ffmpeg", "-hide_banner", "-y", "-i", str(concat_video_file)]
+        input_count = 1
+        if not muxed_only:
+            ffmpeg_command.extend(["-i", str(concat_audio_file)])
+            input_count = 2
         metadata_cmd = metadata_arguments(
             info, data_dir,
-            want_thumb=try_thumb
+            want_thumb=try_thumb,
+            input_count=input_count
         )
         # ffmpeg -hide_banner -i video.mp4 -i audio.m4a -i thumbnail.jpg -map 0
         # -map 1 -map 2 -c:v:2 jpg -disposition:v:1 attached_pic -c copy out.mp4
@@ -748,12 +759,18 @@ def merge(info: Dict, data_dir: Path,
     logger.info('Successfully wrote file "%s".', final_output_file.name)
 
     if not keep_concat:
-        logger.debug(
-            "Removing temporary audio/video concatenated files %s and %s",
-            concat_audio_file.name,
-            concat_video_file.name,
-        )
-        concat_audio_file.unlink()
+        if concat_audio_file:
+            logger.debug(
+                "Removing temporary audio/video concatenated files %s and %s",
+                concat_audio_file.name,
+                concat_video_file.name,
+            )
+            concat_audio_file.unlink()
+        else:
+            logger.debug(
+                "Removing temporary muxed concatenated file %s",
+                concat_video_file.name,
+            )
         concat_video_file.unlink()
 
     if delete_source:
@@ -770,11 +787,15 @@ def merge(info: Dict, data_dir: Path,
         elif got_errors:
             logger.warning(f"We got suspicious errors while concatenating. {action_msg}")
         else:
-            logger.info("Deleting source segments in {} and {}...".format(
-                video_seg_dir, audio_seg_dir)
-            )
+            if muxed_only:
+                logger.info("Deleting source segments in %s...", video_seg_dir)
+            else:
+                logger.info("Deleting source segments in {} and {}...".format(
+                    video_seg_dir, audio_seg_dir)
+                )
             rmtree(video_seg_dir)
-            rmtree(audio_seg_dir)
+            if audio_seg_dir.exists():
+                rmtree(audio_seg_dir)
 
     return final_output_file
 
@@ -901,12 +922,13 @@ def print_missing_segments(filelist: List[Path], filetype: str) -> List[Path]:
 def metadata_arguments(
     info: Dict,
     data_path: Path,
-    want_thumb: bool = True
+    want_thumb: bool = True,
+    input_count: int = 2
 ) -> List[str]:
     cmd = []
     # Embed thumbnail if a valid one is found
     if want_thumb:
-        cmd = get_thumbnail_command_prefix(data_path)
+        cmd = get_thumbnail_command_prefix(data_path, input_count=input_count)
 
     # These have to be placed AFTER, otherwise they affect one stream in particular
     if title := info.get('title'):
@@ -924,7 +946,7 @@ def get_filetype(path: Path) -> str | None:
     return guess_extension(path)
 
 
-def get_thumbnail_command_prefix(data_path: Path) -> List:
+def get_thumbnail_command_prefix(data_path: Path, input_count: int = 2) -> List:
     thumb_path = get_thumbnail_pathname(data_path)
     if not thumb_path:
         return []
@@ -948,15 +970,14 @@ def get_thumbnail_command_prefix(data_path: Path) -> List:
             return []
 
     # https://ffmpeg.org/ffmpeg.html#toc-Stream-selection
-    return [
-        "-i", str(thumb_path),
-        "-map", "0", "-map", "1", "-map", "2",
-        # "-c:v:2", _type,
-        # copy probably means no re-encoding again into jpg/png
-        "-c:a:2", "copy",
+    cmd = ["-i", str(thumb_path)]
+    for idx in range(input_count + 1):
+        cmd.extend(["-map", str(idx)])
+    cmd.extend([
         "-disposition:v:1",
         "attached_pic"
-    ]
+    ])
+    return cmd
 
 
 def convert_thumbnail(thumb_path: Path, fromformat: str) -> Path:
