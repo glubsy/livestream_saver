@@ -5,7 +5,7 @@ from os import sep, path, makedirs, listdir
 from sys import stderr
 from platform import system
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from time import time, sleep
 from json import dumps, dump, loads
 from contextlib import closing
@@ -280,8 +280,10 @@ class YoutubeLiveStream:
         self._author: Optional[str] = None
         self._title: Optional[str] = None
         self._description = ""
+        self._thumbnail_url: Optional[str] = None
         self._publish_date: Optional[datetime] = None
         self._initial_metadata = initial_metadata
+        self._ytdlp_info: Optional[Dict[str, Any]] = None
 
         self.video_itag = None
         self.audio_itag = None
@@ -348,6 +350,55 @@ class YoutubeLiveStream:
 
         return opts
 
+    def get_ytdlp_info(self, force_update: bool = False) -> Optional[Dict[str, Any]]:
+        if self._ytdlp_info is not None and not force_update:
+            return self._ytdlp_info
+
+        try:
+            with yt_dlp.YoutubeDL(self.get_ytdl_info_opts()) as ydl:
+                self._ytdlp_info = ydl.extract_info(self.url, download=False)
+        except Exception as e:
+            self.log.debug(f"Error getting metadata from yt-dlp: {e}")
+            return self._ytdlp_info
+
+        self.hydrate_metadata_from_ytdlp_info(self._ytdlp_info)
+        return self._ytdlp_info
+
+    def hydrate_metadata_from_ytdlp_info(self, info: Optional[Dict[str, Any]]) -> None:
+        if not info:
+            return
+
+        if not self._title:
+            self._title = info.get("title") or info.get("fulltitle")
+        if not self._author:
+            self._author = info.get("channel") or info.get("uploader")
+        if not self._description:
+            self._description = info.get("description") or ""
+        if not self._thumbnail_url:
+            self._thumbnail_url = info.get("thumbnail")
+            if not self._thumbnail_url and (thumbs := info.get("thumbnails")):
+                self._thumbnail_url = thumbs[-1].get("url")
+        if self._publish_date is None:
+            if timestamp := info.get("release_timestamp") or info.get("timestamp"):
+                self._publish_date = datetime.fromtimestamp(timestamp)
+            else:
+                for key in ("release_date", "upload_date"):
+                    if date_str := info.get(key):
+                        try:
+                            self._publish_date = datetime.strptime(date_str, "%Y%m%d")
+                            break
+                        except ValueError:
+                            continue
+        if self._start_time is None and (timestamp := info.get("release_timestamp") or info.get("timestamp")):
+            self._start_time = datetime.fromtimestamp(
+                timestamp, timezone.utc
+            ).isoformat().replace("+00:00", "Z")
+        if self._scheduled_timestamp is None:
+            release_ts = info.get("release_timestamp")
+            live_status = info.get("live_status")
+            if live_status == "is_upcoming" and release_ts is not None:
+                self._scheduled_timestamp = int(release_ts)
+
     def setup_logger(self, output_path: Path, log_level: str | int):
         if isinstance(log_level, str):
             log_level = str.upper(log_level)
@@ -404,6 +455,11 @@ class YoutubeLiveStream:
         """
         Test for blocked substrings in metadata.
         """
+        if self._title is None and self._initial_metadata is not None:
+            self._title = self._initial_metadata.get("title")
+        if not self._description and self._initial_metadata is not None:
+            self._description = self._initial_metadata.get("description") or ""
+
         title = None
         description = None
         try:
@@ -430,6 +486,7 @@ class YoutubeLiveStream:
         This method will block if the stream is filtered by regex expressions
         until it goes offline.
         """
+        self.get_ytdlp_info()
         download_wanted = self.is_download_wanted()
         if not download_wanted:
             self.skip_download = True
@@ -482,6 +539,7 @@ class YoutubeLiveStream:
             self.log.info(f"Stream {self.video_id} is still active...")
 
             # Keep checking in case the metadata changed
+            self.get_ytdlp_info(force_update=True)
             self.get_metadata()
             download_wanted = self.is_download_wanted()
 
@@ -808,6 +866,10 @@ class YoutubeLiveStream:
         """
         Retrieve value from cached player_response.
         """
+        if self._ytdlp_info is None:
+            self.get_ytdlp_info()
+        if self._title:
+            return self._title
         # This method can be called from outside the class
         try:
             # TODO decode unicode escape sequences if any
@@ -839,6 +901,10 @@ class YoutubeLiveStream:
         """
         Retrieve value from cached player_response.
         """
+        if self._ytdlp_info is None:
+            self.get_ytdlp_info()
+        if self._description:
+            return self._description
         # This method can be called from outside the class
         try:
             return self.player_response["videoDetails"]["shortDescription"]
@@ -850,6 +916,12 @@ class YoutubeLiveStream:
         """
         Get the best thumbnail image URL.
         """
+        if self._thumbnail_url:
+            return self._thumbnail_url
+        if self._ytdlp_info is None:
+            self.get_ytdlp_info()
+        if self._thumbnail_url:
+            return self._thumbnail_url
         # The last item seems to have the maximum size
         best_thumbnail = (
             self.player_response.get("videoDetails", {})
@@ -858,6 +930,7 @@ class YoutubeLiveStream:
             .get('url')
         )
         if best_thumbnail:
+            self._thumbnail_url = best_thumbnail
             return best_thumbnail
         return f"https://img.youtube.com/vi/{self.video_id}/maxresdefault.jpg"
 
@@ -897,6 +970,11 @@ class YoutubeLiveStream:
 
     @property
     def author(self) -> str:
+        if self._author:
+            return self._author
+
+        if self._ytdlp_info is None:
+            self.get_ytdlp_info()
         if self._author:
             return self._author
 
@@ -980,9 +1058,12 @@ class YoutubeLiveStream:
             "audio_itag": self.audio_itag,
             "description": self.description,
         }
-        if self.scheduled_timestamp is not None:
+        scheduled_timestamp = self._scheduled_timestamp
+        if scheduled_timestamp is None and not self.is_muxed_hls:
+            scheduled_timestamp = self.scheduled_timestamp
+        if scheduled_timestamp is not None:
             info["scheduled_time"] = datetime.fromtimestamp(
-                self.scheduled_timestamp
+                scheduled_timestamp
             ).__str__()
 
         if self.video_itag:
@@ -1156,10 +1237,9 @@ class YoutubeLiveStream:
 
 
     def download(self, wait_delay: float = 1.0):
-        with yt_dlp.YoutubeDL(self.get_ytdl_info_opts()) as ydl:
-            info = ydl.extract_info(self.url, download=False)
-            # sanitize_info makes the info json-serializable
-            # print(json.dumps(ydl.sanitize_info(info)))
+        info = self.get_ytdlp_info()
+        if not info:
+            raise Exception("Failed to get stream information from yt-dlp.")
 
         if self.use_ytdl:
             with yt_dlp.YoutubeDL(self.ytdl_opts) as ydl:
@@ -1378,9 +1458,9 @@ class YoutubeLiveStream:
         )[0]
 
     def refresh_hls_format(self) -> None:
-        with yt_dlp.YoutubeDL(self.get_ytdl_info_opts()) as ydl:
-            info = ydl.extract_info(self.url, download=False)
-
+        info = self.get_ytdlp_info(force_update=True)
+        if not info:
+            raise Exception("Failed to refresh stream information from yt-dlp.")
         selected = self.get_best_hls_format(info)
         if not selected:
             raise Exception("Failed to refresh muxed HLS format from yt-dlp.")
@@ -1467,6 +1547,13 @@ class YoutubeLiveStream:
                 return False
         return True
 
+    @staticmethod
+    def build_hls_segment_url(segment_url: str, seg_num: int) -> Optional[str]:
+        updated = re.sub(r"/sq/\d+/", f"/sq/{seg_num}/", segment_url, count=1)
+        if updated == segment_url:
+            return None
+        return updated
+
     def do_download_hls(self, wait_delay: float = 1.0):
         if not self.video_base_url:
             raise Exception("Missing HLS playlist url!")
@@ -1487,11 +1574,44 @@ class YoutubeLiveStream:
                     self.video_base_url,
                     extra_headers=extra_headers
                 )
+                first_available_seq = segments[0][0] if segments else None
+                synthetic_segments: List[tuple[int, str]] = []
+                if first_available_seq is not None and self.seg < first_available_seq:
+                    if template_url := self.build_hls_segment_url(
+                        segments[0][1], self.seg
+                    ):
+                        self.log.info(
+                            "Playlist starts at segment %s but local resume point is %s. "
+                            "Trying direct segment URLs for the gap.",
+                            first_available_seq,
+                            self.seg,
+                        )
+                        synthetic_segments = [
+                            (seg_num, self.build_hls_segment_url(segments[0][1], seg_num))
+                            for seg_num in range(self.seg, first_available_seq)
+                        ]
+                        synthetic_segments = [
+                            (seg_num, seg_url)
+                            for seg_num, seg_url in synthetic_segments
+                            if seg_url is not None
+                        ]
+                    else:
+                        self.log.warning(
+                            "Playlist starts at segment %s but older segment URLs could not "
+                            "be reconstructed. Resuming from %s instead of %s.",
+                            first_available_seq,
+                            first_available_seq,
+                            self.seg,
+                        )
+                        self.seg = first_available_seq
+
                 next_segments = [
                     (seg_num, seg_url)
                     for seg_num, seg_url in segments
                     if seg_num >= self.seg
                 ]
+                if synthetic_segments:
+                    next_segments = synthetic_segments + next_segments
 
                 if not next_segments:
                     if end_list:
@@ -1502,12 +1622,25 @@ class YoutubeLiveStream:
 
                 for seg_num, seg_url in next_segments:
                     self.print_progress(seg_num)
-                    if not self.download_hls_segment(
-                        seg_url,
-                        seg_num,
-                        extra_headers=extra_headers
-                    ):
-                        break
+                    try:
+                        if not self.download_hls_segment(
+                            seg_url,
+                            seg_num,
+                            extra_headers=extra_headers
+                        ):
+                            break
+                    except (urllib.error.HTTPError, urllib.error.URLError) as e:
+                        if first_available_seq is not None and seg_num < first_available_seq:
+                            self.log.warning(
+                                "Failed to fetch older segment %s directly (%s). "
+                                "Resuming from playlist media sequence %s.",
+                                seg_num,
+                                e,
+                                first_available_seq,
+                            )
+                            self.seg = first_available_seq
+                            break
+                        raise
                     self.seg = seg_num + 1
 
                 if end_list and self.seg > next_segments[-1][0]:
