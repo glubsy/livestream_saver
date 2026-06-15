@@ -10,6 +10,14 @@ x-defaults:
   restart: always
   # to upgrade yt-dlp on every container start
   init: true
+  tty: true         # interactive terminal for carriage-return progress updates
+  stdin_open: true  # keep stdin open
+  depends_on:
+    pot-provider:
+      condition: service_started
+  environment:
+    LSS_POT_PROVIDER_URL: http://pot-provider:4416
+    LSS_COOKIES_FILE: /root/.config/livestream_saver/cookies.txt
   volumes:
     - type: bind
       # This path is relative to this here file
@@ -20,6 +28,10 @@ x-defaults:
       target: /root/.config/livestream_saver
 
 services:
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: always
+
   # Each service defines monitoring of a Youtube channel
   # Here are some examples provided by default
   Panko:

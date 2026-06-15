@@ -61,7 +61,7 @@ Using blank cookie jar.")
         cj.filename = cp_str  # this has to be an absolute valid path string
         return cj
 
-    new_cp_str = str(Path(cookiefile_path).absolute().with_suffix('')) + "_updated.txt"
+    new_cp_str = str(cp.absolute().with_suffix('')) + "_updated.txt"
     new_cp = Path(new_cp_str)
 
     try:

@@ -3,20 +3,20 @@
 
 Cookies (in Netscape format) are needed to access membership-only videos as well as age-restricted videos (which would also mean that you sold your soul to Youtube and your account is "verified"). You may use [this](https://github.com/hrdl-github/cookies-txt) or [that](https://github.com/dandv/convert-chrome-cookies-to-netscape-format) depending on the browser you used to log into that dis-service.
 
-The example files from the `/config` directory should be copied to `$HOME/.config/livestream_saver/` and updated manually:
+The example files from the `config` directory should be copied to `$HOME/.config/livestream_saver/` and updated manually:
 * `livestream_saver.cfg`
 * `ytdlp_config.json`
 * `.env`
 
 
 > [!IMPORTANT]
-> The download feature is currently half-broken (see issue [#63](https://github.com/glubsy/livestream_saver/issues/63)) so we rely on yt-dlp for the time being.
+> `yt-dlp` is now used to probe livestream metadata and available formats before downloading.
 > 
-> As a result, many native configuration settings from the config file and CLI arguments (and some hooks) are **ignored**.
+> By default, the project still uses its native downloader to fetch segments, but you can opt into using `yt-dlp` as the downloader as well with the `use_ytdl` setting from the config file.
 > 
-> The `ytdlp_config.json` file holds the default options passed to yt-dlp as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited, otherwise the default provided template will be used as fallback.
+> The `ytdlp_config.json` file holds the default options passed to `yt-dlp` as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited, otherwise the default provided template will be used as fallback.
 > 
-> This is confusing but may be improved eventually once we remove yt-dlp as the downloader.
+> Some `yt-dlp` options are intentionally ignored during probing, such as format-selection settings, because livestream_saver performs its own format selection after collecting the full list of available formats.
 
 # Monitoring a channel
 
@@ -44,8 +44,8 @@ options:
                         Path to config file to use. (Default: ~/.config/livestream_saver/livestream_saver.cfg)
   --cookies COOKIES_PATH
                         Path to Netscape formatted cookies file.
-  -q MAX_VIDEO_QUALITY, --max-video-quality MAX_VIDEO_QUALITY
-                        Use best available video resolution up to this height in pixels. Example: "360" for maximum height 360p. Get the highest available resolution by
+  -q MAX_VIDEO_WIDTH, --max-video-width MAX_VIDEO_WIDTH
+                        Use best available video resolution up to this width in pixels. Example: "360" for maximum width of 360p. Get the highest available resolution by
                         default.
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
                         Output directory where to save channel data. (Default: CWD)
@@ -89,8 +89,8 @@ optional arguments:
   -c CONFIG_FILE, --config-file CONFIG_FILE
                         Path to config file to use. (Default: ~/.config/livestream_saver/livestream_saver.cfg)
   --cookies COOKIES_PATH  Path to Netscape formatted cookies file.
-  -q MAX_VIDEO_QUALITY, --max-video-quality MAX_VIDEO_QUALITY
-                        Use best available video resolution up to this height in pixels. Example: "360" for maximum height 360p. Get the highest available resolution by default.
+  -q MAX_VIDEO_WIDTH, --max-video-width MAX_VIDEO_WIDTH
+                        Use best available video resolution up to this width in pixels. Example: "360" for maximum width of 360p. Get the highest available resolution by default.
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
                         Output directory where to write downloaded chunks. (Default: CWD)
   -d, --delete-source   Delete source files once final merge has been done. (default: False)
@@ -133,6 +133,9 @@ optional arguments:
 
 * python >= 3.10
 * yt-dlp (preferrably always the latest version)
+* (optional) some [POT provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)
+* (optional) `bgutil-ytdlp-pot-provider` yt-dlp plugin to talk to an external POT provider
+* (optional) `yt-dlp-ejs` for enhanced yt-dlp extraction support
 * [pytube](https://github.com/pytube/pytube) 10.9.2
 * ffmpeg (and ffprobe) to concatenate segments and merge them into one file 
 * [Pillow](https://pillow.readthedocs.io/en/stable/installation.html) (optional) to convert webp thumbnail
@@ -150,13 +153,25 @@ source ./venv/bin/activate
 pip3 install -r requirements.txt
 ```
 
+* If you want more reliable extraction support for yt-dlp, install the optional dependencies as well (recommended):
+
+```
+pip3 install -r requirements-opt.txt
+```
+
+* If you install from the Python package metadata instead, the optional POT-related extras are available with:
+
+```
+pip3 install .[pot]
+```
+
 * If you don't want to use a venv (to avoid having to activate the venv everytime you need to start the program, with `source /path/to/venv/bin/activate`), you *could* install dependencies system-wide. Remember to use `sudo pip3` then.
 
 ## Docker container
 
-If you prefer to build and use a Docker container, look at the Readme inside the `docker` directory.
+If you prefer to build and use a container image, look at the Readme inside the `docker` directory.
 
-Docker image also available at https://hub.docker.com/r/glubsy/livestream_saver (can also be referenced in docker-compose)
+A prebuilt Docker image is available at https://hub.docker.com/r/glubsy/livestream_saver (it can be referenced in docker-compose also)
 
 # Configuration
 

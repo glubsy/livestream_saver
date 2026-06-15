@@ -12,7 +12,8 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-opt.txt ./
+RUN pip install --no-cache-dir -r requirements-opt.txt
 
 COPY "./livestream_saver/" ./livestream_saver/
 COPY "livestream_saver.py" .

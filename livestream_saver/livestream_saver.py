@@ -37,8 +37,22 @@ NOTIFIER = NotificationDispatcher()
 TIME_VARIANCE = 3.0  # in minutes
 MAX_SIMULTANEOUS_LIVE_DOWNLOAD = 2
 
-# HACK forcing use of yt-dlp for the time being. 2024/02
-use_ytdl = True
+
+def apply_pot_provider_config(ytdlp_config: Dict[str, Any]) -> Dict[str, Any]:
+    pot_provider_url = environ.get("LSS_POT_PROVIDER_URL")
+    if not pot_provider_url:
+        return ytdlp_config
+
+    extractor_args = ytdlp_config.setdefault("extractor_args", {})
+    provider_args = extractor_args.setdefault("youtubepot-bgutilhttp", {})
+    provider_args["base_url"] = [pot_provider_url]
+    return ytdlp_config
+
+
+def normalize_path_str(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return value
+    return str(Path(value).expanduser())
 
 
 def parse_args(config) -> argparse.Namespace:
@@ -89,7 +103,8 @@ Either a full youtube URL, /channel/ID, or /c/name format.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookies file.'
     )
-    monitor_parser.add_argument('-q', '--max-video-quality', action='store',
+    monitor_parser.add_argument('-q', '--max-video-width', '--max-video-quality',
+        dest='max_video_width', action='store',
         default=argparse.SUPPRESS, type=int,
         help='Use best available video resolution up to this height in pixels.'\
              ' Example: "360" for maximum height 360p. Get the highest available'
@@ -181,8 +196,8 @@ merging of streams has been successful. Only useful for troubleshooting.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookies file.'
     )
-    download_parser.add_argument('-q', '--max-video-quality',
-        action='store', type=int,
+    download_parser.add_argument('-q', '--max-video-width', '--max-video-quality',
+        dest='max_video_width', action='store', type=int,
         default=argparse.SUPPRESS,
         help='Use best available video resolution up to this height in pixels.'\
              ' Example: "360" for maximum height 360p. Get the highest available'
@@ -526,6 +541,8 @@ def download_task(
     args: Dict,
     session: YoutubeUrllibSession
 ):
+    use_ytdl = args.get("use_ytdl", False)
+
     if video in video_processing or video in video_processed:
         log.debug(f"Video already processed or being processed: {video}")
         return
@@ -560,8 +577,8 @@ def download_task(
         output_dir=sub_output_dir,
         session=session,
         notifier=NOTIFIER,
-        max_video_quality=config.getint(
-            "monitor", "max_video_quality", vars=args, fallback=None),  # type: ignore
+        max_video_width=config.getint(
+            "monitor", "max_video_width", vars=args, fallback=None),  # type: ignore
         hooks=args["hooks"],
         skip_download=skip_download,
         filters=args["filters"],
@@ -687,6 +704,8 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
 
 
 def download_mode(config: ConfigParser, args: Dict[str, Any]):
+    use_ytdl = args.get("use_ytdl", False)
+
     session = YoutubeUrllibSession(
         cookiefile_path=args.get("cookies"), notifier=NOTIFIER
     )
@@ -698,8 +717,8 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
         output_dir=args["output_dir"],
         session=session,
         notifier=NOTIFIER,
-        max_video_quality=config.getint(
-            "download", "max_video_quality", vars=args, fallback=None
+        max_video_width=config.getint(
+            "download", "max_video_width", vars=args, fallback=None
         ), # type: ignore
         hooks=args["hooks"],
         skip_download=config.getboolean(
@@ -965,9 +984,12 @@ def main():
         log.warning(f"{ytdlp_conf_file} not found. Falling back to {fallback}")
         ytdlp_conf_file = fallback
 
-    loaded_ytdlp_conf = load_commented_json(ytdlp_conf_file)
+    loaded_ytdlp_conf = apply_pot_provider_config(
+        load_commented_json(ytdlp_conf_file)
+    )
 
     args["ytdlp_config"] = loaded_ytdlp_conf
+    args["use_ytdl"] = config.getboolean(sub_cmd, "use_ytdl", vars=args, fallback=False)
 
     logfile_path = Path("")  # cwd by default
     if sub_cmd == "monitor":
@@ -981,7 +1003,7 @@ def main():
         args["channel_name"] = channel_name
         args["scan_delay"] = params.get("scan_delay")
         args["hooks"] = params.get("hooks")
-        args["cookies"] = params.get("cookies")
+        args["cookies"] = normalize_path_str(params.get("cookies"))
         args["skip_download"] = params.get("skip_download")
         args["ignore_quality_change"] = params.get("ignore_quality_change")
         args["filters"] = params.get("filters", {})
@@ -1012,7 +1034,9 @@ def main():
         )
         URL = args.get("URL", "")  # pass empty string for get_video_id()
         args["hooks"] = get_hooks_for_section(sub_cmd, config, "_command")
-        args["cookies"] = config.get(sub_cmd, "cookies", vars=args, fallback=None)
+        args["cookies"] = normalize_path_str(
+            config.get(sub_cmd, "cookies", vars=args, fallback=None)
+        )
         args["ignore_quality_change"] = config.getboolean(
             sub_cmd, "ignore_quality_change", vars=args, fallback=False)
 
@@ -1026,7 +1050,7 @@ def main():
         output_path: Path | None = Path(output_dir) if output_dir else None
         args["output_dir"] = output_path
 
-        if not use_ytdl:
+        if not args["use_ytdl"]:
             output_path = create_output_dir(
                 output_dir=output_path, video_id=video_id)
         else:
@@ -1119,6 +1143,8 @@ def main():
 
     if "cookiefile" not in args["ytdlp_config"] and (cookies := args.get("cookies")):
         args["ytdlp_config"]["cookiefile"] = cookies
+    elif cookiefile := args["ytdlp_config"].get("cookiefile"):
+        args["ytdlp_config"]["cookiefile"] = normalize_path_str(cookiefile)
 
     error = 0
     try:
