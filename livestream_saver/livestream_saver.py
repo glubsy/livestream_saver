@@ -37,9 +37,6 @@ NOTIFIER = NotificationDispatcher()
 TIME_VARIANCE = 3.0  # in minutes
 MAX_SIMULTANEOUS_LIVE_DOWNLOAD = 2
 
-# HACK forcing use of yt-dlp for the time being. 2024/02
-use_ytdl = True
-
 
 def parse_args(config) -> argparse.Namespace:
     parent_parser = argparse.ArgumentParser(
@@ -527,6 +524,8 @@ def download_task(
     args: Dict,
     session: YoutubeUrllibSession
 ):
+    use_ytdl = args.get("use_ytdl", False)
+
     if video in video_processing or video in video_processed:
         log.debug(f"Video already processed or being processed: {video}")
         return
@@ -688,6 +687,8 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
 
 
 def download_mode(config: ConfigParser, args: Dict[str, Any]):
+    use_ytdl = args.get("use_ytdl", False)
+
     session = YoutubeUrllibSession(
         cookiefile_path=args.get("cookies"), notifier=NOTIFIER
     )
@@ -969,6 +970,7 @@ def main():
     loaded_ytdlp_conf = load_commented_json(ytdlp_conf_file)
 
     args["ytdlp_config"] = loaded_ytdlp_conf
+    args["use_ytdl"] = config.getboolean(sub_cmd, "use_ytdl", vars=args, fallback=False)
 
     logfile_path = Path("")  # cwd by default
     if sub_cmd == "monitor":
@@ -1027,7 +1029,7 @@ def main():
         output_path: Path | None = Path(output_dir) if output_dir else None
         args["output_dir"] = output_path
 
-        if not use_ytdl:
+        if not args["use_ytdl"]:
             output_path = create_output_dir(
                 output_dir=output_path, video_id=video_id)
         else:
