@@ -243,7 +243,7 @@ class YoutubeLiveStream:
         session: YoutubeUrllibSession,
         notifier: NotificationDispatcher,
         url: Optional[str] = None,
-        max_video_width: Optional[str] = None,
+        max_video_height: Optional[str] = None,
         output_dir: Optional[Path] = None,
         hooks: Dict = {},
         skip_download = False,
@@ -257,7 +257,7 @@ class YoutubeLiveStream:
         self.session = session
         self.video_id = video_id
         self.url = url if url else f"https://www.youtube.com/watch?v={video_id}"
-        self.max_video_width = max_video_width
+        self.max_video_height = max_video_height
 
         self._js: Optional[str] = None  # js fetched by js_url
         self._js_url: Optional[str] = None  # the url to the js, parsed from watch html
@@ -1183,7 +1183,7 @@ class YoutubeLiveStream:
             self.log.info("Forcing update of download URLs.")
 
         video_quality, audio_quality = self.get_best_streams(
-            maxq=self.max_video_width, log=not force)
+            maxq=self.max_video_height, log=not force)
 
         if not force:
             # Most likely first time
@@ -1427,7 +1427,7 @@ class YoutubeLiveStream:
         if not isinstance(formats, list):
             return None
 
-        maxq = self.max_video_width
+        maxq = self.max_video_height
         if maxq is not None and not isinstance(maxq, int):
             match = re.search(r"(\d{3,4})", str(maxq))
             maxq = int(match.group(1)) if match else None

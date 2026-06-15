@@ -55,6 +55,18 @@ def normalize_path_str(value: Optional[str]) -> Optional[str]:
     return str(Path(value).expanduser())
 
 
+def get_max_video_height(
+    config: ConfigParser,
+    section: str,
+    args: Dict[str, Any]
+) -> Optional[int]:
+    if "max_video_height" in args:
+        return args["max_video_height"]
+    if config.has_option(section, "max_video_height") or config.has_option("DEFAULT", "max_video_height"):
+        return config.getint(section, "max_video_height", vars=args, fallback=None)  # type: ignore
+    return None
+
+
 def parse_args(config) -> argparse.Namespace:
     parent_parser = argparse.ArgumentParser(
         description='Monitor a Youtube channel for any active live stream and \
@@ -103,8 +115,9 @@ Either a full youtube URL, /channel/ID, or /c/name format.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookies file.'
     )
-    monitor_parser.add_argument('-q', '--max-video-width', '--max-video-quality',
-        dest='max_video_width', action='store',
+    monitor_parser.add_argument(
+        '-q', '--max-video-height',
+        dest='max_video_height', action='store',
         default=argparse.SUPPRESS, type=int,
         help='Use best available video resolution up to this height in pixels.'\
              ' Example: "360" for maximum height 360p. Get the highest available'
@@ -196,8 +209,9 @@ merging of streams has been successful. Only useful for troubleshooting.'
         default=argparse.SUPPRESS,
         help='Path to Netscape formatted cookies file.'
     )
-    download_parser.add_argument('-q', '--max-video-width', '--max-video-quality',
-        dest='max_video_width', action='store', type=int,
+    download_parser.add_argument(
+        '-q', '--max-video-height',
+        dest='max_video_height', action='store', type=int,
         default=argparse.SUPPRESS,
         help='Use best available video resolution up to this height in pixels.'\
              ' Example: "360" for maximum height 360p. Get the highest available'
@@ -577,8 +591,7 @@ def download_task(
         output_dir=sub_output_dir,
         session=session,
         notifier=NOTIFIER,
-        max_video_width=config.getint(
-            "monitor", "max_video_width", vars=args, fallback=None),  # type: ignore
+        max_video_height=get_max_video_height(config, "monitor", args),
         hooks=args["hooks"],
         skip_download=skip_download,
         filters=args["filters"],
@@ -717,9 +730,7 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
         output_dir=args["output_dir"],
         session=session,
         notifier=NOTIFIER,
-        max_video_width=config.getint(
-            "download", "max_video_width", vars=args, fallback=None
-        ), # type: ignore
+        max_video_height=get_max_video_height(config, "download", args),
         hooks=args["hooks"],
         skip_download=config.getboolean(
             "download", "skip_download", vars=args, fallback=False

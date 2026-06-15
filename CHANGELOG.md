@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional dependency group / requirements file for POT-related yt-dlp integration
 
 ### Changed
-- BREAKING: Renamed `max_video_quality` to `max_video_width` in configuration handling
-- Renamed the preferred CLI flag to `--max-video-width` while keeping `--max-video-quality` as a compatibility alias
+- BREAKING: Renamed `max_video_quality` to `max_video_height` in configuration handling
+- Renamed the CLI flag to `--max-video-height`
 - Updated yt-dlp probing so format filters such as `format` and `format_sort` are removed before stream discovery
 - Reduced dependency on pytube metadata lookups in the yt-dlp/HLS download path
 - Improved merge logging for valid partial-duration recordings

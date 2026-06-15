@@ -44,8 +44,8 @@ options:
                         Path to config file to use. (Default: ~/.config/livestream_saver/livestream_saver.cfg)
   --cookies COOKIES_PATH
                         Path to Netscape formatted cookies file.
-  -q MAX_VIDEO_WIDTH, --max-video-width MAX_VIDEO_WIDTH
-                        Use best available video resolution up to this width in pixels. Example: "360" for maximum width of 360p. Get the highest available resolution by
+  -q MAX_VIDEO_HEIGHT, --max-video-height MAX_VIDEO_HEIGHT
+                        Use best available video resolution up to this height in pixels. Example: "360" for maximum height of 360p. Get the highest available resolution by
                         default.
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
                         Output directory where to save channel data. (Default: CWD)
@@ -77,7 +77,7 @@ Basic usage example: `python livestream_saver.py download --cookies /path/to/coo
 ```
 > python3 livestream_saver.py download --help
 
-usage: livestream_saver.py download [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONFIG_FILE] [--cookies COOKIES_PATH] [-q MAX_VIDEO_QUALITY] [-o OUTPUT_DIR] [-d | -n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] [--skip-download] YOUTUBE_VIDEO_URL
+usage: livestream_saver.py download [-h] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-c CONFIG_FILE] [--cookies COOKIES_PATH] [-q MAX_VIDEO_HEIGHT] [-o OUTPUT_DIR] [-d | -n] [-k] [--scan-delay SCAN_DELAY] [--email-notifications] [--skip-download] YOUTUBE_VIDEO_URL
 
 positional arguments:
   YOUTUBE_VIDEO_URL     Youtube video stream URL to download.
@@ -89,8 +89,8 @@ optional arguments:
   -c CONFIG_FILE, --config-file CONFIG_FILE
                         Path to config file to use. (Default: ~/.config/livestream_saver/livestream_saver.cfg)
   --cookies COOKIES_PATH  Path to Netscape formatted cookies file.
-  -q MAX_VIDEO_WIDTH, --max-video-width MAX_VIDEO_WIDTH
-                        Use best available video resolution up to this width in pixels. Example: "360" for maximum width of 360p. Get the highest available resolution by default.
+  -q MAX_VIDEO_HEIGHT, --max-video-height MAX_VIDEO_HEIGHT
+                        Use best available video resolution up to this height in pixels. Example: "360" for maximum height of 360p. Get the highest available resolution by default.
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
                         Output directory where to write downloaded chunks. (Default: CWD)
   -d, --delete-source   Delete source files once final merge has been done. (default: False)
