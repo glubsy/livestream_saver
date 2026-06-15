@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v2.0.0] - 2026-06-15
+
+### Added
+- Support for using yt-dlp to discover livestream formats and download muxed HLS segment streams
+- Configurable `use_ytdl` setting in the template configuration file to let users choose the downloader
+- Support for resuming muxed HLS downloads from existing segment output directories
+- Support for merging single-track muxed segment downloads without requiring an `aud/` directory
+
+### Changed
+- BREAKING: Renamed `max_video_quality` to `max_video_width` in configuration handling
+- Renamed the preferred CLI flag to `--max-video-width` while keeping `--max-video-quality` as a compatibility alias
+- Updated yt-dlp probing so format filters such as `format` and `format_sort` are removed before stream discovery
+- Reduced dependency on pytube metadata lookups in the yt-dlp/HLS download path
+- Improved merge logging for valid partial-duration recordings
+- Renamed extracted thumbnails to match the final output filename and correct image extension
+
+### Fixed
+- Fixed selection of the most appropriate muxed HLS format based on the configured maximum video width
+- Fixed incorrect fallback to old YouTube API metadata calls during yt-dlp-driven HLS downloads
+- Fixed noisy segment progress messages being written to download log files
+
 ## [v1.0.1] - 2026-06-13
 
 - Fix video Ids being wrongly detected as newly added to the channel
