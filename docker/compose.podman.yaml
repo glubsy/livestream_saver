@@ -1,0 +1,28 @@
+services:
+  pot-provider:
+    network_mode: host
+
+  Panko:
+    network_mode: host
+    environment:
+      LSS_POT_PROVIDER_URL: http://127.0.0.1:4416
+
+  Bijou:
+    network_mode: host
+    environment:
+      LSS_POT_PROVIDER_URL: http://127.0.0.1:4416
+
+  Fuwamoco:
+    network_mode: host
+    environment:
+      LSS_POT_PROVIDER_URL: http://127.0.0.1:4416
+
+  Prune:
+    network_mode: host
+    environment:
+      LSS_POT_PROVIDER_URL: http://127.0.0.1:4416
+
+  Saba:
+    network_mode: host
+    environment:
+      LSS_POT_PROVIDER_URL: http://127.0.0.1:4416

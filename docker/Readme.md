@@ -67,6 +67,16 @@ Edit the `docker-compose.yml` file, create the download directory and point to i
 docker-compose -f ./docker/compose.yaml --env-file "$(echo $HOME)/.config/livestream_saver/.env" up 
 ```
 
+## Podman
+
+If you use Podman and the default rootless networking causes issues with the POT provider service, use the Podman override file:
+
+```sh
+podman-compose -f ./docker/compose.yaml -f ./docker/compose.podman.yaml --env-file "$(echo $HOME)/.config/livestream_saver/.env" up
+```
+
+This override switches the services to host networking and points the downloader containers to the POT provider at `http://127.0.0.1:4416`.
+
 # Maintainer notes
 
 As a memo, to push a new image to Docker Hub:

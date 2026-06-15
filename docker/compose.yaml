@@ -17,6 +17,7 @@ x-defaults:
       condition: service_started
   environment:
     LSS_POT_PROVIDER_URL: http://pot-provider:4416
+    LSS_COOKIES_FILE: /root/.config/livestream_saver/cookies.txt
   volumes:
     - type: bind
       # This path is relative to this here file
