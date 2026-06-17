@@ -232,6 +232,12 @@ class Probe:
 class YTDLPProbe(Probe):
     """Probe helper dedicated to yt-dlp format and metadata discovery."""
 
+    def ensure_info(self) -> Optional[Dict[str, Any]]:
+        """Ensure yt-dlp probe info is available before reading yt-dlp-backed metadata."""
+        if self.stream._ytdlp_info is None:
+            return self.get_info()
+        return self.stream._ytdlp_info
+
     def log_available_formats(self, info: Optional[Dict[str, Any]]) -> None:
         """Log a readable summary of the formats returned by yt-dlp."""
         if not info or not self.stream.log.isEnabledFor(logging.INFO):
@@ -371,6 +377,44 @@ class YTDLPProbe(Probe):
             if live_status == "is_upcoming" and release_ts is not None:
                 self.stream._scheduled_timestamp = int(release_ts)
 
+    def get_title(self) -> Optional[str]:
+        """Return the title from yt-dlp metadata when available."""
+        self.ensure_info()
+        return self.stream._title or (
+            self.stream._ytdlp_info.get("fulltitle") or self.stream._ytdlp_info.get("title")
+            if self.stream._ytdlp_info else None
+        )
+
+    def get_description(self) -> Optional[str]:
+        """Return the description from yt-dlp metadata when available."""
+        self.ensure_info()
+        return self.stream._description or (
+            self.stream._ytdlp_info.get("description")
+            if self.stream._ytdlp_info else None
+        )
+
+    def get_author(self) -> Optional[str]:
+        """Return the channel/uploader name from yt-dlp metadata when available."""
+        self.ensure_info()
+        return self.stream._author or (
+            self.stream._ytdlp_info.get("channel") or self.stream._ytdlp_info.get("uploader")
+            if self.stream._ytdlp_info else None
+        )
+
+    def get_thumbnail_url(self) -> Optional[str]:
+        """Return the preferred thumbnail URL from yt-dlp metadata when available."""
+        self.ensure_info()
+        if self.stream._thumbnail_url:
+            return self.stream._thumbnail_url
+        if not self.stream._ytdlp_info:
+            return None
+        thumbnail = self.stream._ytdlp_info.get("thumbnail")
+        if thumbnail:
+            return thumbnail
+        if thumbs := self.stream._ytdlp_info.get("thumbnails"):
+            return thumbs[-1].get("url")
+        return None
+
 
 class PytubeProbe(Probe):
     """Probe helper dedicated to YouTube player API and pytube-backed state."""
@@ -398,6 +442,87 @@ class PytubeProbe(Probe):
             self.stream.log.debug(f"Error getting metadata JSON: {exc}")
         self.stream._json = json_data
         return self.stream._json
+
+    def get_title(self) -> Optional[str]:
+        """Return the title from cached player_response when available."""
+        try:
+            return self.get_player_response()["videoDetails"]["title"]
+        except KeyError as exc:
+            self.stream.log.warning(f"Error acessing title from player_response: {exc}")
+            return None
+
+    def get_description(self) -> Optional[str]:
+        """Return the description from cached player_response when available."""
+        try:
+            return self.get_player_response()["videoDetails"]["shortDescription"]
+        except KeyError as exc:
+            self.stream.log.warning(f"Error fetching description from player_response: {exc}")
+            return None
+
+    def get_author(self) -> Optional[str]:
+        """Return the author from cached player_response when available."""
+        try:
+            return self.get_player_response()["videoDetails"]["author"]
+        except KeyError as exc:
+            self.stream.log.warning(f"Error fetching author from player_response: {exc}")
+            return None
+
+    def get_player_response(self) -> Dict[str, Any]:
+        """Return the cached player_response payload derived from the pytube/API probe."""
+        if self.stream._player_response:
+            return self.stream._player_response
+
+        player_response = self.stream.player_config_args["player_response"]
+        if isinstance(player_response, str):
+            self.stream._player_response = loads(player_response)
+        else:
+            self.stream._player_response = player_response
+        return self.stream._player_response
+
+    def get_thumbnail_url(self) -> Optional[str]:
+        """Return the best thumbnail URL from cached player_response when available."""
+        return (
+            self.get_player_response().get("videoDetails", {})
+            .get("thumbnail", {})
+            .get("thumbnails", [{}])[-1]
+            .get("url")
+        )
+
+    def get_start_time(self) -> Optional[str]:
+        """Return the start timestamp from cached player_response when available."""
+        try:
+            return self.get_player_response() \
+                .get("microformat", {}) \
+                .get("playerMicroformatRenderer", {}) \
+                .get("liveBroadcastDetails", {}) \
+                .get("startTimestamp", None)
+        except Exception as exc:
+            self.stream.log.debug(f"Error getting start_time: {exc}")
+            return None
+
+    def get_scheduled_timestamp(self) -> Optional[int]:
+        """Return the scheduled start timestamp from cached player_response when available."""
+        try:
+            timestamp = self.get_player_response().get("playabilityStatus", {}) \
+                .get('liveStreamability', {})\
+                .get('liveStreamabilityRenderer', {}) \
+                .get('offlineSlate', {}) \
+                .get('liveStreamOfflineSlateRenderer', {}) \
+                .get('scheduledStartTime', None)
+            return int(timestamp) if timestamp is not None else None
+        except Exception as exc:
+            self.stream.log.debug(f"Error getting scheduled_timestamp: {exc}")
+            return None
+
+    def get_thumbnail_metadata(self) -> Dict[str, Any]:
+        """Return the thumbnail metadata block from cached player_response when available."""
+        try:
+            return self.get_player_response().get("videoDetails", {}).get("thumbnail", {})
+        except Exception as exc:
+            # This might occur if we invalidated the cache but the stream is not
+            # live anymore, and "streamingData" key is missing from the json.
+            self.stream.log.warning(f"Error getting thumbnail metadata value: {exc}")
+            return {}
 
 
 class Downloader:
@@ -1402,16 +1527,7 @@ class YoutubeLiveStream:
     @property
     def player_response(self) -> Optional[Dict]:
         """The player response contains subtitle information and video details."""
-        if self._player_response:
-            return self._player_response
-
-        if isinstance(self.player_config_args["player_response"], str):
-            self._player_response = loads(
-                self.player_config_args["player_response"]
-            )
-        else:
-            self._player_response = self.player_config_args["player_response"]
-        return self._player_response
+        return self.pytube_probe.get_player_response()
 
     @property
     def title(self) -> Optional[str]:
@@ -1436,18 +1552,17 @@ class YoutubeLiveStream:
 
     def get_title(self) -> Optional[str]:
         """
-        Retrieve value from cached player_response.
+        Retrieve the best title currently available from the configured probes.
         """
-        if self._ytdlp_info is None:
-            self.get_ytdlp_info()
         if self._title:
             return self._title
-        # This method can be called from outside the class
-        try:
-            # TODO decode unicode escape sequences if any
-            return self.player_response["videoDetails"]["title"]
-        except KeyError as e:
-            self.log.warning(f"Error acessing title from player_response: {e}")
+
+        # Prefer yt-dlp's metadata first since it is our primary probing path.
+        if title := self.ytdlp_probe.get_title():
+            return title
+
+        # Fall back to player_response when yt-dlp could not answer.
+        return self.pytube_probe.get_title()
 
     @property
     def description(self) -> Optional[str]:
@@ -1471,17 +1586,15 @@ class YoutubeLiveStream:
 
     def get_description(self) -> Optional[str]:
         """
-        Retrieve value from cached player_response.
+        Retrieve the best description currently available from the configured probes.
         """
-        if self._ytdlp_info is None:
-            self.get_ytdlp_info()
         if self._description:
             return self._description
-        # This method can be called from outside the class
-        try:
-            return self.player_response["videoDetails"]["shortDescription"]
-        except KeyError as e:
-            self.log.warning(f"Error fetching description from player_response: {e}")
+
+        if description := self.ytdlp_probe.get_description():
+            return description
+
+        return self.pytube_probe.get_description()
 
     @property
     def thumbnail_url(self) -> str:
@@ -1490,54 +1603,29 @@ class YoutubeLiveStream:
         """
         if self._thumbnail_url:
             return self._thumbnail_url
-        if self._ytdlp_info is None:
-            self.get_ytdlp_info()
-        if self._thumbnail_url:
-            return self._thumbnail_url
-        # The last item seems to have the maximum size
-        best_thumbnail = (
-            self.player_response.get("videoDetails", {})
-            .get("thumbnail", {})
-            .get("thumbnails", [{}])[-1]
-            .get('url')
-        )
-        if best_thumbnail:
-            self._thumbnail_url = best_thumbnail
-            return best_thumbnail
+
+        thumbnail = self.ytdlp_probe.get_thumbnail_url()
+        if thumbnail is None:
+            # Fall back to player_response when yt-dlp does not expose one.
+            thumbnail = self.pytube_probe.get_thumbnail_url()
+
+        if thumbnail:
+            self._thumbnail_url = thumbnail
+            return thumbnail
         return f"https://img.youtube.com/vi/{self.video_id}/maxresdefault.jpg"
 
     @property
     def start_time(self):
         if self._start_time:
             return self._start_time
-        try:
-            # String reprensentation in UTC format
-            self._start_time = self.player_response \
-                .get("microformat", {}) \
-                .get("playerMicroformatRenderer", {}) \
-                .get("liveBroadcastDetails", {}) \
-                .get("startTimestamp", None)
-        except Exception as e:
-            self.log.debug(f"Error getting start_time: {e}")
+        self._start_time = self.pytube_probe.get_start_time()
         return self._start_time
 
     @property
     def scheduled_timestamp(self) -> Optional[int]:
         if self._scheduled_timestamp:
             return self._scheduled_timestamp
-        try:
-            timestamp = self.player_response.get("playabilityStatus", {}) \
-                .get('liveStreamability', {})\
-                .get('liveStreamabilityRenderer', {}) \
-                .get('offlineSlate', {}) \
-                .get('liveStreamOfflineSlateRenderer', {}) \
-                .get('scheduledStartTime', None) # unix timestamp
-            if timestamp is not None:
-                self._scheduled_timestamp = int(timestamp)
-            else:
-                self._scheduled_timestamp = None
-        except Exception as e:
-            self.log.debug(f"Error getting scheduled_timestamp: {e}")
+        self._scheduled_timestamp = self.pytube_probe.get_scheduled_timestamp()
         return self._scheduled_timestamp
 
     @property
@@ -1545,16 +1633,9 @@ class YoutubeLiveStream:
         if self._author:
             return self._author
 
-        if self._ytdlp_info is None:
-            self.get_ytdlp_info()
-        if self._author:
-            return self._author
-
-        author = None
-        try:
-            author = self.player_response["videoDetails"]["author"]
-        except KeyError as e:
-            self.log.warning(f"Error fetching author from player_response: {e}")
+        author = self.ytdlp_probe.get_author()
+        if author is None:
+            author = self.pytube_probe.get_author()
 
         # Keep the last valid value in cache (if we have one), just in case we
         # would end up overwriting it with nothing.
@@ -2231,14 +2312,7 @@ class YoutubeLiveStream:
         Get various information about the video.
         """
         # TODO add more data, refresh those that got stale
-        thumbnails = {}
-        try:
-            thumbnails = self.player_response.get("videoDetails", {})\
-                .get("thumbnail", {})
-        except Exception as e:
-            # This might occur if we invalidated the cache but the stream is not
-            # live anymore, and "streamingData" key is missing from the json
-            self.log.warning(f"Error getting thumbnail metadata value: {e}")
+        thumbnails = self.pytube_probe.get_thumbnail_metadata()
 
         return {
                 "url": self.url,
