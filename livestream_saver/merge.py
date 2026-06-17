@@ -117,6 +117,9 @@ class ConcatMethod():
 
     @property
     def segment_duration(self) -> float:
+        """
+        Probe the first segment to guess the duration of each segment.
+        """
         if self._segment_duration is not None:
             return self._segment_duration
         # FIXME this value is very unpredictable and unreliable, need a better way.
@@ -129,23 +132,33 @@ class ConcatMethod():
             dur = total_dur - round(props.get("start_time", 0.0))
             logger.debug(
                 "First segment is not actual first segment so duration is wrong."
-                f" Computed duration from last segment instead: {dur}")
+                " Computed duration from last segment instead: %d", dur)
         self._segment_duration = dur
         return dur
 
-    @property
-    def total_expected_duration(self) -> float:
+    def get_theoretical_duration(self) -> tuple[int, int]:
+        theoretical_total = len(self.segment_list) \
+            + len(self._missing_seg_ints) \
+            + (len(self._corrupt_segments) if self._corrupt_segments is not None else 0)
+        theoretical_dur = round(theoretical_total * self.segment_duration)
+        return theoretical_total, theoretical_dur
+
+    def get_total_expected_duration(self) -> float:
+        """
+        Compute the expected total duration of the final file, based on the
+        segment duration reported by the last available segment.
+        """
         if self.use_segment_count_duration:
-            expected = round(self.segment_duration * len(self.segment_list))
+            theoretical_total, theoretical_dur = self.get_theoretical_duration()
             logger.debug(
                 "Estimated duration computed from "
                 "(segment duration) %s * number of "
                 "(segments available) %s = %s.",
                 self.segment_duration,
-                len(self.segment_list),
-                expected,
+                theoretical_total,
+                theoretical_dur,
             )
-            return expected
+            return theoretical_dur
 
         # # Simply get the expected duration from what ffprobe reports
         # # in the very last segment metadata, as long as we have ALL segments:
@@ -161,6 +174,8 @@ class ConcatMethod():
         #     f"(segments available) {len(self.segment_list)} = {expected}.")
         # return expected
 
+        # This assumes the last segment's metadata makes ffprobe report the
+        # correct total duration, which may not be the case for HLS streams?
         return round(probe(self.segment_list[-1]).get("duration", 0.0))
 
     def exists(self):
@@ -193,7 +208,7 @@ class ConcatMethod():
     def is_valid_duration(self, filepath: Path, duration: float) -> bool:
         """Check that the file duration is between 95% and 105% of the
         expected duration. Can be the final file, or a temporary file."""
-        total_expected_duration = self.total_expected_duration
+        total_expected_duration = self.get_total_expected_duration()
         round_min = round(total_expected_duration * 0.95)
         round_max = round(total_expected_duration * 1.05)
         round_dur = round(duration)
@@ -210,12 +225,9 @@ class ConcatMethod():
             return True
 
         last_segnum = segname_to_int(self.segment_list[-1])
-        theoretical_total = len(self.segment_list) \
-            + len(self._missing_seg_ints) \
-            + (len(self._corrupt_segments) if self._corrupt_segments is not None else 0)
-        theoretical_dur = round(theoretical_total * self.segment_duration)
+        theoretical_total, theoretical_dur = self.get_theoretical_duration()
 
-        logger.debug(
+        logger.info(
             "A total of %s segments * %s seconds = %s theoretical total duration.",
             theoretical_total,
             self.segment_duration,
@@ -229,11 +241,17 @@ class ConcatMethod():
             return True
 
         logger.warning(
-            f"Invalid duration \"{round_dur}\" for {filepath.name}."
-            f" Expected duration to be between around {total_expected_duration}"
-            f" (between {round_min} and {round_max})"
-            f" or {theoretical_dur}" if last_segnum != theoretical_total else ""
-            ".")
+            "Invalid duration \"%d\" for %s."
+            " Expected duration to be between around "
+            " (between %d and %d)"
+            " or %d" if last_segnum != theoretical_total else ""
+            ".",
+            round_dur,
+            self._final_file.name,
+            round_min,
+            round_max,
+            theoretical_dur
+        )
         return False
 
     def make(self, *args, **kwargs) -> None:
