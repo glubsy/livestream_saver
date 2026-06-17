@@ -1847,6 +1847,12 @@ class YoutubeLiveStream:
         if title := self.ytdlp_probe.get_title():
             return title
 
+        # If yt-dlp already failed, use the title we got during channel scanning
+        # rather than forcing the older pytube/player_response path.
+        if self._initial_metadata is not None:
+            if initial_title := self._initial_metadata.get("title"):
+                return initial_title
+
         # Fall back to player_response when yt-dlp could not answer.
         return self.pytube_probe.get_title()
 
@@ -1880,6 +1886,10 @@ class YoutubeLiveStream:
         if description := self.ytdlp_probe.get_description():
             return description
 
+        if self._initial_metadata is not None:
+            if initial_description := self._initial_metadata.get("description"):
+                return initial_description
+
         return self.pytube_probe.get_description()
 
     @property
@@ -1891,6 +1901,12 @@ class YoutubeLiveStream:
             return self._thumbnail_url
 
         thumbnail = self.ytdlp_probe.get_thumbnail_url()
+        if thumbnail is None:
+            if self._initial_metadata is not None:
+                thumbnails = self._initial_metadata.get("thumbnail", {}).get("thumbnails", [])
+                if thumbnails:
+                    thumbnail = thumbnails[-1].get("url")
+
         if thumbnail is None:
             # Fall back to player_response when yt-dlp does not expose one.
             thumbnail = self.pytube_probe.get_thumbnail_url()
@@ -1920,6 +1936,11 @@ class YoutubeLiveStream:
             return self._author
 
         author = self.ytdlp_probe.get_author()
+        if author is None:
+            if self._initial_metadata is not None:
+                author = self._initial_metadata.get("channel_name") \
+                    or self._initial_metadata.get("author")
+
         if author is None:
             author = self.pytube_probe.get_author()
 

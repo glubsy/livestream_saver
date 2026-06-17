@@ -287,7 +287,10 @@ class YoutubeUrllibSession:
                 "prettyPrint": "false"
             }
         )
-        log.debug(f"POST API request... {endpoint=}\n{context=}\n{headers=}")
+        log.debug(
+            "POST API request... endpoint:%s\ncontext:%s\nheaders:%s", 
+            endpoint, context, headers
+        )
         req = Request(
             endpoint,
             headers=headers,
