@@ -496,6 +496,32 @@ def path_list_to_int(seg_list: List[Path]) -> Iterator[int]:
     return (int(i.stem[:-6]) for i in seg_list)
 
 
+def format_segment_ranges(segment_nums: List[int], filetype: str) -> List[str]:
+    if not segment_nums:
+        return []
+
+    ranges = []
+    start = end = segment_nums[0]
+    suffix = f"{filetype}.ts"
+
+    for seg_num in segment_nums[1:]:
+        if seg_num == end + 1:
+            end = seg_num
+            continue
+
+        if start == end:
+            ranges.append(f"{start:0{10}}{suffix}")
+        else:
+            ranges.append(f"{start:0{10}}-{end:0{10}}{suffix}")
+        start = end = seg_num
+
+    if start == end:
+        ranges.append(f"{start:0{10}}{suffix}")
+    else:
+        ranges.append(f"{start:0{10}}-{end:0{10}}{suffix}")
+    return ranges
+
+
 def merge(
     info: Dict,
     data_dir: Path,
@@ -867,9 +893,9 @@ def get_corrupt(filelist: List[Path]) -> List[Path]:
 
     if corrupt:
         logger.warning(
-            "Found %s corrupt packets via ffprobe: "
-            "%s."
-            " Will not use them anymore", len(corrupt), [f.name for f in corrupt])
+            "Found %d corrupt packets via ffprobe: %s. Will not use them anymore",
+            len(corrupt),
+            [f.name for f in corrupt])
     else:
         logger.info("No corrupt file detected.")
     return corrupt
@@ -924,8 +950,9 @@ def print_missing_segments(filelist: List[Path], filetype: str) -> List[Path]:
     missing = []
     first_segnum = 0
     last_segnum = 0
+
     if not filelist:
-        raise Exception(f"Missing files in {filetype} filelist!")
+        raise Exception(f"Missing files in {filetype} file list!")
 
     # Get the numbers from the file name
     # filename format is 0000000001_[audio|video].ts
@@ -935,28 +962,30 @@ def print_missing_segments(filelist: List[Path], filetype: str) -> List[Path]:
     if first_segnum == last_segnum:
         raise Exception(f"First and last {filetype} segments are the same number!?")
 
+    type_tag = filetype[1:]  # remove the leading underscore
+
     if first_segnum != 0:
         logger.warning(
-            f"First {filetype[1:]} segment number starts at {first_segnum} "
+            f"First {type_tag} segment number starts at {first_segnum} "
             "instead of 0.")
 
     # Numbering in filenames should start from 0
     if len(filelist) != last_segnum + 1:
         logger.warning(
-            f"Number of {filetype[1:]} segments doesn't match last segment "
-            f"number: Last {filetype[1:]} segment number: "
+            f"Number of {type_tag} segments doesn't match last segment "
+            f"number: Last {type_tag} segment number: "
             f"{last_segnum} / {len(filelist)} total files.")
-        i = first_segnum
         base_dir = filelist[0].parent
-        for f in filelist:
+        existing = {f.name for f in filelist}
+        missing_ints = []
+        for i in range(first_segnum, last_segnum + 1):
             name = f"{i:0{10}}{filetype}.ts"
-            if f.name != name:
-                logger.warning(
-                    f"Segment {name}.ts seems to be missing.")
-                missing.append(Path(base_dir) / name)
-                # Add a second time to account for missing segment
-                i += 1
-            i += 1
+            if name in existing:
+                continue
+            missing_ints.append(i)
+            missing.append(Path(base_dir) / name)
+        for missing_range in format_segment_ranges(missing_ints, filetype):
+            logger.warning("Missing %s segment range: %s", type_tag, missing_range)
     return missing
 
 
