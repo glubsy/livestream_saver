@@ -70,6 +70,12 @@ class TooManyRequestsException(VideoStatusException):
         return f"{self.video_id} was rate limited: {self.reason}"
 
 
+class NoVideoFormatsException(VideoStatusException):
+    @property
+    def error_string(self):
+        return f"{self.video_id} has no usable video formats: {self.reason}"
+
+
 class OutdatedAppException(VideoStatusException):
     """
     This seems to be returned by the innertube API if the advertised at random.

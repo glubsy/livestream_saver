@@ -37,6 +37,7 @@ from livestream_saver.exceptions import (
     UnplayableException, 
     OutdatedAppException,
     TooManyRequestsException,
+    NoVideoFormatsException,
     EmptySegmentException,
     ForbiddenSegmentException,
 )
@@ -412,17 +413,51 @@ class YTDLPProbe(Probe):
         for key in ("format", "format_sort"):
             opts.pop(key, None)
 
+        # Avoid the current yt-dlp live-stream bug triggered by cookies in the
+        # probe path when we only use yt-dlp for metadata/format discovery.
+        if not self.stream.use_ytdl and opts.pop("cookiefile", None):
+            self.stream.log.warning(
+                "Removed cookiefile from yt-dlp probe options because the "
+                "native downloader is active."
+            )
+
         opts["logger"] = self.stream.ytdlp_logger
         return opts
 
+    def get_client(self) -> yt_dlp.YoutubeDL:
+        """Return a reusable yt-dlp client configured for probing all formats."""
+        if self.stream._ytdlp_probe_client is None:
+            self.stream._ytdlp_probe_client = yt_dlp.YoutubeDL(self.get_opts())
+        return self.stream._ytdlp_probe_client
+
+    @staticmethod
+    def reports_no_formats(exc: Exception) -> bool:
+        """Return whether a yt-dlp exception indicates that no formats were found."""
+        message = str(exc).lower()
+        return "no video formats found" in message or "no formats found" in message
+
+    def get_no_formats_reason(self, exc: Exception) -> str:
+        """Build a user-facing explanation for yt-dlp's no-formats error."""
+        reason = str(exc)
+        if self.stream.use_ytdl and self.stream.ytdl_opts and self.stream.ytdl_opts.get("cookiefile"):
+            return (
+                f"{reason}. This commonly happens when yt-dlp is used as the downloader "
+                "with cookies on live streams. Try disabling cookies for yt-dlp or "
+                "commenting out `live_from_start` in the ytdlp_config.json file (recommended)"
+            )
+        return reason
+
     def get_info(self, force_update: bool = False) -> Optional[Dict[str, Any]]:
         """Fetch and cache yt-dlp metadata used for format choice and metadata hydration."""
+        if self.stream._ytdlp_probe_error is not None:
+            return self.stream._ytdlp_info
         if self.stream._ytdlp_info is not None and not force_update:
             return self.stream._ytdlp_info
 
         try:
-            with yt_dlp.YoutubeDL(self.get_opts()) as ydl:
-                self.stream._ytdlp_info = ydl.extract_info(self.stream.url, download=False)
+            self.stream._ytdlp_info = self.get_client().extract_info(
+                self.stream.url, download=False
+            )
         except DownloadError as exc:
             if self.reports_too_many_requests(exc):
                 self.stream._ytdlp_rate_limited = True
@@ -434,6 +469,10 @@ class YTDLPProbe(Probe):
                 self.mark_live_as_ended()
                 self.stream.log.info("yt-dlp reports that the live event has ended.")
                 return None
+            if self.reports_no_formats(exc):
+                reason = self.get_no_formats_reason(exc)
+                self.stream._ytdlp_probe_error = reason
+                raise NoVideoFormatsException(self.stream.video_id, reason)
             self.stream.log.debug("Error getting metadata from yt-dlp: %s", exc)
             return self.stream._ytdlp_info
         except Exception as exc:
@@ -441,6 +480,7 @@ class YTDLPProbe(Probe):
             return self.stream._ytdlp_info
 
         self.stream._ytdlp_rate_limited = False
+        self.stream._ytdlp_probe_error = None
         self.hydrate_metadata(self.stream._ytdlp_info)
         self.log_available_formats(self.stream._ytdlp_info)
         return self.stream._ytdlp_info
@@ -772,6 +812,10 @@ class Downloader:
         """Fetch yt-dlp probe data and convert rate limiting into stream error state."""
         try:
             return self.stream.get_ytdlp_info()
+        except NoVideoFormatsException as exc:
+            self.stream.error = str(exc)
+            self.stream.log.warning(exc)
+            return None
         except TooManyRequestsException as exc:
             self.stream.error = str(exc)
             self.stream.log.warning(exc)
@@ -782,16 +826,21 @@ class Downloader:
 
 
 class YTDLPDownloader(Downloader):
+    def get_ytdlp_downloader(self) -> yt_dlp.YoutubeDL:
+        """Return a reusable yt-dlp client configured for full downloads."""
+        if self.stream._ytdlp_download_client is None:
+            ytdl_opts = deepcopy(self.stream.ytdl_opts) if self.stream.ytdl_opts else {}
+            ytdl_opts["logger"] = self.stream.ytdlp_logger
+            self.stream._ytdlp_download_client = yt_dlp.YoutubeDL(ytdl_opts)
+        return self.stream._ytdlp_download_client
+
     def download(self, wait_delay: float = 1.0) -> None:
         """Delegate the full download to yt-dlp after a successful probe."""
         info = self.get_probe_info()
         if not info:
-            raise Exception("Failed to get stream information from yt-dlp.")
+            return
 
-        ytdl_opts = deepcopy(self.stream.ytdl_opts) if self.stream.ytdl_opts else {}
-        ytdl_opts["logger"] = self.stream.ytdlp_logger
-        with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
-            self.stream.error = ydl.download(self.stream.url)
+        self.stream.error = self.get_ytdlp_downloader().download(self.stream.url)
 
 
 class NativeDownloader(Downloader):
@@ -799,7 +848,7 @@ class NativeDownloader(Downloader):
         """Run the native downloader flow for either muxed HLS or DASH segments."""
         info = self.get_probe_info()
         if not info:
-            raise Exception("Failed to get stream information from yt-dlp.")
+            return
 
         if self.stream.prepare_hls_download(info):
             self.stream.update_metadata()
@@ -1246,6 +1295,9 @@ class YoutubeLiveStream:
         self._publish_date: Optional[datetime] = None
         self._initial_metadata = initial_metadata
         self._ytdlp_info: Optional[Dict[str, Any]] = None
+        self._ytdlp_probe_client: Optional[yt_dlp.YoutubeDL] = None
+        self._ytdlp_download_client: Optional[yt_dlp.YoutubeDL] = None
+        self._ytdlp_probe_error: Optional[str] = None
         self._ytdlp_live_ended = False
         self._ytdlp_rate_limited = False
 
@@ -1425,6 +1477,10 @@ class YoutubeLiveStream:
         """
         try:
             self.get_ytdlp_info()
+        except NoVideoFormatsException as exc:
+            self.error = str(exc)
+            self.log.warning(exc)
+            return False
         except TooManyRequestsException as exc:
             self.error = str(exc)
             self.log.warning(exc)
@@ -1488,6 +1544,10 @@ class YoutubeLiveStream:
                 if not self.get_ytdlp_info(force_update=True) and self._ytdlp_live_ended:
                     self.log.info("yt-dlp reports that the stream is no longer live.")
                     break
+            except NoVideoFormatsException as exc:
+                self.error = str(exc)
+                self.log.warning(exc)
+                break
             except TooManyRequestsException as exc:
                 self.error = str(exc)
                 self.log.warning(exc)
