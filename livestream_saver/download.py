@@ -19,6 +19,7 @@ from http.client import IncompleteRead
 import xml.etree.ElementTree as ET
 
 import yt_dlp
+from yt_dlp.utils import DownloadError
 
 import pytube.cipher
 import pytube
@@ -284,6 +285,7 @@ class YoutubeLiveStream:
         self._publish_date: Optional[datetime] = None
         self._initial_metadata = initial_metadata
         self._ytdlp_info: Optional[Dict[str, Any]] = None
+        self._ytdlp_live_ended = False
 
         self.video_itag = None
         self.audio_itag = None
@@ -357,6 +359,13 @@ class YoutubeLiveStream:
         try:
             with yt_dlp.YoutubeDL(self.get_ytdl_info_opts()) as ydl:
                 self._ytdlp_info = ydl.extract_info(self.url, download=False)
+        except DownloadError as exc:
+            if self.ytdlp_reports_live_end(exc):
+                self.mark_live_as_ended_from_ytdlp()
+                self.log.info("yt-dlp reports that the live event has ended.")
+                return None
+            self.log.debug("Error getting metadata from yt-dlp: %s", exc)
+            return self._ytdlp_info
         except Exception as exc:
             self.log.debug("Error getting metadata from yt-dlp: %s", exc)
             return self._ytdlp_info
@@ -364,9 +373,29 @@ class YoutubeLiveStream:
         self.hydrate_metadata_from_ytdlp_info(self._ytdlp_info)
         return self._ytdlp_info
 
+    @staticmethod
+    def ytdlp_reports_live_end(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "this live event has ended" in message
+            or "live event has ended" in message
+        )
+
+    def mark_live_as_ended_from_ytdlp(self) -> None:
+        self._ytdlp_live_ended = True
+        self.status &= ~Status.LIVE
+        self.status &= ~Status.VIEWED_LIVE
+        self.status |= Status.OFFLINE
+
     def hydrate_metadata_from_ytdlp_info(self, info: Optional[Dict[str, Any]]) -> None:
         if not info:
             return
+
+        live_status = info.get("live_status")
+        if live_status in ("post_live", "was_live", "not_live"):
+            self.mark_live_as_ended_from_ytdlp()
+        elif live_status in ("is_live", "is_upcoming"):
+            self._ytdlp_live_ended = False
 
         if not self._title:
             self._title = info.get("fulltitle") or info.get("title")
@@ -395,7 +424,6 @@ class YoutubeLiveStream:
             ).isoformat().replace("+00:00", "Z")
         if self._scheduled_timestamp is None:
             release_ts = info.get("release_timestamp")
-            live_status = info.get("live_status")
             if live_status == "is_upcoming" and release_ts is not None:
                 self._scheduled_timestamp = int(release_ts)
 
@@ -497,6 +525,9 @@ class YoutubeLiveStream:
         # download, until the stream goes offline.
         long_wait = 25.0  # minutes
         while not download_wanted:
+            if self._ytdlp_live_ended:
+                self.log.info("yt-dlp reports that the stream is no longer live.")
+                break
             self.status = Status.OFFLINE
             try:
                 self.update_status()
@@ -539,7 +570,9 @@ class YoutubeLiveStream:
             self.log.info("Stream %s is still active...", self.video_id)
 
             # Keep checking in case the metadata changed
-            self.get_ytdlp_info(force_update=True)
+            if not self.get_ytdlp_info(force_update=True) and self._ytdlp_live_ended:
+                self.log.info("yt-dlp reports that the stream is no longer live.")
+                break
             self.get_metadata()
             download_wanted = self.is_download_wanted()
 
@@ -1459,6 +1492,11 @@ class YoutubeLiveStream:
 
     def refresh_hls_format(self) -> None:
         info = self.get_ytdlp_info(force_update=True)
+        if self._ytdlp_live_ended:
+            raise OfflineException(
+                self.video_id,
+                "yt-dlp reports that the live event has ended"
+            )
         if not info:
             raise Exception("Failed to refresh stream information from yt-dlp.")
         selected = self.get_best_hls_format(info)
@@ -1648,6 +1686,7 @@ class YoutubeLiveStream:
                     break
 
             except (
+                OfflineException,
                 EmptySegmentException,
                 ForbiddenSegmentException,
                 IncompleteRead,
@@ -1656,10 +1695,18 @@ class YoutubeLiveStream:
                 urllib.error.HTTPError,
                 urllib.error.URLError
             ) as e:
+                if isinstance(e, OfflineException):
+                    self.log.info(e)
+                    self.done = True
+                    break
                 self.log.warning(e)
                 try:
                     self.refresh_hls_format()
                 except Exception as refresh_err:
+                    if isinstance(refresh_err, OfflineException) or self._ytdlp_live_ended:
+                        self.log.info(refresh_err)
+                        self.done = True
+                        break
                     self.error = f"{refresh_err}"
                     break
                 sleep(wait_sec)
