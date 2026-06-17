@@ -413,12 +413,14 @@ class YTDLPProbe(Probe):
         for key in ("format", "format_sort"):
             opts.pop(key, None)
 
-        # Avoid the current yt-dlp live-stream bug triggered by cookies in the
-        # probe path when we only use yt-dlp for metadata/format discovery.
-        if not self.stream.use_ytdl and opts.pop("cookiefile", None):
+        # Avoid the current yt-dlp live-stream bug in the probe path by
+        # disabling live-from-start when we only use yt-dlp for metadata/format
+        # discovery. Keep cookies intact so private/member streams can still be
+        # probed when possible.
+        if not self.stream.use_ytdl and opts.pop("live_from_start", None):
             self.stream.log.warning(
-                "Removed cookiefile from yt-dlp probe options because the "
-                "native downloader is active."
+                "Removed live_from_start from yt-dlp probe options because "
+                "the native downloader is active."
             )
 
         opts["logger"] = self.stream.ytdlp_logger
