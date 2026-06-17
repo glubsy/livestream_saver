@@ -36,6 +36,7 @@ from livestream_saver.exceptions import (
     NoLoginException,
     UnplayableException, 
     OutdatedAppException,
+    TooManyRequestsException,
     EmptySegmentException,
     ForbiddenSegmentException,
 )
@@ -286,6 +287,7 @@ class YoutubeLiveStream:
         self._initial_metadata = initial_metadata
         self._ytdlp_info: Optional[Dict[str, Any]] = None
         self._ytdlp_live_ended = False
+        self._ytdlp_rate_limited = False
 
         self.video_itag = None
         self.audio_itag = None
@@ -360,6 +362,12 @@ class YoutubeLiveStream:
             with yt_dlp.YoutubeDL(self.get_ytdl_info_opts()) as ydl:
                 self._ytdlp_info = ydl.extract_info(self.url, download=False)
         except DownloadError as exc:
+            if self.ytdlp_reports_too_many_requests(exc):
+                self._ytdlp_rate_limited = True
+                raise TooManyRequestsException(
+                    self.video_id,
+                    "yt-dlp reported HTTP 429 Too Many Requests"
+                )
             if self.ytdlp_reports_live_end(exc):
                 self.mark_live_as_ended_from_ytdlp()
                 self.log.info("yt-dlp reports that the live event has ended.")
@@ -370,6 +378,7 @@ class YoutubeLiveStream:
             self.log.debug("Error getting metadata from yt-dlp: %s", exc)
             return self._ytdlp_info
 
+        self._ytdlp_rate_limited = False
         self.hydrate_metadata_from_ytdlp_info(self._ytdlp_info)
         return self._ytdlp_info
 
@@ -380,6 +389,11 @@ class YoutubeLiveStream:
             "this live event has ended" in message
             or "live event has ended" in message
         )
+
+    @staticmethod
+    def ytdlp_reports_too_many_requests(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "429" in message or "too many requests" in message
 
     def mark_live_as_ended_from_ytdlp(self) -> None:
         self._ytdlp_live_ended = True
@@ -514,7 +528,12 @@ class YoutubeLiveStream:
         This method will block if the stream is filtered by regex expressions
         until it goes offline.
         """
-        self.get_ytdlp_info()
+        try:
+            self.get_ytdlp_info()
+        except TooManyRequestsException as exc:
+            self.error = str(exc)
+            self.log.warning(exc)
+            return False
         download_wanted = self.is_download_wanted()
         if not download_wanted:
             self.skip_download = True
@@ -570,8 +589,13 @@ class YoutubeLiveStream:
             self.log.info("Stream %s is still active...", self.video_id)
 
             # Keep checking in case the metadata changed
-            if not self.get_ytdlp_info(force_update=True) and self._ytdlp_live_ended:
-                self.log.info("yt-dlp reports that the stream is no longer live.")
+            try:
+                if not self.get_ytdlp_info(force_update=True) and self._ytdlp_live_ended:
+                    self.log.info("yt-dlp reports that the stream is no longer live.")
+                    break
+            except TooManyRequestsException as exc:
+                self.error = str(exc)
+                self.log.warning(exc)
                 break
             self.get_metadata()
             download_wanted = self.is_download_wanted()
@@ -1270,7 +1294,12 @@ class YoutubeLiveStream:
 
 
     def download(self, wait_delay: float = 1.0):
-        info = self.get_ytdlp_info()
+        try:
+            info = self.get_ytdlp_info()
+        except TooManyRequestsException as exc:
+            self.error = str(exc)
+            self.log.warning(exc)
+            return
         if not info:
             raise Exception("Failed to get stream information from yt-dlp.")
 
@@ -1686,6 +1715,7 @@ class YoutubeLiveStream:
                     break
 
             except (
+                TooManyRequestsException,
                 OfflineException,
                 EmptySegmentException,
                 ForbiddenSegmentException,
@@ -1695,6 +1725,10 @@ class YoutubeLiveStream:
                 urllib.error.HTTPError,
                 urllib.error.URLError
             ) as e:
+                if isinstance(e, TooManyRequestsException):
+                    self.log.warning(e)
+                    self.error = str(e)
+                    break
                 if isinstance(e, OfflineException):
                     self.log.info(e)
                     self.done = True
@@ -1703,6 +1737,10 @@ class YoutubeLiveStream:
                 try:
                     self.refresh_hls_format()
                 except Exception as refresh_err:
+                    if isinstance(refresh_err, TooManyRequestsException):
+                        self.log.warning(refresh_err)
+                        self.error = str(refresh_err)
+                        break
                     if isinstance(refresh_err, OfflineException) or self._ytdlp_live_ended:
                         self.log.info(refresh_err)
                         self.done = True
