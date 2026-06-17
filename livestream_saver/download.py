@@ -223,6 +223,137 @@ class PathURL(BaseURL):
         return self + f"/sq/{seg_num}"
 
 
+class YTDLPStream:
+    """Small wrapper exposing yt-dlp format dictionaries with stream-like attributes."""
+
+    def __init__(self, stream: Dict[str, Any]) -> None:
+        self.stream = stream
+
+    @property
+    def itag(self) -> Optional[str]:
+        return self.stream.get("format_id") or self.stream.get("itag")
+
+    @property
+    def resolution(self) -> Optional[str]:
+        if height := self.stream.get("height"):
+            return f"{height}p"
+        return self.stream.get("resolution")
+
+    @property
+    def abr(self) -> Optional[str]:
+        abr = self.stream.get("abr")
+        if abr is None:
+            return None
+        if isinstance(abr, (int, float)):
+            return f"{int(round(abr))}kbps"
+        return str(abr)
+
+    @property
+    def mime_type(self) -> Optional[str]:
+        ext = self.stream.get("ext")
+        if ext:
+            return ext
+        return self.stream.get("protocol")
+
+    @property
+    def file_extension(self) -> Optional[str]:
+        return self.stream.get("ext")
+
+    @property
+    def url(self) -> Optional[BaseURL]:
+        url = self.stream.get("fragment_base_url") or self.stream.get("url")
+        if not url:
+            return None
+        protocol = self.stream.get("protocol") or ""
+        if "http_dash_segments" in protocol:
+            return PathURL(url)
+        if "/sq/" in url:
+            base_url = re.sub(r"/sq/\d+/?", "/", url, count=1)
+            return PathURL(base_url)
+        return ParamURL(url)
+
+    @property
+    def progressive(self) -> bool:
+        return self.has_video and self.has_audio
+
+    @property
+    def has_video(self) -> bool:
+        return self.stream.get("vcodec") not in (None, "none")
+
+    @property
+    def has_audio(self) -> bool:
+        return self.stream.get("acodec") not in (None, "none")
+
+    @property
+    def is_dash(self) -> bool:
+        protocol = self.stream.get("protocol")
+        return protocol in ("http_dash_segments", "dash", "dashy") or bool(
+            self.stream.get("fragment_base_url")
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"<YTDLPStream itag={self.itag} res={self.resolution} "
+            f"abr={self.abr} ext={self.file_extension} "
+            f"v={self.stream.get('vcodec')} a={self.stream.get('acodec')} "
+            f"proto={self.stream.get('protocol')}>"
+        )
+
+
+class YTDLPStreamQuery:
+    """Minimal query helper for yt-dlp-backed stream selection."""
+
+    def __init__(self, streams: List[YTDLPStream]) -> None:
+        self._streams = streams
+
+    def __iter__(self):
+        return iter(self._streams)
+
+    def __len__(self) -> int:
+        return len(self._streams)
+
+    def first(self) -> Optional[YTDLPStream]:
+        return self._streams[0] if self._streams else None
+
+    def filter(
+        self,
+        file_extension: Optional[str] = None,
+        only_audio: bool = False,
+        progressive: Optional[bool] = None,
+        custom_filter_functions: Optional[List[Any]] = None
+    ) -> "YTDLPStreamQuery":
+        streams = self._streams
+        if file_extension is not None:
+            streams = [s for s in streams if s.file_extension == file_extension]
+        if only_audio:
+            streams = [s for s in streams if s.has_audio and not s.has_video]
+        if progressive is not None:
+            streams = [s for s in streams if s.progressive == progressive]
+        if custom_filter_functions:
+            for func in custom_filter_functions:
+                streams = [s for s in streams if func(s)]
+        return YTDLPStreamQuery(streams)
+
+    def order_by(self, key: str) -> "YTDLPStreamQuery":
+        def as_int(value: Any) -> int:
+            if value is None:
+                return -1
+            if isinstance(value, (int, float)):
+                return int(value)
+            if match := re.search(r"(\d{2,5})", str(value)):
+                return int(match.group(1))
+            return -1
+
+        streams = sorted(
+            self._streams,
+            key=lambda s: as_int(getattr(s, key, None))
+        )
+        return YTDLPStreamQuery(streams)
+
+    def desc(self) -> "YTDLPStreamQuery":
+        return YTDLPStreamQuery(list(reversed(self._streams)))
+
+
 class Probe:
     """Base helper for fetching live-stream metadata from one backend."""
     def __init__(self, stream: "YoutubeLiveStream") -> None:
@@ -523,6 +654,109 @@ class PytubeProbe(Probe):
             # live anymore, and "streamingData" key is missing from the json.
             self.stream.log.warning(f"Error getting thumbnail metadata value: {exc}")
             return {}
+
+    def get_player_config_args(self) -> Dict[str, Any]:
+        """Return the legacy pytube player config mapping used for descrambling streams."""
+        if self.stream._player_config_args:
+            return self.stream._player_config_args
+
+        # FIXME this is redundant with "json" property of this class
+        self.stream._player_config_args = {}
+        # self._player_config_args["player_response"] = self.json["responseContext"]
+        self.stream._player_config_args["player_response"] = self.get_info()
+
+        if 'streamingData' not in self.stream._player_config_args["player_response"]:
+            self.stream.log.critical("Missing streamingData key in json!")
+            self.stream.log.debug(self.stream._player_config_args)
+            # TODO add fallback strategy with get_ytplayer_config()?
+
+        return self.stream._player_config_args
+
+    def get_fmt_streams(self) -> List[pytube.Stream]:
+        """Return the legacy pytube Stream list built from player config args."""
+        if self.stream._fmt_streams:
+            return self.stream._fmt_streams
+
+        self.stream._fmt_streams = []
+        stream_maps = ["url_encoded_fmt_stream_map"]
+
+        # unscramble the progressive and adaptive stream manifests.
+        for fmt in stream_maps:
+            # if not self.age_restricted and fmt in self.vid_info:
+            #     extract.apply_descrambler(self.vid_info, fmt)
+            pytube.extract.apply_descrambler(self.get_player_config_args(), fmt)
+
+            pytube.extract.apply_signature(self.get_player_config_args(), fmt, self.stream.js)
+
+            # build instances of :class:`Stream <Stream>`
+            # Initialize stream objects
+            stream_manifest = self.get_player_config_args()[fmt]
+            for stream in stream_manifest:
+                # Add method to increment segment:
+                stream["url"] = ParamURL(stream["url"])
+                video = pytube.Stream(
+                    stream=stream,
+                    player_config_args=self.get_player_config_args(),
+                    monostate={},  # FIXME This is a bit dangerous but we don't use it anyway
+                )
+                self.stream._fmt_streams.append(video)
+
+        return self.stream._fmt_streams
+
+    def get_streams_from_xml(self, data) -> List[pytube.Stream]:
+        """Parse MPD Dash manifest and return basic Stream objects from data found."""
+        # We could use the python-mpegdash package but that would be overkill
+        # https://www.brendanlong.com/the-structure-of-an-mpeg-dash-mpd.html
+        # https://www.brendanlong.com/common-informative-metadata-in-mpeg-dash.html
+        if not data:
+            return []
+        streams = []
+        try:
+            root = ET.fromstring(data)
+            # Strip namespaces for easier access (not necessary, let's use wildcards)
+            # it = ET.iterparse(StringIO(data))
+            # for _, el in it:
+            #     _, _, el.tag = el.tag.rpartition('}') # strip ns
+            # root = it.root
+        except Exception as e:
+            self.stream.log.critical(f"Error loading XML of MPD: {e}")
+            return streams
+
+        for _as in root.findall("{*}Period/{*}AdaptationSet"):
+            mimeType = _as.attrib.get("mimeType")
+            for _rs in _as.findall("{*}Representation"):
+                url = _rs.find("{*}BaseURL")
+                if url is None:
+                    self.stream.log.debug(f"No BaseURL found for {_rs.attrib}. Skipping.")
+                    continue
+                # Simulate what pytube does in a very basic way
+                # FIXME this can safely be removed in next pytube:
+                codec = _rs.get("codecs")
+                if not codec or not mimeType:
+                    self.stream.log.debug(f"No codecs key found for {_rs.attrib}. Skipping")
+                    continue
+                streams.append(pytube.Stream(
+                        stream = {
+                            "url": PathURL(url.text),
+                            "mimeType": mimeType,
+                            "type": mimeType + "; codecs=\"" + codec + "\"",  # FIXME removed in next pytube
+                            "itag": _rs.get('id'),
+                            "is_otf": False,  # not used
+                            "bitrate": None, # not used,
+                            "content_length": None, # FIXME removed in next pytube
+                            "fps": _rs.get("frameRate") # FIXME removed in next pytube
+                        },
+                        monostate = {},
+                        player_config_args = {} # FIXME removed in next pytube
+                    )
+                )
+        return streams
+
+    def get_streams_from_mpd(self) -> List[pytube.Stream]:
+        """Return the legacy pytube-style stream list derived from the XML DASH MPD."""
+        content = self.stream.get_content_from_mpd()
+        # TODO for now we only care about the XML DASH MPD, but not the HLS m3u8.
+        return self.get_streams_from_xml(content)
 
 
 class Downloader:
@@ -1020,7 +1254,7 @@ class YoutubeLiveStream:
 
         self._player_config_args: Optional[Dict] = None
         self._player_response: Optional[Dict] = None
-        self._fmt_streams: Optional[List[pytube.Stream]] = None
+        self._fmt_streams: Optional[List[YTDLPStream]] = None
 
         self._chosen_itags: Dict = {}
 
@@ -1406,88 +1640,80 @@ class YoutubeLiveStream:
             content = self.mpd.get_content(update=True)
         return content
 
-    def get_streams_from_xml(self, data) -> List[pytube.Stream]:
-        """Parse MPD Dash manifest and return basic Stream objects from data found."""
-        # We could use the python-mpegdash package but that would be overkill
-        # https://www.brendanlong.com/the-structure-of-an-mpeg-dash-mpd.html
-        # https://www.brendanlong.com/common-informative-metadata-in-mpeg-dash.html
+    def get_streams_from_xml(self, data) -> List[YTDLPStream]:
+        """Parse MPD XML into yt-dlp-style stream wrappers as a last-resort fallback."""
         if not data:
             return []
-        streams = []
+        streams: List[YTDLPStream] = []
         try:
             root = ET.fromstring(data)
-            # Strip namespaces for easier access (not necessary, let's use wildcards)
-            # it = ET.iterparse(StringIO(data))
-            # for _, el in it:
-            #     _, _, el.tag = el.tag.rpartition('}') # strip ns
-            # root = it.root
         except Exception as e:
             self.log.critical(f"Error loading XML of MPD: {e}")
             return streams
 
         for _as in root.findall("{*}Period/{*}AdaptationSet"):
-            mimeType = _as.attrib.get("mimeType")
+            mime_type = _as.attrib.get("mimeType", "")
             for _rs in _as.findall("{*}Representation"):
                 url = _rs.find("{*}BaseURL")
-                if url is None:
+                if url is None or not url.text:
                     self.log.debug(f"No BaseURL found for {_rs.attrib}. Skipping.")
                     continue
-                # Simulate what pytube does in a very basic way
-                # FIXME this can safely be removed in next pytube:
                 codec = _rs.get("codecs")
-                if not codec or not mimeType:
+                if not codec or not mime_type:
                     self.log.debug(f"No codecs key found for {_rs.attrib}. Skipping")
                     continue
-                streams.append(pytube.Stream(
-                        stream = {
-                            "url": PathURL(url.text),
-                            "mimeType": mimeType,
-                            "type": mimeType + "; codecs=\"" + codec + "\"",  # FIXME removed in next pytube
-                            "itag": _rs.get('id'),
-                            "is_otf": False,  # not used
-                            "bitrate": None, # not used,
-                            "content_length": None, # FIXME removed in next pytube
-                            "fps": _rs.get("frameRate") # FIXME removed in next pytube
-                        },
-                        monostate = {},
-                        player_config_args = {} # FIXME removed in next pytube
-                    )
-                )
+                vcodec = codec if mime_type.startswith("video/") else "none"
+                acodec = codec if mime_type.startswith("audio/") else "none"
+                abr = None
+                if audio_rate := _rs.get("bandwidth"):
+                    try:
+                        abr = str(int(audio_rate) // 1000)
+                    except ValueError:
+                        abr = None
+                streams.append(YTDLPStream({
+                    "format_id": _rs.get("id"),
+                    "url": url.text,
+                    "fragment_base_url": url.text,
+                    "protocol": "http_dash_segments",
+                    "ext": mime_type.rsplit("/", 1)[-1],
+                    "vcodec": vcodec,
+                    "acodec": acodec,
+                    "height": int(_rs.get("height")) if _rs.get("height") else None,
+                    "fps": int(_rs.get("frameRate")) if _rs.get("frameRate") else None,
+                    "abr": abr,
+                }))
         return streams
 
-    def get_streams_from_mpd(self) -> List[pytube.Stream]:
+    def get_streams_from_mpd(self) -> List[YTDLPStream]:
+        """Return DASH stream wrappers derived from yt-dlp formats or, failing that, from the MPD XML."""
+        if info := self.get_ytdlp_info():
+            formats = info.get("formats") or []
+            dash_streams = [
+                YTDLPStream(fmt) for fmt in formats
+                if isinstance(fmt, dict)
+                and (
+                    fmt.get("protocol") in ("http_dash_segments", "dash", "dashy")
+                    or fmt.get("fragment_base_url")
+                )
+                and fmt.get("url")
+            ]
+            if dash_streams:
+                return dash_streams
+
         content = self.get_content_from_mpd()
-        # TODO for now we only care about the XML DASH MPD, but not the HLS m3u8.
         return self.get_streams_from_xml(content)
 
     @property
-    def streams(self) -> pytube.StreamQuery:
-        """Interface to query both adaptive (DASH) and progressive streams.
+    def streams(self) -> YTDLPStreamQuery:
+        """Expose yt-dlp-discovered formats through a small query helper."""
+        stream_list = self.fmt_streams
 
-        :rtype: :class:`StreamQuery <StreamQuery>`.
-        """
-        # self.update_status()
-        query = None
-        try:
-            query = pytube.StreamQuery(self.fmt_streams)
-        except Exception as e:
-            self.log.error(e, exc_info=True)
-            self.log.warning("Failed to get streams from fmt_streams (pytube error).")
-
-        # BUG in pytube, livestreams with resolution higher than 1080 do not
-        # return descriptions for their available streams, except in the
-        # DASH MPD manifest! These descriptions seem to re-appear after the
-        # stream has been converted to a VOD though.
-        if query is None or len(query) == 0:
-            self.log.info("Getting stream descriptors from MPD...")
-
-            if mpd_streams := self.get_streams_from_mpd():
-                self.log.debug(f"Streams from MPD: {mpd_streams}.")
-                # HACK but it works for now
-                query = pytube.StreamQuery(mpd_streams)
-            else:
-                raise Exception("Failed to load stream descriptors!")
-        return query
+        if not stream_list:
+            self.log.info("No stream descriptors found. Getting them from MPD...")
+            stream_list = self.get_streams_from_mpd()
+        if not stream_list:
+            raise Exception("Failed to load stream descriptors!")
+        return YTDLPStreamQuery(stream_list)
 
     @property
     def age_restricted(self):
@@ -2149,65 +2375,30 @@ class YoutubeLiveStream:
 
     @property
     def player_config_args(self):
-        if self._player_config_args:
-            return self._player_config_args
-
-        # FIXME this is redundant with "json" property of this class
-        self._player_config_args = {}
-        # self._player_config_args["player_response"] = self.json["responseContext"]
-        self._player_config_args["player_response"] = self.get_info()
-
-        if 'streamingData' not in self._player_config_args["player_response"]:
-            self.log.critical("Missing streamingData key in json!")
-            self.log.debug(self._player_config_args)
-            # TODO add fallback strategy with get_ytplayer_config()?
-
-        return self._player_config_args
+        return self.pytube_probe.get_player_config_args()
 
     @property
     def fmt_streams(self):
-        """Returns a list of streams if they have been initialized.
-
-        If the streams have not been initialized, finds all relevant
-        streams and initializes them.
-        """
+        """Return yt-dlp formats wrapped in a small stream-like interface."""
         if self._fmt_streams:
             return self._fmt_streams
 
         self._fmt_streams = []
-        stream_maps = ["url_encoded_fmt_stream_map"]
+        info = self.get_ytdlp_info()
+        if not info:
+            return self._fmt_streams
 
-        # unscramble the progressive and adaptive stream manifests.
-        for fmt in stream_maps:
-            # if not self.age_restricted and fmt in self.vid_info:
-            #     extract.apply_descrambler(self.vid_info, fmt)
-            pytube.extract.apply_descrambler(self.player_config_args, fmt)
-
-            pytube.extract.apply_signature(self.player_config_args, fmt, self.js)
-
-            # build instances of :class:`Stream <Stream>`
-            # Initialize stream objects
-            stream_manifest = self.player_config_args[fmt]
-            for stream in stream_manifest:
-                # Add method to increment segment:
-                stream["url"] = ParamURL(stream["url"])
-                video = pytube.Stream(
-                    stream=stream,
-                    player_config_args=self.player_config_args,
-                    monostate={},  # FIXME This is a bit dangerous but we don't use it anyway
-                )
-                self._fmt_streams.append(video)
+        for stream in info.get("formats", []):
+            if not isinstance(stream, dict):
+                continue
+            if not stream.get("url"):
+                continue
+            self._fmt_streams.append(YTDLPStream(stream))
 
         return self._fmt_streams
 
     def get_best_streams(self, maxq=None, log=True, codec="mp4", fps="60"):
-        """Return a tuple of pytube.Stream objects, first one for video
-        second one for audio.
-        If only progressive streams are available, the second item in tuple
-        will be None.
-        :param str maxq:
-        :param str codec: mp4, webm
-        :param str fps: 30, 60"""
+        """Return yt-dlp-backed video/audio stream wrappers for native DASH downloading."""
         video_stream = None
         audio_stream = None
 
@@ -2249,7 +2440,18 @@ class YoutubeLiveStream:
             ) \
             .order_by('resolution') \
             .desc()
-        video_stream = video_streams.first()
+        video_stream = next(
+            (
+                s for s in video_streams
+                if s.has_video and not s.has_audio and s.is_dash
+            ),
+            None
+        )
+        if video_stream is None:
+            video_stream = next(
+                (s for s in video_streams if s.has_video and s.is_dash),
+                video_streams.first()
+            )
 
         if log:
             self.log.info(f"Selected video {video_stream}")
@@ -2259,7 +2461,10 @@ class YoutubeLiveStream:
             ) \
             .order_by('abr') \
             .desc()
-        audio_stream = audio_streams.first()
+        audio_stream = next(
+            (s for s in audio_streams if s.is_dash),
+            audio_streams.first()
+        )
 
         if log:
             self.log.info(f"selected audio {audio_stream}")
@@ -2356,18 +2561,34 @@ class MPD():
         self.mpd_type = mpd_type  # dash or hls
 
     def update_url(self) -> Optional[str]:
-        mpd_type = "dashManifestUrl" if self.mpd_type == "dash" else "hlsManifestUrl"
+        info = self.parent.get_ytdlp_info()
+        if info:
+            if self.mpd_type == "dash":
+                if manifest_url := info.get("manifest_url"):
+                    self.url = manifest_url
+                    return self.url
+                for fmt in info.get("formats", []):
+                    if not isinstance(fmt, dict):
+                        continue
+                    if fmt.get("protocol") in ("http_dash_segments", "dash", "dashy") \
+                    and fmt.get("manifest_url"):
+                        self.url = fmt["manifest_url"]
+                        return self.url
+            else:
+                if hls_url := info.get("url") or info.get("manifest_url"):
+                    self.url = hls_url
+                    return self.url
 
+        mpd_type = "dashManifestUrl" if self.mpd_type == "dash" else "hlsManifestUrl"
         json = self.parent.get_info()
 
         if streamingData := json.get("streamingData", {}):
-            if ManifestUrl := streamingData.get(mpd_type):
-                self.url = ManifestUrl
-            else:
-                raise Exception(
-                    f"No URL found for MPD manifest of {self.parent.video_id}.")
-        else:
-            raise Exception("No streamingData in json. Cannot load MPD.")
+            if manifest_url := streamingData.get(mpd_type):
+                self.url = manifest_url
+                return self.url
+            raise Exception(
+                f"No URL found for MPD manifest of {self.parent.video_id}.")
+        raise Exception("No streamingData in json. Cannot load MPD.")
 
     def get_content(self, update=False):
         if self.content is not None and not update:
