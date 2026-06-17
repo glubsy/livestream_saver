@@ -1855,7 +1855,8 @@ class YoutubeLiveStream:
             return self._title
 
         # Prefer yt-dlp's metadata first since it is our primary probing path.
-        if title := self.ytdlp_probe.get_title():
+        title = self.ytdlp_probe.get_title()
+        if title is not None:
             return title
 
         # If yt-dlp already failed, use the title we got during channel scanning
@@ -1894,8 +1895,15 @@ class YoutubeLiveStream:
         if self._description:
             return self._description
 
-        if description := self.ytdlp_probe.get_description():
+        description = self.ytdlp_probe.get_description()
+        if description is not None:
             return description
+
+        # A successful yt-dlp probe may still legitimately give us no
+        # description. Treat that as authoritative enough to avoid forcing the
+        # older pytube/player_response path, which is more brittle.
+        if self._ytdlp_info is not None:
+            return ""
 
         if self._initial_metadata is not None:
             if initial_description := self._initial_metadata.get("description"):
@@ -1947,12 +1955,12 @@ class YoutubeLiveStream:
             return self._author
 
         author = self.ytdlp_probe.get_author()
-        if author is None:
+        if author is None and self._ytdlp_info is None:
             if self._initial_metadata is not None:
                 author = self._initial_metadata.get("channel_name") \
                     or self._initial_metadata.get("author")
 
-        if author is None:
+        if author is None and self._ytdlp_info is None:
             author = self.pytube_probe.get_author()
 
         # Keep the last valid value in cache (if we have one), just in case we
