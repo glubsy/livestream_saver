@@ -578,7 +578,10 @@ def download_task(
         f"Found live: {video_id}. Title: \"{video.get('title')}\".")
 
     if output_dir := args.get("output_dir"):
-        sub_output_dir = output_dir / f"stream_capture_{video_id}"
+        if use_ytdl:
+            sub_output_dir = output_dir
+        else:
+            sub_output_dir = output_dir / f"stream_capture_{video_id}"
     else:
         sub_output_dir = None
 
@@ -646,6 +649,7 @@ def download_task(
                 merge(
                     info=live_video.video_info,
                     data_dir=live_video.output_dir,
+                    output_dir=args.get("output_dir"),
                     keep_concat=config.getboolean(
                         "monitor", "keep_concat", vars=args),
                     delete_source=config.getboolean(
@@ -755,6 +759,7 @@ def download_mode(config: ConfigParser, args: Dict[str, Any]):
             merge(
                 info=ls.video_info,
                 data_dir=ls.output_dir,
+                output_dir=args.get("final_output_dir"),
                 keep_concat=config.getboolean("download", "keep_concat", vars=args),
                 delete_source=config.getboolean("download", "delete_source", vars=args)
             )
@@ -1058,17 +1063,19 @@ def main():
         args["video_id"] = video_id
 
 
-        output_path: Path | None = Path(output_dir) if output_dir else None
-        args["output_dir"] = output_path
+        final_output_dir: Path | None = Path(output_dir) if output_dir else None
 
         if not args["use_ytdl"]:
             output_path = create_output_dir(
-                output_dir=output_path, video_id=video_id)
+                output_dir=final_output_dir, video_id=video_id)
         else:
             # We don't want a stream_capture_xxxx directory, but we need to
             # ensure output path exists because we create the download log now
             output_path = create_output_dir(
-                output_dir=output_path, video_id=None)
+                output_dir=final_output_dir, video_id=None)
+
+        args["output_dir"] = output_path
+        args["final_output_dir"] = final_output_dir
 
         logfile_path = output_path / f"download_{video_id}.log"
         setup_logger(
