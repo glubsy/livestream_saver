@@ -17,6 +17,8 @@ The example files from the `config` directory should be copied to `$HOME/.config
 > The `ytdlp_config.json` file holds the default options passed to `yt-dlp` as defined in their [Readme.md](https://github.com/yt-dlp/yt-dlp#embedding-examples). It should be placed in `$HOME/.config/livestream_saver/ytdlp_config.json` and edited, otherwise the default provided template will be used as fallback.
 > 
 > Some `yt-dlp` options are intentionally ignored during probing, such as format-selection settings, because livestream_saver performs its own format selection after collecting the full list of available formats.
+>
+> `live_from_start` deserves special care: due to a current `yt-dlp` bug, enabling `live_from_start` while also passing cookies can make `yt-dlp` fail with `No video formats found`. In practice, if you want `live_from_start`, you should avoid passing cookies to `yt-dlp`. If you keep `live_from_start` commented out and do pass cookies, `yt-dlp` will usually expose HLS streams only, which livestream_saver can still use for probing and downloading. Otherwise it will download DASH streams, which is what is currently recommended if you need access to private streams.
 
 # Monitoring a channel
 

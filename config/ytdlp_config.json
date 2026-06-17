@@ -29,8 +29,12 @@
 
     // "wait_for_video": (60, 120),
 
-    // A bug prevents us from using yt-dlp reliably for live streams when passing
-    // this option, so we will use the built-in downloader instead.
+    // Be careful with this option:
+    // - enabling "live_from_start" while also passing cookies currently triggers
+    //   a yt-dlp bug and may raise "No video formats found"
+    // - if you want "live_from_start", avoid passing cookies to yt-dlp
+    // - if you keep this commented out and do pass cookies, yt-dlp will usually
+    //   expose HLS streams only, which livestream_saver can still use
     // See: https://github.com/yt-dlp/yt-dlp/issues/15274
     // "live_from_start": true,
 
