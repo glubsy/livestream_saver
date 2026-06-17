@@ -1355,7 +1355,7 @@ class YoutubeLiveStream:
             if paths := self.ytdl_opts.get("paths"):
                 if output_dir and str(output_dir) != '.':
                     paths.update({"home": str(output_dir)})
-                elif home := paths.get("home"):
+                elif self.use_ytdl and (home := paths.get("home")):
                     output_dir = Path(home)
             elif output_dir is not None:
                 self.ytdl_opts["paths"] = {"home": str(output_dir.absolute())}
