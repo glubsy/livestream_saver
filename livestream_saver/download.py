@@ -233,6 +233,23 @@ class YTDLPVideoDownloader():
     pass
 
 
+class YTDLPLogger:
+    def __init__(self, logger: logging.Logger):
+        self.logger = logger
+
+    def debug(self, msg: str) -> None:
+        self.logger.debug(msg)
+
+    def info(self, msg: str) -> None:
+        self.logger.info(msg)
+
+    def warning(self, msg: str) -> None:
+        self.logger.warning(msg)
+
+    def error(self, msg: str) -> None:
+        self.logger.error(msg)
+
+
 class LiveVideo(VideoPost):
     # TODO extend video Post with method to get live data
     pass
@@ -335,6 +352,7 @@ class YoutubeLiveStream:
             output_dir = Path()
 
         self.log = self.setup_logger(output_dir, log_level)
+        self.ytdlp_logger = YTDLPLogger(self.log)
         self.notifier = notifier
 
         self.output_dir = output_dir
@@ -352,6 +370,7 @@ class YoutubeLiveStream:
         for key in ("format", "format_sort"):
             opts.pop(key, None)
 
+        opts["logger"] = self.ytdlp_logger
         return opts
 
     def get_ytdlp_info(self, force_update: bool = False) -> Optional[Dict[str, Any]]:
@@ -1304,7 +1323,9 @@ class YoutubeLiveStream:
             raise Exception("Failed to get stream information from yt-dlp.")
 
         if self.use_ytdl:
-            with yt_dlp.YoutubeDL(self.ytdl_opts) as ydl:
+            ytdl_opts = deepcopy(self.ytdl_opts) if self.ytdl_opts else {}
+            ytdl_opts["logger"] = self.ytdlp_logger
+            with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
                 self.error = ydl.download(self.url)
             return
 
