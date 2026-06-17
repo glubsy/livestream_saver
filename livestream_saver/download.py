@@ -1153,15 +1153,23 @@ class NativeDownloader(Downloader):
                 sleep(wait_sec)
             except (
                 IncompleteRead,
+                TimeoutError,
                 ValueError,
                 ConnectionError,
                 urllib.error.URLError,
             ) as exc:
-                self.stream.log.warning(
-                    "%s. Retrying the same HLS URL in %s seconds.",
-                    exc,
-                    retry_wait_sec,
-                )
+                if isinstance(exc, TimeoutError):
+                    self.stream.log.warning(
+                        "Timed out reading the HLS playlist or segment URL. "
+                        "Retrying the same HLS URL in %s seconds.",
+                        retry_wait_sec,
+                    )
+                else:
+                    self.stream.log.warning(
+                        "%s. Retrying the same HLS URL in %s seconds.",
+                        exc,
+                        retry_wait_sec,
+                    )
                 sleep(retry_wait_sec)
             except Exception as exc:
                 self.stream.log.exception("Unhandled exception in HLS download. Aborting.")
@@ -1205,12 +1213,13 @@ class NativeDownloader(Downloader):
                 self.stream.seg_attempt = 0
                 self.stream.seg += 1
 
-            except urllib.error.URLError as exc:
+            except (urllib.error.URLError, TimeoutError) as exc:
                 self.stream.log.critical(f'{type(exc)}: {exc}')
-                if exc.reason == "Not Found":
+                reason = getattr(exc, "reason", None)
+                if reason == "Not Found":
                     raise
-                if exc.reason == 'Forbidden':
-                    raise ForbiddenSegmentException(exc.reason)
+                if reason == 'Forbidden':
+                    raise ForbiddenSegmentException(reason)
                 if attempts_left < 0:
                     raise exc
                 attempts_left -= 1
