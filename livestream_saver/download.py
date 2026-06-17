@@ -224,10 +224,16 @@ class PathURL(BaseURL):
 
 
 class Downloader:
+    """Base strategy object for stream downloading.
+
+    The live stream instance owns all mutable state; downloader subclasses
+    coordinate a particular download approach against that state.
+    """
     def __init__(self, stream: "YoutubeLiveStream") -> None:
         self.stream = stream
 
     def get_probe_info(self) -> Optional[Dict[str, Any]]:
+        """Fetch yt-dlp probe data and convert rate limiting into stream error state."""
         try:
             return self.stream.get_ytdlp_info()
         except TooManyRequestsException as exc:
@@ -241,6 +247,7 @@ class Downloader:
 
 class YTDLPDownloader(Downloader):
     def download(self, wait_delay: float = 1.0) -> None:
+        """Delegate the full download to yt-dlp after a successful probe."""
         info = self.get_probe_info()
         if not info:
             raise Exception("Failed to get stream information from yt-dlp.")
@@ -253,6 +260,7 @@ class YTDLPDownloader(Downloader):
 
 class NativeDownloader(Downloader):
     def download(self, wait_delay: float = 1.0) -> None:
+        """Run the native downloader flow for either muxed HLS or DASH segments."""
         info = self.get_probe_info()
         if not info:
             raise Exception("Failed to get stream information from yt-dlp.")
@@ -265,7 +273,7 @@ class NativeDownloader(Downloader):
                 self.stream.done = True
                 return
 
-            self.stream.do_download_hls(wait_delay=wait_delay)
+            self.do_download_hls(wait_delay=wait_delay)
             if self.stream.done:
                 self.stream.log.info(f"Finished downloading {self.stream.video_id}.")
                 self.stream.trigger_hooks("on_download_ended")
@@ -347,7 +355,7 @@ class NativeDownloader(Downloader):
 
             while True:
                 try:
-                    self.stream.do_download()
+                    self.do_download()
                 except (
                     EmptySegmentException,
                     ForbiddenSegmentException,
@@ -355,8 +363,8 @@ class NativeDownloader(Downloader):
                     ValueError,
                     ConnectionError,
                     urllib.error.HTTPError
-                ) as e:
-                    self.stream.log.warning(e)
+                ) as exc:
+                    self.stream.log.warning(exc)
                     self.stream._watch_html = None
                     self.stream._json = None
                     self.stream._player_config_args = None
@@ -387,9 +395,9 @@ class NativeDownloader(Downloader):
                     self.stream.log.warning("The stream is not live anymore. Done.")
                     self.stream.done = True
                     break
-                except Exception as e:
+                except Exception as exc:
                     self.stream.log.exception("Unhandled exception. Aborting.")
-                    self.stream.error = f"{e}"
+                    self.stream.error = f"{exc}"
                     break
         if self.stream.done:
             self.stream.log.info(f"Finished downloading {self.stream.video_id}.")
@@ -398,6 +406,238 @@ class NativeDownloader(Downloader):
             self.stream.log.critical(
                 f"Some kind of error occured during download? {self.stream.error}"
             )
+
+    def do_download_hls(self, wait_delay: float = 0.7) -> None:
+        """Poll a muxed HLS playlist and download new segments until the stream ends.
+
+        Transient connection failures retry the same URL first. We only refresh
+        playlist URLs when errors suggest the current manifest URL may be stale.
+        """
+        if not self.stream.video_base_url:
+            raise Exception("Missing HLS playlist url!")
+
+        wait_sec = max(1, round(wait_delay))
+        retry_wait_sec = max(10, wait_sec)
+        max_direct_url_retries = 3
+        direct_url_retry_counts: Dict[int, int] = {}
+
+        while not self.stream.done and not self.stream.error:
+            try:
+                extra_headers = self.stream.video_itag.get("http_headers") \
+                    if isinstance(self.stream.video_itag, dict) else None
+                segments, end_list = self.stream.get_hls_playlist_segments(
+                    self.stream.video_base_url,
+                    extra_headers=extra_headers
+                )
+                first_available_seq = segments[0][0] if segments else None
+                synthetic_segments: List[tuple[int, str]] = []
+                if first_available_seq is not None and self.stream.seg < first_available_seq:
+                    if template_url := self.stream.build_hls_segment_url(
+                        segments[0][1], self.stream.seg
+                    ):
+                        self.stream.log.info(
+                            "Playlist starts at segment %s but local resume point is %s. "
+                            "Trying direct segment URLs for the gap.",
+                            first_available_seq,
+                            self.stream.seg,
+                        )
+                        synthetic_segments = [
+                            (seg_num, self.stream.build_hls_segment_url(segments[0][1], seg_num))
+                            for seg_num in range(self.stream.seg, first_available_seq)
+                        ]
+                        synthetic_segments = [
+                            (seg_num, seg_url)
+                            for seg_num, seg_url in synthetic_segments
+                            if seg_url is not None
+                        ]
+                    else:
+                        self.stream.log.warning(
+                            "Playlist starts at segment %s but older segment URLs could not "
+                            "be reconstructed. Resuming from %s instead of %s.",
+                            first_available_seq,
+                            first_available_seq,
+                            self.stream.seg,
+                        )
+                        self.stream.seg = first_available_seq
+
+                next_segments = [
+                    (seg_num, seg_url)
+                    for seg_num, seg_url in segments
+                    if seg_num >= self.stream.seg
+                ]
+                if synthetic_segments:
+                    next_segments = synthetic_segments + next_segments
+
+                if not next_segments:
+                    if end_list:
+                        self.stream.done = True
+                        break
+                    sleep(wait_sec)
+                    continue
+
+                for seg_num, seg_url in next_segments:
+                    self.stream.print_progress(seg_num)
+                    try:
+                        if not self.stream.download_hls_segment(
+                            seg_url,
+                            seg_num,
+                            extra_headers=extra_headers
+                        ):
+                            break
+                    except urllib.error.HTTPError as exc:
+                        if first_available_seq is not None and seg_num < first_available_seq:
+                            direct_url_retry_counts.pop(seg_num, None)
+                            self.stream.log.warning(
+                                "Failed to fetch older segment %s directly (%s). "
+                                "Resuming from playlist media sequence %s.",
+                                seg_num,
+                                exc,
+                                first_available_seq,
+                            )
+                            self.stream.seg = first_available_seq
+                            break
+                        raise
+                    except urllib.error.URLError as exc:
+                        if first_available_seq is not None and seg_num < first_available_seq:
+                            attempts = direct_url_retry_counts.get(seg_num, 0) + 1
+                            direct_url_retry_counts[seg_num] = attempts
+                            if attempts < max_direct_url_retries:
+                                self.stream.log.warning(
+                                    "Failed to fetch older segment %s directly (%s). "
+                                    "Retrying the same direct URL in %s seconds "
+                                    "(attempt %s/%s).",
+                                    seg_num,
+                                    exc,
+                                    retry_wait_sec,
+                                    attempts,
+                                    max_direct_url_retries,
+                                )
+                                sleep(retry_wait_sec)
+                                break
+
+                            direct_url_retry_counts.pop(seg_num, None)
+                            self.stream.log.warning(
+                                "Failed to fetch older segment %s directly after %s attempts (%s). "
+                                "Refreshing the playlist URL and resuming from media sequence %s.",
+                                seg_num,
+                                attempts,
+                                exc,
+                                first_available_seq,
+                            )
+                            self.stream.refresh_hls_format()
+                            self.stream.seg = first_available_seq
+                            sleep(retry_wait_sec)
+                            break
+                        raise
+                    direct_url_retry_counts.pop(seg_num, None)
+                    self.stream.seg = seg_num + 1
+
+                if end_list and self.stream.seg > next_segments[-1][0]:
+                    self.stream.done = True
+                    break
+
+            except TooManyRequestsException as exc:
+                self.stream.log.warning(exc)
+                self.stream.error = str(exc)
+                break
+            except OfflineException as exc:
+                self.stream.log.info(exc)
+                self.stream.done = True
+                break
+            except (
+                EmptySegmentException,
+                ForbiddenSegmentException,
+                urllib.error.HTTPError,
+            ) as exc:
+                self.stream.log.warning(exc)
+                try:
+                    self.stream.refresh_hls_format()
+                except Exception as refresh_err:
+                    if isinstance(refresh_err, TooManyRequestsException):
+                        self.stream.log.warning(refresh_err)
+                        self.stream.error = str(refresh_err)
+                        break
+                    if isinstance(refresh_err, OfflineException) or self.stream._ytdlp_live_ended:
+                        self.stream.log.info(refresh_err)
+                        self.stream.done = True
+                        break
+                    self.stream.error = f"{refresh_err}"
+                    break
+                sleep(wait_sec)
+            except (
+                IncompleteRead,
+                ValueError,
+                ConnectionError,
+                urllib.error.URLError,
+            ) as exc:
+                self.stream.log.warning(
+                    "%s. Retrying the same HLS URL in %s seconds.",
+                    exc,
+                    retry_wait_sec,
+                )
+                sleep(retry_wait_sec)
+            except Exception as exc:
+                self.stream.log.exception("Unhandled exception in HLS download. Aborting.")
+                self.stream.error = f"{exc}"
+                break
+
+    def do_download(self) -> None:
+        """Download separate audio/video DASH segments using the native URL scheme."""
+        if not self.stream.video_base_url:
+            raise Exception("Missing video url!")
+        if not self.stream.audio_base_url:
+            raise Exception("Missing audio url!")
+
+        last_check_time = datetime.now()
+        wait_sec = 3
+        max_attempts = 10
+        attempts_left = max_attempts
+        while True:
+            try:
+                self.stream.print_progress(self.stream.seg)
+
+                if self.stream.seg % 10 == 0:
+                    now = datetime.now()
+                    if (now - last_check_time).total_seconds() > 5 * 60:
+                        last_check_time = now
+                        self.stream.update_download_urls(force=True)
+
+                if not self.stream.download_seg(self.stream.video_base_url, self.stream.seg, "video") \
+                or not self.stream.download_seg(self.stream.audio_base_url, self.stream.seg, "audio"):
+                    attempts_left -= 1
+                    if attempts_left >= 0:
+                        self.stream.log.warning(
+                            f"Waiting for {wait_sec} seconds before retrying "
+                            f"segment {self.stream.seg} (attempt {max_attempts - attempts_left}/{max_attempts})")
+                        sleep(wait_sec)
+                        continue
+                    else:
+                        self.stream.log.warning(
+                            f"Skipping segment {self.stream.seg} due to too many attempts.")
+                attempts_left = max_attempts
+                self.stream.seg_attempt = 0
+                self.stream.seg += 1
+
+            except urllib.error.URLError as exc:
+                self.stream.log.critical(f'{type(exc)}: {exc}')
+                if exc.reason == "Not Found":
+                    raise
+                if exc.reason == 'Forbidden':
+                    raise ForbiddenSegmentException(exc.reason)
+                if attempts_left < 0:
+                    raise exc
+                attempts_left -= 1
+                self.stream.log.warning(
+                    f"Waiting for {wait_sec} seconds before retrying... "
+                    f"(attempt {max_attempts - attempts_left}/{max_attempts})")
+                sleep(wait_sec)
+                continue
+            except (IncompleteRead, ValueError) as exc:
+                self.stream.log.exception(exc)
+                raise exc
+            except IOError as exc:
+                self.stream.log.exception(exc)
+                raise exc
 
 
 class YTDLPLogger:
@@ -533,7 +773,7 @@ class YoutubeLiveStream:
         self.block_regex: Optional[re.Pattern] = filters.get("block_regex")
 
     def get_ytdl_info_opts(self) -> Dict[str, Any]:
-        """Return yt-dlp options suitable for probing all available formats."""
+        """Return yt-dlp options for probing all formats without pre-filtering them."""
         opts = deepcopy(self.ytdl_opts) if self.ytdl_opts else {}
 
         # We want the full formats list here and do our own selection later.
@@ -544,6 +784,7 @@ class YoutubeLiveStream:
         return opts
 
     def get_ytdlp_info(self, force_update: bool = False) -> Optional[Dict[str, Any]]:
+        """Fetch and cache yt-dlp metadata used for format choice and metadata hydration."""
         if self._ytdlp_info is not None and not force_update:
             return self._ytdlp_info
 
@@ -585,12 +826,14 @@ class YoutubeLiveStream:
         return "429" in message or "too many requests" in message
 
     def mark_live_as_ended_from_ytdlp(self) -> None:
+        """Update local status flags after yt-dlp reports that the live stream is over."""
         self._ytdlp_live_ended = True
         self.status &= ~Status.LIVE
         self.status &= ~Status.VIEWED_LIVE
         self.status |= Status.OFFLINE
 
     def hydrate_metadata_from_ytdlp_info(self, info: Optional[Dict[str, Any]]) -> None:
+        """Populate cached metadata fields from yt-dlp probe results when available."""
         if not info:
             return
 
@@ -1321,6 +1564,7 @@ class YoutubeLiveStream:
         return info
 
     def update_status(self):
+        """Refresh live-state flags from the YouTube player API response."""
         self.log.debug("update_status...")
         # Force update
         self.clear_cache()
@@ -1417,6 +1661,7 @@ class YoutubeLiveStream:
     # TODO get itag by quality first, and then update the itag download url
     # if needed by selecting by itag (the itag we have chosen by best quality)
     def update_download_urls(self, force = False):
+        """Refresh native DASH download URLs and validate that chosen formats stay compatible."""
         previous_video_base_url = self.video_base_url
         previous_audio_base_url = self.audio_base_url
         if force:
@@ -1483,9 +1728,11 @@ class YoutubeLiveStream:
 
 
     def download(self, wait_delay: float = 1.0):
+        """Run the configured downloader strategy for this live stream."""
         self.downloader.download(wait_delay=wait_delay)
 
     def prepare_hls_download(self, info: Optional[Dict[str, Any]]) -> bool:
+        """Initialize muxed-HLS state when yt-dlp exposes a suitable single-track format."""
         if not info:
             return False
 
@@ -1524,6 +1771,7 @@ class YoutubeLiveStream:
         return True
 
     def get_best_hls_format(self, info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Select the best muxed HLS format respecting the configured max height."""
         formats = info.get("formats") or []
         if not isinstance(formats, list):
             return None
@@ -1559,6 +1807,7 @@ class YoutubeLiveStream:
         )[0]
 
     def refresh_hls_format(self) -> None:
+        """Refresh the selected muxed HLS manifest URL from a fresh yt-dlp probe."""
         info = self.get_ytdlp_info(force_update=True)
         if self._ytdlp_live_ended:
             raise OfflineException(
@@ -1599,6 +1848,7 @@ class YoutubeLiveStream:
         playlist_url: str,
         extra_headers: Optional[Dict[str, str]] = None
     ) -> tuple[List[tuple[int, str]], bool]:
+        """Load an HLS media playlist and return numbered segment URLs plus ENDLIST state."""
         req = self.make_request_obj(playlist_url, extra_headers=extra_headers)
         content = self.session.get_response_as_str(req)
 
@@ -1635,6 +1885,7 @@ class YoutubeLiveStream:
         stream_type: str = "video",
         extra_headers: Optional[Dict[str, str]] = None
     ) -> bool:
+        """Download a single muxed-HLS segment into the native segment staging directory."""
         segment_filename = f'{self.video_outpath}{sep}{seg_num:0{10}}_video.ts'
         req = self.make_request_obj(segment_url, extra_headers=extra_headers)
 
@@ -1655,144 +1906,14 @@ class YoutubeLiveStream:
 
     @staticmethod
     def build_hls_segment_url(segment_url: str, seg_num: int) -> Optional[str]:
+        """Rewrite a known HLS segment URL to target another `/sq/<n>/` segment number."""
         updated = re.sub(r"/sq/\d+/", f"/sq/{seg_num}/", segment_url, count=1)
         if updated == segment_url:
             return None
         return updated
 
-    def do_download_hls(self, wait_delay: float = 1.0):
-        if not self.video_base_url:
-            raise Exception("Missing HLS playlist url!")
-
-        wait_sec = max(1, round(wait_delay))
-        last_refresh_time = datetime.now()
-
-        while not self.done and not self.error:
-            try:
-                now = datetime.now()
-                if (now - last_refresh_time).total_seconds() > 5 * 60:
-                    self.refresh_hls_format()
-                    last_refresh_time = now
-
-                extra_headers = self.video_itag.get("http_headers") \
-                    if isinstance(self.video_itag, dict) else None
-                segments, end_list = self.get_hls_playlist_segments(
-                    self.video_base_url,
-                    extra_headers=extra_headers
-                )
-                first_available_seq = segments[0][0] if segments else None
-                synthetic_segments: List[tuple[int, str]] = []
-                if first_available_seq is not None and self.seg < first_available_seq:
-                    if template_url := self.build_hls_segment_url(
-                        segments[0][1], self.seg
-                    ):
-                        self.log.info(
-                            "Playlist starts at segment %s but local resume point is %s. "
-                            "Trying direct segment URLs for the gap.",
-                            first_available_seq,
-                            self.seg,
-                        )
-                        synthetic_segments = [
-                            (seg_num, self.build_hls_segment_url(segments[0][1], seg_num))
-                            for seg_num in range(self.seg, first_available_seq)
-                        ]
-                        synthetic_segments = [
-                            (seg_num, seg_url)
-                            for seg_num, seg_url in synthetic_segments
-                            if seg_url is not None
-                        ]
-                    else:
-                        self.log.warning(
-                            "Playlist starts at segment %s but older segment URLs could not "
-                            "be reconstructed. Resuming from %s instead of %s.",
-                            first_available_seq,
-                            first_available_seq,
-                            self.seg,
-                        )
-                        self.seg = first_available_seq
-
-                next_segments = [
-                    (seg_num, seg_url)
-                    for seg_num, seg_url in segments
-                    if seg_num >= self.seg
-                ]
-                if synthetic_segments:
-                    next_segments = synthetic_segments + next_segments
-
-                if not next_segments:
-                    if end_list:
-                        self.done = True
-                        break
-                    sleep(wait_sec)
-                    continue
-
-                for seg_num, seg_url in next_segments:
-                    self.print_progress(seg_num)
-                    try:
-                        if not self.download_hls_segment(
-                            seg_url,
-                            seg_num,
-                            extra_headers=extra_headers
-                        ):
-                            break
-                    except (urllib.error.HTTPError, urllib.error.URLError) as e:
-                        if first_available_seq is not None and seg_num < first_available_seq:
-                            self.log.warning(
-                                "Failed to fetch older segment %s directly (%s). "
-                                "Resuming from playlist media sequence %s.",
-                                seg_num,
-                                e,
-                                first_available_seq,
-                            )
-                            self.seg = first_available_seq
-                            break
-                        raise
-                    self.seg = seg_num + 1
-
-                if end_list and self.seg > next_segments[-1][0]:
-                    self.done = True
-                    break
-
-            except (
-                TooManyRequestsException,
-                OfflineException,
-                EmptySegmentException,
-                ForbiddenSegmentException,
-                IncompleteRead,
-                ValueError,
-                ConnectionError,
-                urllib.error.HTTPError,
-                urllib.error.URLError
-            ) as e:
-                if isinstance(e, TooManyRequestsException):
-                    self.log.warning(e)
-                    self.error = str(e)
-                    break
-                if isinstance(e, OfflineException):
-                    self.log.info(e)
-                    self.done = True
-                    break
-                self.log.warning(e)
-                try:
-                    self.refresh_hls_format()
-                except Exception as refresh_err:
-                    if isinstance(refresh_err, TooManyRequestsException):
-                        self.log.warning(refresh_err)
-                        self.error = str(refresh_err)
-                        break
-                    if isinstance(refresh_err, OfflineException) or self._ytdlp_live_ended:
-                        self.log.info(refresh_err)
-                        self.done = True
-                        break
-                    self.error = f"{refresh_err}"
-                    break
-                sleep(wait_sec)
-            except Exception as e:
-                self.log.exception("Unhandled exception in HLS download. Aborting.")
-                self.error = f"{e}"
-                break
-
     def download_seg(self, baseurl: BaseURL, seg, type):
+        """Download a single native DASH media segment to the appropriate staging file."""
         segment_url: str = baseurl.add_seg(seg)
 
         # To have zero-padded filenames (not compatible with
@@ -1818,70 +1939,8 @@ class YoutubeLiveStream:
                 return False
         return True
 
-    def do_download(self):
-        if not self.video_base_url:
-            raise Exception("Missing video url!")
-        if not self.audio_base_url:
-            raise Exception("Missing audio url!")
-
-        last_check_time = datetime.now()
-        wait_sec = 3
-        max_attempts = 10
-        attempts_left = max_attempts
-        while True:
-            try:
-                self.print_progress(self.seg)
-
-                # Update base URLs after 5 minutes, but only check time every 10 segs
-                if self.seg % 10 == 0:
-                    now = datetime.now()
-                    if (now - last_check_time).total_seconds() > 5 * 60:
-                        last_check_time = now
-                        self.update_download_urls(force=True)
-
-                if not self.download_seg(self.video_base_url, self.seg, "video") \
-                or not self.download_seg(self.audio_base_url, self.seg, "audio"):
-                    attempts_left -= 1
-                    if attempts_left >= 0:
-                        self.log.warning(
-                            f"Waiting for {wait_sec} seconds before retrying "
-                            f"segment {self.seg} (attempt {max_attempts - attempts_left}/{max_attempts})")
-                        sleep(wait_sec)
-                        continue
-                    else:
-                        self.log.warning(
-                            f"Skipping segment {self.seg} due to too many attempts.")
-                # Resetting error counter and moving on to next segment
-                attempts_left = max_attempts
-                self.seg_attempt = 0
-                self.seg += 1
-
-            except urllib.error.URLError as e:
-                self.log.critical(f'{type(e)}: {e}')
-                if e.reason == "Not Found":
-                    # Try to refresh immediately
-                    raise
-                if e.reason == 'Forbidden':
-                    # Usually this means the stream has ended and parts
-                    # are now unavailable.
-                    raise ForbiddenSegmentException(e.reason)
-                if attempts_left < 0:
-                    raise e
-                attempts_left -= 1
-                self.log.warning(
-                    f"Waiting for {wait_sec} seconds before retrying... "
-                    f"(attempt {max_attempts - attempts_left}/{max_attempts})")
-                sleep(wait_sec)
-                continue
-            except (IncompleteRead, ValueError) as e:
-                # This is most likely signaling the end of the stream
-                self.log.exception(e)
-                raise e
-            except IOError as e:
-                self.log.exception(e)
-                raise e
-
     def print_progress(self, seg: int) -> None:
+        """Report the currently requested segment to stdout and to debug logs."""
         # TODO display rotating wheel in interactive mode
         fullmsg = f"Downloading segment {seg}..."
         if stdout.isatty():

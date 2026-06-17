@@ -10,7 +10,7 @@ from configparser import ConfigParser, ExtendedInterpolation
 import traceback
 import threading
 from copy import deepcopy
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, Future
 from queue import Queue
 import re
 from shlex import split
@@ -581,7 +581,7 @@ def download_task(
         if use_ytdl:
             sub_output_dir = output_dir
         else:
-            sub_output_dir = output_dir / f"stream_capture_{video_id}"
+            sub_output_dir = create_output_dir(output_dir=output_dir, video_id=video_id)
     else:
         sub_output_dir = None
 
@@ -683,6 +683,11 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
     channel_id = args["channel_id"]
     scan_delay = args["scan_delay"]
 
+    def log_download_task_failure(future: Future) -> None:
+        exc = future.exception()
+        if exc is not None:
+            log.exception("Download task crashed.", exc_info=exc)
+
     session = YoutubeUrllibSession(
         cookiefile_path=args.get("cookies"),
         notifier=NOTIFIER
@@ -711,9 +716,10 @@ def monitor_mode(config: ConfigParser, args: Dict[str, Any]):
     ) as executor:
         # TODO better handle keyboard interrupts
         while feeder_thread.is_alive():
-            executor.submit(
+            future = executor.submit(
                 download_task, video_queue.get(), config, args, channel.session
             )
+            future.add_done_callback(log_download_task_failure)
             log.debug("waiting 5 seconds")
             sleep(5)  # probably not necessary if queue.get blocks
 
