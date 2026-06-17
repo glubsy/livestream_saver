@@ -54,12 +54,14 @@ class ConcatMethod():
         video_id: str,
         output_dir: Path,
         missing_ints: List = [],
-        corrupt_segs: Optional[List] = None
+        corrupt_segs: Optional[List] = None,
+        use_segment_count_duration: bool = False
     ) -> None:
         self.datatype = datatype
         self.segment_list = segment_list
         self._missing_seg_ints = missing_ints
         self._corrupt_segments = corrupt_segs
+        self.use_segment_count_duration = use_segment_count_duration
         self._segment_duration = None
         self.error = None
         self.video_id = video_id
@@ -133,6 +135,18 @@ class ConcatMethod():
 
     @property
     def total_expected_duration(self) -> float:
+        if self.use_segment_count_duration:
+            expected = round(self.segment_duration * len(self.segment_list))
+            logger.debug(
+                "Estimated duration computed from "
+                "(segment duration) %s * number of "
+                "(segments available) %s = %s.",
+                self.segment_duration,
+                len(self.segment_list),
+                expected,
+            )
+            return expected
+
         # # Simply get the expected duration from what ffprobe reports
         # # in the very last segment metadata, as long as we have ALL segments:
         # if len(self.segment_list) == segname_to_int(self.segment_list[-1]) + 1:
@@ -590,7 +604,8 @@ def merge(
             concat_video_file = methods[attempt](
                 video_files, vid_props.get("codec_name", "video"),
                 info.get("id", "UNKNOWN_ID"), output_dir,
-                missing_video_ints, corrupt_vid_segs)
+                missing_video_ints, corrupt_vid_segs,
+                use_segment_count_duration=muxed_only)
             concat_video_file.make()
             if concat_video_file.error is not None:
                 got_errors = True
