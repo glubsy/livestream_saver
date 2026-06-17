@@ -583,7 +583,10 @@ def download_task(
         else:
             sub_output_dir = create_output_dir(output_dir=output_dir, video_id=video_id)
     else:
-        sub_output_dir = None
+        if use_ytdl:
+            sub_output_dir = None
+        else:
+            sub_output_dir = create_output_dir(output_dir=Path(), video_id=video_id)
 
     skip_download = args.get("skip_download", False)
 
@@ -1070,15 +1073,16 @@ def main():
 
 
         final_output_dir: Path | None = Path(output_dir) if output_dir else None
+        base_output_dir = final_output_dir or Path()
 
         if not args["use_ytdl"]:
             output_path = create_output_dir(
-                output_dir=final_output_dir, video_id=video_id)
+                output_dir=base_output_dir, video_id=video_id)
         else:
             # We don't want a stream_capture_xxxx directory, but we need to
             # ensure output path exists because we create the download log now
             output_path = create_output_dir(
-                output_dir=final_output_dir, video_id=None)
+                output_dir=base_output_dir, video_id=None)
 
         args["output_dir"] = output_path
         args["final_output_dir"] = final_output_dir
