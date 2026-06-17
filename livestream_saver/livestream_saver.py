@@ -17,7 +17,7 @@ from shlex import split
 from time import sleep
 
 from livestream_saver.channel import YoutubeChannel, VideoPost
-from livestream_saver.download import YoutubeLiveStream
+from livestream_saver.live_video import YoutubeLiveStream
 from livestream_saver.merge import merge, get_metadata_info
 from livestream_saver.util import get_channel_id, event_props
 from livestream_saver.request import YoutubeUrllibSession

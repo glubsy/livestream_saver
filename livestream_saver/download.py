@@ -223,14 +223,181 @@ class PathURL(BaseURL):
         return self + f"/sq/{seg_num}"
 
 
-class VideoDownloader:
-    # TODO should replace YoutubeLiveStream, handle download state
-    pass
+class Downloader:
+    def __init__(self, stream: "YoutubeLiveStream") -> None:
+        self.stream = stream
+
+    def get_probe_info(self) -> Optional[Dict[str, Any]]:
+        try:
+            return self.stream.get_ytdlp_info()
+        except TooManyRequestsException as exc:
+            self.stream.error = str(exc)
+            self.stream.log.warning(exc)
+            return None
+
+    def download(self, wait_delay: float = 1.0) -> None:
+        raise NotImplementedError()
 
 
-class YTDLPVideoDownloader():
-    # TODO only use yt-dlp to download
-    pass
+class YTDLPDownloader(Downloader):
+    def download(self, wait_delay: float = 1.0) -> None:
+        info = self.get_probe_info()
+        if not info:
+            raise Exception("Failed to get stream information from yt-dlp.")
+
+        ytdl_opts = deepcopy(self.stream.ytdl_opts) if self.stream.ytdl_opts else {}
+        ytdl_opts["logger"] = self.stream.ytdlp_logger
+        with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
+            self.stream.error = ydl.download(self.stream.url)
+
+
+class NativeDownloader(Downloader):
+    def download(self, wait_delay: float = 1.0) -> None:
+        info = self.get_probe_info()
+        if not info:
+            raise Exception("Failed to get stream information from yt-dlp.")
+
+        if self.stream.prepare_hls_download(info):
+            self.stream.update_metadata()
+            self.stream.trigger_hooks('on_download_started')
+
+            if self.stream.skip_download:
+                self.stream.done = True
+                return
+
+            self.stream.do_download_hls(wait_delay=wait_delay)
+            if self.stream.done:
+                self.stream.log.info(f"Finished downloading {self.stream.video_id}.")
+                self.stream.trigger_hooks("on_download_ended")
+            if self.stream.error:
+                self.stream.log.critical(
+                    f"Some kind of error occured during download? {self.stream.error}")
+            return
+
+        # If one of the directories exists, assume we are resuming a previously
+        # failed download attempt.
+        dir_existed = False
+        for path in (self.stream.video_outpath, self.stream.audio_outpath):
+            try:
+                makedirs(path, 0o770)
+            except FileExistsError:
+                dir_existed = True
+
+        if dir_existed:
+            self.stream.seg = self.stream.get_first_segment(
+                (self.stream.video_outpath, self.stream.audio_outpath)
+            )
+        else:
+            self.stream.seg = 0
+        self.stream.log.info(
+            f"Will start downloading from segment number {self.stream.seg}."
+        )
+
+        if self.stream.skip_download:
+            # If the user explicitly asked to skip download, but calls this
+            # method anyway, we assume it's because they only care about the
+            # events being triggered
+            self.stream.trigger_hooks("on_download_initiated")
+
+        self.stream.seg_attempt = 0
+        while not self.stream.done and not self.stream.error:
+            try:
+                self.stream.update_status()
+                self.stream.log.debug(f"Status is {self.stream.status}.")
+
+                if not self.stream.status == Status.OK:
+                    self.stream.log.critical(
+                        f"Could not download \"{self.stream.url}\": "
+                        "stream unavailable or not a livestream.")
+                    return
+
+            except WaitingException as e:
+                self.stream.log.warning(
+                    f"Status is {self.stream.status}. "
+                    f"Waiting for {wait_delay} minutes...")
+                sleep(wait_delay * 60)
+                continue
+            except OutdatedAppException as e:
+                self.stream.log.warning("Outdated client error. Retrying shortly...")
+                wait_block(2)
+                continue
+            except OfflineException as e:
+                self.stream.log.critical(e)
+                raise e
+            except Exception as e:
+                self.stream.log.critical(e, exc_info=True)
+                raise e
+
+            if not self.stream.skip_download:
+                self.stream.update_download_urls()
+                self.stream.update_metadata()
+
+            # FIXME triggers everytime the download resumes, rename to
+            # on_download_resumed or on_stream_resumed?
+            self.stream.trigger_hooks('on_download_started')
+
+            if self.stream.skip_download:
+                # We rely on the exception above to signal when the stream has ended
+                self.stream.log.debug(
+                    f"Not downloading because \"skip-download\" option is active."
+                    f" Waiting for {wait_delay} minutes..."
+                )
+                sleep(wait_delay * 60)
+                continue
+
+            while True:
+                try:
+                    self.stream.do_download()
+                except (
+                    EmptySegmentException,
+                    ForbiddenSegmentException,
+                    IncompleteRead,
+                    ValueError,
+                    ConnectionError,
+                    urllib.error.HTTPError
+                ) as e:
+                    self.stream.log.warning(e)
+                    self.stream._watch_html = None
+                    self.stream._json = None
+                    self.stream._player_config_args = None
+                    self.stream._js = None
+                    self.stream.get_info()
+                    self.stream.is_live()
+                    if Status.LIVE | Status.VIEWED_LIVE in self.stream.status:
+
+                        if self.stream.seg_attempt >= 15:
+                            self.stream.log.critical(
+                                f"Too many attempts on segment {self.stream.seg}. "
+                                "Skipping it.")
+                            self.stream.seg += 1
+                            self.stream.seg_attempt = 0
+                            continue
+
+                        self.stream.log.warning(
+                            "It seems the stream has not really ended. "
+                            f"Retrying in 5 secs... (attempt {self.stream.seg_attempt}/15)")
+                        self.stream.seg_attempt += 1
+                        sleep(5)
+                        try:
+                            self.stream.update_download_urls(force=False)
+                        except Exception as update_err:
+                            self.stream.error = f"{update_err}"
+                            break
+                        continue
+                    self.stream.log.warning("The stream is not live anymore. Done.")
+                    self.stream.done = True
+                    break
+                except Exception as e:
+                    self.stream.log.exception("Unhandled exception. Aborting.")
+                    self.stream.error = f"{e}"
+                    break
+        if self.stream.done:
+            self.stream.log.info(f"Finished downloading {self.stream.video_id}.")
+            self.stream.trigger_hooks("on_download_ended")
+        if self.stream.error:
+            self.stream.log.critical(
+                f"Some kind of error occured during download? {self.stream.error}"
+            )
 
 
 class YTDLPLogger:
@@ -333,6 +500,9 @@ class YoutubeLiveStream:
 
         self.use_ytdl = use_ytdl
         self.ytdl_opts = ytdl_opts
+        self.downloader: Downloader = (
+            YTDLPDownloader(self) if use_ytdl else NativeDownloader(self)
+        )
 
         if use_ytdl and output_dir is not None:
             if not output_dir.exists():
@@ -1313,159 +1483,7 @@ class YoutubeLiveStream:
 
 
     def download(self, wait_delay: float = 1.0):
-        try:
-            info = self.get_ytdlp_info()
-        except TooManyRequestsException as exc:
-            self.error = str(exc)
-            self.log.warning(exc)
-            return
-        if not info:
-            raise Exception("Failed to get stream information from yt-dlp.")
-
-        if self.use_ytdl:
-            ytdl_opts = deepcopy(self.ytdl_opts) if self.ytdl_opts else {}
-            ytdl_opts["logger"] = self.ytdlp_logger
-            with yt_dlp.YoutubeDL(ytdl_opts) as ydl:
-                self.error = ydl.download(self.url)
-            return
-
-        if self.prepare_hls_download(info):
-            self.update_metadata()
-            self.trigger_hooks('on_download_started')
-
-            if self.skip_download:
-                self.done = True
-                return
-
-            self.do_download_hls(wait_delay=wait_delay)
-            if self.done:
-                self.log.info(f"Finished downloading {self.video_id}.")
-                self.trigger_hooks("on_download_ended")
-            if self.error:
-                self.log.critical(
-                    f"Some kind of error occured during download? {self.error}")
-            return
-
-        # If one of the directories exists, assume we are resuming a previously
-        # failed download attempt.
-        dir_existed = False
-        for path in (self.video_outpath, self.audio_outpath):
-            try:
-                makedirs(path, 0o770)
-            except FileExistsError:
-                dir_existed = True
-
-        if dir_existed:
-            self.seg = self.get_first_segment((self.video_outpath, self.audio_outpath))
-        else:
-            self.seg = 0
-        self.log.info(f"Will start downloading from segment number {self.seg}.")
-
-        if self.skip_download:
-            # If the user explicitly asked to skip download, but calls this
-            # method anyway, we assume it's because they only care about the
-            # events being triggered
-            self.trigger_hooks("on_download_initiated")
-
-        self.seg_attempt = 0
-        while not self.done and not self.error:
-            try:
-                self.update_status()
-                self.log.debug(f"Status is {self.status}.")
-
-                if not self.status == Status.OK:
-                    self.log.critical(
-                        f"Could not download \"{self.url}\": "
-                        "stream unavailable or not a livestream.")
-                    return
-
-            except WaitingException as e:
-                self.log.warning(
-                    f"Status is {self.status}. "
-                    f"Waiting for {wait_delay} minutes...")
-                sleep(wait_delay * 60)
-                continue
-            except OutdatedAppException as e:
-                self.log.warning(f"Outdated client error. Retrying shortly...")
-                wait_block(2)
-                continue
-            except OfflineException as e:
-                self.log.critical(e)
-                raise e
-            except Exception as e:
-                self.log.critical(e, exc_info=True)
-                raise e
-
-            if not self.skip_download:
-                self.update_download_urls()
-                self.update_metadata()
-
-            # FIXME triggers everytime the download resumes, rename to
-            # on_download_resumed or on_stream_resumed?
-            self.trigger_hooks('on_download_started')
-
-            if self.skip_download:
-                # We rely on the exception above to signal when the stream has ended
-                self.log.debug(
-                    f"Not downloading because \"skip-download\" option is active."
-                    f" Waiting for {wait_delay} minutes..."
-                )
-                sleep(wait_delay * 60)
-                continue
-
-            while True:
-                try:
-                    self.do_download()
-                except (
-                    EmptySegmentException,
-                    ForbiddenSegmentException,
-                    IncompleteRead,
-                    ValueError,
-                    ConnectionError,  # ConnectionResetError - Connection reset by peer
-                    urllib.error.HTTPError # typically 404 errors, need refresh
-                ) as e:
-                    self.log.warning(e)
-                    # force update
-                    self._watch_html = None
-                    self._json = None
-                    self._player_config_args = None
-                    self._js = None
-                    self.get_info()
-                    self.is_live()
-                    if Status.LIVE | Status.VIEWED_LIVE in self.status:
-
-                        if self.seg_attempt >= 15:
-                            self.log.critical(
-                                f"Too many attempts on segment {self.seg}. "
-                                "Skipping it.")
-                            self.seg += 1
-                            self.seg_attempt = 0
-                            continue
-
-                        self.log.warning(
-                            "It seems the stream has not really ended. "
-                            f"Retrying in 5 secs... (attempt {self.seg_attempt}/15)")
-                        self.seg_attempt += 1
-                        sleep(5)
-                        try:
-                            # no force because cache is already updated here
-                            self.update_download_urls(force=False)
-                        except Exception as e:
-                            self.error = f"{e}"
-                            break
-                        continue
-                    self.log.warning(f"The stream is not live anymore. Done.")
-                    self.done = True
-                    break
-                except Exception as e:
-                    self.log.exception(f"Unhandled exception. Aborting.")
-                    self.error = f"{e}"
-                    break
-        if self.done:
-            self.log.info(f"Finished downloading {self.video_id}.")
-            self.trigger_hooks("on_download_ended")
-        if self.error:
-            self.log.critical(f"Some kind of error occured during download? {self.error}")
+        self.downloader.download(wait_delay=wait_delay)
 
     def prepare_hls_download(self, info: Optional[Dict[str, Any]]) -> bool:
         if not info:
