@@ -223,6 +223,183 @@ class PathURL(BaseURL):
         return self + f"/sq/{seg_num}"
 
 
+class Probe:
+    """Base helper for fetching live-stream metadata from one backend."""
+    def __init__(self, stream: "YoutubeLiveStream") -> None:
+        self.stream = stream
+
+
+class YTDLPProbe(Probe):
+    """Probe helper dedicated to yt-dlp format and metadata discovery."""
+
+    def log_available_formats(self, info: Optional[Dict[str, Any]]) -> None:
+        """Log a readable summary of the formats returned by yt-dlp."""
+        if not info or not self.stream.log.isEnabledFor(logging.INFO):
+            return
+
+        formats = info.get("formats")
+        if not isinstance(formats, list) or not formats:
+            return
+
+        lines = []
+        for fmt in formats:
+            if not isinstance(fmt, dict):
+                continue
+
+            format_id = fmt.get("format_id") or fmt.get("itag") or "?"
+            height = fmt.get("height")
+            resolution = f"{height}p" if isinstance(height, int) else (fmt.get("resolution") or "?")
+            protocol = fmt.get("protocol") or "?"
+            vcodec = fmt.get("vcodec") or "none"
+            acodec = fmt.get("acodec") or "none"
+            ext = fmt.get("ext") or "?"
+            note = fmt.get("format_note") or ""
+            lines.append(
+                f"itag={format_id} res={resolution} ext={ext} "
+                f"v={vcodec} a={acodec} proto={protocol}"
+                + (f" note={note}" if note else "")
+            )
+
+        if not lines:
+            return
+
+        self.stream.log.info("yt-dlp reported available formats:")
+        for line in lines:
+            self.stream.log.info("  %s", line)
+
+    def get_opts(self) -> Dict[str, Any]:
+        """Return yt-dlp options for probing all formats without pre-filtering them."""
+        opts = deepcopy(self.stream.ytdl_opts) if self.stream.ytdl_opts else {}
+
+        # We want the full formats list here and do our own selection later.
+        for key in ("format", "format_sort"):
+            opts.pop(key, None)
+
+        opts["logger"] = self.stream.ytdlp_logger
+        return opts
+
+    def get_info(self, force_update: bool = False) -> Optional[Dict[str, Any]]:
+        """Fetch and cache yt-dlp metadata used for format choice and metadata hydration."""
+        if self.stream._ytdlp_info is not None and not force_update:
+            return self.stream._ytdlp_info
+
+        try:
+            with yt_dlp.YoutubeDL(self.get_opts()) as ydl:
+                self.stream._ytdlp_info = ydl.extract_info(self.stream.url, download=False)
+        except DownloadError as exc:
+            if self.reports_too_many_requests(exc):
+                self.stream._ytdlp_rate_limited = True
+                raise TooManyRequestsException(
+                    self.stream.video_id,
+                    "yt-dlp reported HTTP 429 Too Many Requests"
+                )
+            if self.reports_live_end(exc):
+                self.mark_live_as_ended()
+                self.stream.log.info("yt-dlp reports that the live event has ended.")
+                return None
+            self.stream.log.debug("Error getting metadata from yt-dlp: %s", exc)
+            return self.stream._ytdlp_info
+        except Exception as exc:
+            self.stream.log.debug("Error getting metadata from yt-dlp: %s", exc)
+            return self.stream._ytdlp_info
+
+        self.stream._ytdlp_rate_limited = False
+        self.hydrate_metadata(self.stream._ytdlp_info)
+        self.log_available_formats(self.stream._ytdlp_info)
+        return self.stream._ytdlp_info
+
+    @staticmethod
+    def reports_live_end(exc: Exception) -> bool:
+        """Return whether a yt-dlp exception means the live event is over."""
+        message = str(exc).lower()
+        return (
+            "this live event has ended" in message
+            or "live event has ended" in message
+        )
+
+    @staticmethod
+    def reports_too_many_requests(exc: Exception) -> bool:
+        """Return whether a yt-dlp exception reflects rate limiting."""
+        message = str(exc).lower()
+        return "429" in message or "too many requests" in message
+
+    def mark_live_as_ended(self) -> None:
+        """Update local status flags after yt-dlp reports that the live stream is over."""
+        self.stream._ytdlp_live_ended = True
+        self.stream.status &= ~Status.LIVE
+        self.stream.status &= ~Status.VIEWED_LIVE
+        self.stream.status |= Status.OFFLINE
+
+    def hydrate_metadata(self, info: Optional[Dict[str, Any]]) -> None:
+        """Populate cached metadata fields from yt-dlp probe results when available."""
+        if not info:
+            return
+
+        live_status = info.get("live_status")
+        if live_status in ("post_live", "was_live", "not_live"):
+            self.mark_live_as_ended()
+        elif live_status in ("is_live", "is_upcoming"):
+            self.stream._ytdlp_live_ended = False
+
+        if not self.stream._title:
+            self.stream._title = info.get("fulltitle") or info.get("title")
+        if not self.stream._author:
+            self.stream._author = info.get("channel") or info.get("uploader")
+        if not self.stream._description:
+            self.stream._description = info.get("description") or ""
+        if not self.stream._thumbnail_url:
+            self.stream._thumbnail_url = info.get("thumbnail")
+            if not self.stream._thumbnail_url and (thumbs := info.get("thumbnails")):
+                self.stream._thumbnail_url = thumbs[-1].get("url")
+        if self.stream._publish_date is None:
+            if timestamp := info.get("release_timestamp") or info.get("timestamp"):
+                self.stream._publish_date = datetime.fromtimestamp(timestamp)
+            else:
+                for key in ("release_date", "upload_date"):
+                    if date_str := info.get(key):
+                        try:
+                            self.stream._publish_date = datetime.strptime(date_str, "%Y%m%d")
+                            break
+                        except ValueError:
+                            continue
+        if self.stream._start_time is None and (timestamp := info.get("release_timestamp") or info.get("timestamp")):
+            self.stream._start_time = datetime.fromtimestamp(
+                timestamp, timezone.utc
+            ).isoformat().replace("+00:00", "Z")
+        if self.stream._scheduled_timestamp is None:
+            release_ts = info.get("release_timestamp")
+            if live_status == "is_upcoming" and release_ts is not None:
+                self.stream._scheduled_timestamp = int(release_ts)
+
+
+class PytubeProbe(Probe):
+    """Probe helper dedicated to YouTube player API and pytube-backed state."""
+
+    def get_info(self, force_update: bool = False, client: str = "android") -> Dict[str, Any]:
+        """Fetch and cache player API metadata used by pytube/native probing logic."""
+        if self.stream._json and not force_update:
+            return self.stream._json
+
+        json_data: Dict[str, Any] = {}
+        try:
+            # json_string = extract.initial_player_response(self.watch_html)
+            # API request with ANDROID client gives us a pre-signed URL.
+            # "android" also seems to partially work around throttling here.
+            json_data = self.stream.session.make_api_request(
+                endpoint="https://www.youtube.com/youtubei/v1/player",
+                payload={
+                    "videoId": self.stream.video_id
+                },
+                client=client
+            )
+            self.stream.session.is_logged_out(json_data)
+            remove_useless_keys(json_data)
+        except Exception as exc:
+            self.stream.log.debug(f"Error getting metadata JSON: {exc}")
+        self.stream._json = json_data
+        return self.stream._json
+
+
 class Downloader:
     """Base strategy object for stream downloading.
 
@@ -740,6 +917,8 @@ class YoutubeLiveStream:
 
         self.use_ytdl = use_ytdl
         self.ytdl_opts = ytdl_opts
+        self.ytdlp_probe = YTDLPProbe(self)
+        self.pytube_probe = PytubeProbe(self)
         self.downloader: Downloader = (
             YTDLPDownloader(self) if use_ytdl else NativeDownloader(self)
         )
@@ -773,105 +952,30 @@ class YoutubeLiveStream:
         self.block_regex: Optional[re.Pattern] = filters.get("block_regex")
 
     def get_ytdl_info_opts(self) -> Dict[str, Any]:
-        """Return yt-dlp options for probing all formats without pre-filtering them."""
-        opts = deepcopy(self.ytdl_opts) if self.ytdl_opts else {}
-
-        # We want the full formats list here and do our own selection later.
-        for key in ("format", "format_sort"):
-            opts.pop(key, None)
-
-        opts["logger"] = self.ytdlp_logger
-        return opts
+        """Return yt-dlp probe options through the dedicated yt-dlp probe helper."""
+        return self.ytdlp_probe.get_opts()
 
     def get_ytdlp_info(self, force_update: bool = False) -> Optional[Dict[str, Any]]:
-        """Fetch and cache yt-dlp metadata used for format choice and metadata hydration."""
-        if self._ytdlp_info is not None and not force_update:
-            return self._ytdlp_info
-
-        try:
-            with yt_dlp.YoutubeDL(self.get_ytdl_info_opts()) as ydl:
-                self._ytdlp_info = ydl.extract_info(self.url, download=False)
-        except DownloadError as exc:
-            if self.ytdlp_reports_too_many_requests(exc):
-                self._ytdlp_rate_limited = True
-                raise TooManyRequestsException(
-                    self.video_id,
-                    "yt-dlp reported HTTP 429 Too Many Requests"
-                )
-            if self.ytdlp_reports_live_end(exc):
-                self.mark_live_as_ended_from_ytdlp()
-                self.log.info("yt-dlp reports that the live event has ended.")
-                return None
-            self.log.debug("Error getting metadata from yt-dlp: %s", exc)
-            return self._ytdlp_info
-        except Exception as exc:
-            self.log.debug("Error getting metadata from yt-dlp: %s", exc)
-            return self._ytdlp_info
-
-        self._ytdlp_rate_limited = False
-        self.hydrate_metadata_from_ytdlp_info(self._ytdlp_info)
-        return self._ytdlp_info
+        """Fetch yt-dlp probe data through the dedicated yt-dlp probe helper."""
+        return self.ytdlp_probe.get_info(force_update=force_update)
 
     @staticmethod
     def ytdlp_reports_live_end(exc: Exception) -> bool:
-        message = str(exc).lower()
-        return (
-            "this live event has ended" in message
-            or "live event has ended" in message
-        )
+        """Compatibility wrapper for the dedicated yt-dlp probe helper."""
+        return YTDLPProbe.reports_live_end(exc)
 
     @staticmethod
     def ytdlp_reports_too_many_requests(exc: Exception) -> bool:
-        message = str(exc).lower()
-        return "429" in message or "too many requests" in message
+        """Compatibility wrapper for the dedicated yt-dlp probe helper."""
+        return YTDLPProbe.reports_too_many_requests(exc)
 
     def mark_live_as_ended_from_ytdlp(self) -> None:
-        """Update local status flags after yt-dlp reports that the live stream is over."""
-        self._ytdlp_live_ended = True
-        self.status &= ~Status.LIVE
-        self.status &= ~Status.VIEWED_LIVE
-        self.status |= Status.OFFLINE
+        """Compatibility wrapper for the dedicated yt-dlp probe helper."""
+        self.ytdlp_probe.mark_live_as_ended()
 
     def hydrate_metadata_from_ytdlp_info(self, info: Optional[Dict[str, Any]]) -> None:
-        """Populate cached metadata fields from yt-dlp probe results when available."""
-        if not info:
-            return
-
-        live_status = info.get("live_status")
-        if live_status in ("post_live", "was_live", "not_live"):
-            self.mark_live_as_ended_from_ytdlp()
-        elif live_status in ("is_live", "is_upcoming"):
-            self._ytdlp_live_ended = False
-
-        if not self._title:
-            self._title = info.get("fulltitle") or info.get("title")
-        if not self._author:
-            self._author = info.get("channel") or info.get("uploader")
-        if not self._description:
-            self._description = info.get("description") or ""
-        if not self._thumbnail_url:
-            self._thumbnail_url = info.get("thumbnail")
-            if not self._thumbnail_url and (thumbs := info.get("thumbnails")):
-                self._thumbnail_url = thumbs[-1].get("url")
-        if self._publish_date is None:
-            if timestamp := info.get("release_timestamp") or info.get("timestamp"):
-                self._publish_date = datetime.fromtimestamp(timestamp)
-            else:
-                for key in ("release_date", "upload_date"):
-                    if date_str := info.get(key):
-                        try:
-                            self._publish_date = datetime.strptime(date_str, "%Y%m%d")
-                            break
-                        except ValueError:
-                            continue
-        if self._start_time is None and (timestamp := info.get("release_timestamp") or info.get("timestamp")):
-            self._start_time = datetime.fromtimestamp(
-                timestamp, timezone.utc
-            ).isoformat().replace("+00:00", "Z")
-        if self._scheduled_timestamp is None:
-            release_ts = info.get("release_timestamp")
-            if live_status == "is_upcoming" and release_ts is not None:
-                self._scheduled_timestamp = int(release_ts)
+        """Compatibility wrapper for the dedicated yt-dlp probe helper."""
+        self.ytdlp_probe.hydrate_metadata(info)
 
     def setup_logger(self, output_path: Path, log_level: str | int):
         if isinstance(log_level, str):
@@ -1144,29 +1248,8 @@ class YoutubeLiveStream:
         return self._embed_html
 
     def get_info(self, force_update=False, client="android") -> Dict[str, Any]:
-        if self._json and not force_update:
-            return self._json
-
-        json = {}
-        try:
-            # json_string = extract.initial_player_response(self.watch_html)
-            # API request with ANDROID client gives us a pre-signed URL
-            json = self.session.make_api_request(
-                endpoint="https://www.youtube.com/youtubei/v1/player",
-                payload={
-                    "videoId": self.video_id
-                },
-                client=client  # "android" seems to partially work around throttling
-            )
-            self.session.is_logged_out(json)
-            remove_useless_keys(json)
-        except Exception as e:
-            self.log.debug(f"Error getting metadata JSON: {e}")
-            # self.log.debug(
-            #     "Loaded metadata JSON:\n"
-            #     + dumps(json, indent=2, ensure_ascii=False))
-        self._json = json
-        return self._json
+        """Fetch player API metadata through the dedicated pytube/API probe helper."""
+        return self.pytube_probe.get_info(force_update=force_update, client=client)
 
     @property
     def publish_date(self):
